@@ -8,9 +8,17 @@ dependencies = [
   "scelabs-aegis>=0.6.1",
   "PyYAML>=6.0.0"
 ]
+license = { text = "MIT" }
 
 [project.scripts]
 aegis-code = "aegis_code.cli:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
