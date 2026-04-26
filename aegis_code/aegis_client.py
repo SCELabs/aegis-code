@@ -73,7 +73,6 @@ class AegisBackendClient:
                 symptoms=symptoms,
                 severity=severity,
                 metadata=metadata,
-                config={},
             )
             return AegisDecision(
                 model_tier=str(_get_attr_or_key(result, "model_tier", "mid")),

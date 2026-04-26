@@ -42,7 +42,13 @@ def test_aegis_backend_client_uses_auto_step(monkeypatch) -> None:
     )
 
     assert fake_sdk.auto_client.last_kwargs is not None
-    assert fake_sdk.auto_client.last_kwargs["config"] == {}
+    assert set(fake_sdk.auto_client.last_kwargs.keys()) == {
+        "step_name",
+        "step_input",
+        "symptoms",
+        "severity",
+        "metadata",
+    }
     assert decision.model_tier == "premium"
     assert decision.context_mode == "broad"
     assert decision.max_retries == 3
