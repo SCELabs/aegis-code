@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Env
+.env
+
+# Aegis local runtime state
+.aegis/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,16 @@
+[project]
+name = "aegis-code"
+version = "0.1.0"
+description = "Terminal-native, budget-aware AI coding runtime powered by Aegis."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "scelabs-aegis>=0.6.1",
+  "PyYAML>=6.0.0"
+]
+
+[project.scripts]
+aegis-code = "aegis_code.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
