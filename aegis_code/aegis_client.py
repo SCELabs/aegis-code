@@ -66,12 +66,14 @@ class AegisBackendClient:
             )
 
         try:
-            result = self._sdk_client.step_scope(
+            auto_client = self._sdk_client.auto()
+            result = auto_client.step(
                 step_name=step_name,
                 step_input=step_input,
                 symptoms=symptoms,
                 severity=severity,
                 metadata=metadata,
+                config={},
             )
             return AegisDecision(
                 model_tier=str(_get_attr_or_key(result, "model_tier", "mid")),
@@ -85,7 +87,7 @@ class AegisBackendClient:
             )
         except Exception as exc:
             return AegisDecision(
-                note=f"Aegis step_scope failed: {exc}",
+                note=f"Aegis auto.step failed: {exc}",
                 execution={"status": "error", "error": str(exc)},
             )
 
