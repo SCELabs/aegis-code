@@ -33,3 +33,10 @@ def test_cli_dry_run_writes_report(tmp_path: Path, monkeypatch) -> None:
     assert exit_code == 0
     assert (tmp_path / ".aegis" / "runs" / "latest.json").exists()
     assert (tmp_path / ".aegis" / "runs" / "latest.md").exists()
+
+
+def test_cli_accepts_propose_patch_flag(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("aegis_code.runtime.client_from_env", lambda _base_url: FakeAegisClient())
+    exit_code = cli.main(["plan release notes", "--dry-run", "--propose-patch"])
+    assert exit_code == 0

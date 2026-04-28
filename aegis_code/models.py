@@ -23,12 +23,28 @@ class AegisConfig:
 
 
 @dataclass(slots=True)
+class ProvidersConfig:
+    enabled: bool = False
+    provider: str = "openai"
+    api_key_env: str = "OPENAI_API_KEY"
+
+
+@dataclass(slots=True)
+class PatchesConfig:
+    generate_diff: bool = False
+    max_context_chars: int = 12000
+    output_file: str = ".aegis/runs/latest.diff"
+
+
+@dataclass(slots=True)
 class AppConfig:
     mode: str = "balanced"
     budget_per_task: float = 1.0
     models: ModelConfig = field(default_factory=ModelConfig)
     commands: CommandsConfig = field(default_factory=CommandsConfig)
     aegis: AegisConfig = field(default_factory=AegisConfig)
+    providers: ProvidersConfig = field(default_factory=ProvidersConfig)
+    patches: PatchesConfig = field(default_factory=PatchesConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

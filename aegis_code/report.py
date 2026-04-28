@@ -32,6 +32,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     failure_context = payload.get("failure_context", {})
     sll_analysis = payload.get("sll_analysis")
     patch_plan = payload.get("patch_plan", {})
+    patch_diff = payload.get("patch_diff", {})
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
     test_attempts = payload.get("test_attempts", [])
@@ -188,6 +189,34 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             )
     else:
         lines.append("- No proposed changes")
+
+    lines.extend(
+        [
+            "",
+            "## Patch Diff Proposal",
+            "",
+        ]
+    )
+
+    if not patch_diff.get("attempted", False):
+        lines.append("- Not attempted")
+    elif patch_diff.get("available", False):
+        lines.append(f"- Provider: `{patch_diff.get('provider', 'unknown')}`")
+        lines.append(f"- Model: `{patch_diff.get('model', 'unknown')}`")
+        lines.append(f"- Path: `{patch_diff.get('path', '')}`")
+        preview = str(patch_diff.get("preview", "") or "")
+        lines.append("- Preview:")
+        lines.append("```diff")
+        lines.append(preview[:800] if preview else "(empty)")
+        lines.append("```")
+    else:
+        lines.append("- Attempted but unavailable")
+        if patch_diff.get("provider"):
+            lines.append(f"- Provider: `{patch_diff.get('provider')}`")
+        if patch_diff.get("model"):
+            lines.append(f"- Model: `{patch_diff.get('model')}`")
+        if patch_diff.get("error"):
+            lines.append(f"- Error: `{patch_diff.get('error')}`")
 
     lines.extend(
         [

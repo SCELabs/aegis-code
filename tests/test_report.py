@@ -31,6 +31,15 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         "failure_context": {"files": []},
         "sll_analysis": None,
         "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {
+            "attempted": False,
+            "available": False,
+            "provider": None,
+            "model": None,
+            "path": None,
+            "error": None,
+            "preview": "",
+        },
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -44,6 +53,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Final Failure State" in content
     assert "## Structural Analysis" in content
     assert "## Proposed Fix Plan" in content
+    assert "## Patch Diff Proposal" in content
     assert "v0.3 runs a controlled execution loop." in content
 
 
@@ -83,6 +93,15 @@ def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
         },
         "sll_analysis": {"available": False},
         "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {
+            "attempted": True,
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "path": ".aegis/runs/latest.diff",
+            "error": None,
+            "preview": "diff --git a/x.py b/x.py",
+        },
         "status": "completed_tests_failed",
         "notes": ["planning only"],
     }

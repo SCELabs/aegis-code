@@ -11,8 +11,10 @@ from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
+from aegis_code.patches.diff_writer import write_latest_diff
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
+from aegis_code.providers import generate_patch_diff
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
 from aegis_code.sll_adapter import analyze_failures_sll
@@ -26,12 +28,25 @@ class TaskOptions:
     mode: str | None = None
     dry_run: bool = False
     analyze_failures: bool = True
+    propose_patch: bool = False
     session: str | None = None
     no_report: bool = False
 
 
 def _is_tests_passed(status: str, exit_code: int | None) -> bool:
     return status == "ok" and exit_code == 0
+
+
+def _patch_diff_default() -> dict[str, Any]:
+    return {
+        "attempted": False,
+        "available": False,
+        "provider": None,
+        "model": None,
+        "path": None,
+        "error": None,
+        "preview": "",
+    }
 
 
 def build_run_payload(
@@ -58,6 +73,7 @@ def build_run_payload(
         "confidence": 0.0,
         "proposed_changes": [],
     }
+    patch_diff: dict[str, Any] = _patch_diff_default()
     retry_policy: dict[str, Any] = {
         "max_retries": 0,
         "allow_escalation": False,
@@ -273,6 +289,57 @@ def build_run_payload(
         execution_budget = decision.execution.get("budget", {}) or {}
     failures = final_failures
 
+    should_attempt_provider_diff = bool(options.propose_patch or config.patches.generate_diff)
+    provider_enabled = bool(config.providers.enabled or options.propose_patch)
+    final_failure_count = int(final_failures.get("failure_count", 0) or 0)
+    has_context_files = bool(failure_context.get("files", []))
+    has_proposed_changes = bool(patch_plan.get("proposed_changes", []))
+
+    if (
+        should_attempt_provider_diff
+        and provider_enabled
+        and final_failure_count > 0
+        and (has_context_files or has_proposed_changes)
+    ):
+        provider_result = generate_patch_diff(
+            provider=config.providers.provider,
+            model=selected_model,
+            task=options.task,
+            failures=final_failures,
+            context=failure_context,
+            patch_plan=patch_plan,
+            aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+            api_key_env=config.providers.api_key_env,
+            max_context_chars=int(config.patches.max_context_chars),
+        )
+        diff_text = str(provider_result.get("diff", "") or "").strip()
+        path_value: str | None = None
+        if provider_result.get("available", False) and diff_text:
+            diff_path = write_latest_diff(diff_text, cwd=cwd)
+            path_value = str(diff_path)
+        patch_diff = {
+            "attempted": True,
+            "available": bool(provider_result.get("available", False)) and bool(path_value),
+            "provider": provider_result.get("provider"),
+            "model": provider_result.get("model"),
+            "path": path_value,
+            "error": provider_result.get("error"),
+            "preview": diff_text[:800],
+        }
+        if provider_result.get("available", False) and not path_value:
+            patch_diff["available"] = False
+            patch_diff["error"] = "Diff generation returned empty output."
+    elif should_attempt_provider_diff and not provider_enabled:
+        patch_diff = {
+            "attempted": True,
+            "available": False,
+            "provider": config.providers.provider,
+            "model": selected_model,
+            "path": None,
+            "error": "Provider usage is disabled in config.",
+            "preview": "",
+        }
+
     payload = {
         "task": options.task,
         "mode": mode,
@@ -293,6 +360,7 @@ def build_run_payload(
         "failure_context": failure_context,
         "sll_analysis": sll_analysis,
         "patch_plan": patch_plan,
+        "patch_diff": patch_diff,
         "status": status,
         "notes": notes,
         "execution_budget_pressure": execution_budget,

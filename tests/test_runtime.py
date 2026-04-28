@@ -68,6 +68,8 @@ def test_runtime_calls_aegis_after_observation(monkeypatch, tmp_path: Path) -> N
     assert "degenerate_loop" in client.last_symptoms
     assert "unstable_workflow" in client.last_symptoms
     assert "ungrounded_output" in client.last_symptoms
+    for key in ("attempted", "available", "provider", "model", "path", "error", "preview"):
+        assert key in payload["patch_diff"]
 
 
 def test_retry_loop_success_after_retry(monkeypatch, tmp_path: Path) -> None:

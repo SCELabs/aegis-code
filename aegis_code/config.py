@@ -5,7 +5,14 @@ from typing import Any
 
 import yaml
 
-from aegis_code.models import AegisConfig, AppConfig, CommandsConfig, ModelConfig
+from aegis_code.models import (
+    AegisConfig,
+    AppConfig,
+    CommandsConfig,
+    ModelConfig,
+    PatchesConfig,
+    ProvidersConfig,
+)
 
 
 AegisDirName = ".aegis"
@@ -36,6 +43,14 @@ def default_config_yaml() -> str:
         "  lint: \"\"\n"
         "aegis:\n"
         "  base_url: \"https://aegis-backend-production-4b47.up.railway.app\"\n"
+        "providers:\n"
+        "  enabled: false\n"
+        "  provider: \"openai\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n"
+        "patches:\n"
+        "  generate_diff: false\n"
+        "  max_context_chars: 12000\n"
+        "  output_file: \".aegis/runs/latest.diff\"\n"
     )
 
 
@@ -50,6 +65,7 @@ def project_paths(cwd: Path | None = None) -> dict[str, Path]:
         "runs_dir": aegis_dir / "runs",
         "latest_json": aegis_dir / "runs" / "latest.json",
         "latest_md": aegis_dir / "runs" / "latest.md",
+        "latest_diff": aegis_dir / "runs" / "latest.diff",
     }
 
 
@@ -103,4 +119,6 @@ def load_config(cwd: Path | None = None) -> AppConfig:
         models=ModelConfig(**merged["models"]),
         commands=CommandsConfig(**merged["commands"]),
         aegis=AegisConfig(**merged["aegis"]),
+        providers=ProvidersConfig(**merged["providers"]),
+        patches=PatchesConfig(**merged["patches"]),
     )

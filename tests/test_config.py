@@ -20,3 +20,5 @@ def test_load_config_uses_defaults_when_missing(tmp_path: Path) -> None:
     assert cfg.mode == "balanced"
     assert cfg.models.mid == "openai:gpt-4.1-mini"
     assert cfg.commands.test == "pytest -q"
+    assert cfg.providers.enabled is False
+    assert cfg.patches.generate_diff is False

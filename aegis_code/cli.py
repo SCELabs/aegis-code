@@ -36,6 +36,11 @@ def _build_task_parser() -> argparse.ArgumentParser:
         default=True,
         help="Enable failure-aware parsing/context/planning (default: enabled).",
     )
+    parser.add_argument(
+        "--propose-patch",
+        action="store_true",
+        help="Attempt provider-backed diff proposal (proposal-only).",
+    )
     parser.add_argument("--session", default=None, help="Optional session id/name.")
     parser.add_argument("--no-report", action="store_true", help="Skip writing latest report files.")
     return parser
@@ -79,6 +84,7 @@ def handle_task(argv: Sequence[str]) -> int:
         mode=args.mode,
         dry_run=args.dry_run,
         analyze_failures=args.analyze_failures,
+        propose_patch=args.propose_patch,
         session=args.session,
         no_report=args.no_report,
     )
@@ -97,6 +103,7 @@ def handle_task(argv: Sequence[str]) -> int:
     symptoms = payload.get("symptoms", [])
     retry_policy = payload.get("retry_policy", {})
     has_patch_plan = bool(payload.get("patch_plan", {}).get("proposed_changes"))
+    patch_diff = payload.get("patch_diff", {})
     print(f"Failure count: {failure_count}")
     print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
     print(
@@ -104,6 +111,11 @@ def handle_task(argv: Sequence[str]) -> int:
         f"{retry_policy.get('retry_attempted', False)}/{retry_policy.get('retry_count', 0)}"
     )
     print(f"Patch plan available: {has_patch_plan}")
+    print(f"Patch diff attempted: {patch_diff.get('attempted', False)}")
+    if patch_diff.get("path"):
+        print(f"Patch diff path: {patch_diff.get('path')}")
+    if patch_diff.get("error"):
+        print(f"Patch diff error: {patch_diff.get('error')}")
     if not args.no_report:
         paths = project_paths()
         print(f"Report JSON: {paths['latest_json']}")
