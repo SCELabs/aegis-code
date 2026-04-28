@@ -27,9 +27,14 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     selected_tier = payload.get("selected_model_tier", "mid")
     selected_model = payload.get("selected_model", "unknown")
     failures = payload.get("failures", {})
+    final_failures = payload.get("final_failures", failures)
+    initial_failures = payload.get("initial_failures", {})
     failure_context = payload.get("failure_context", {})
     sll_analysis = payload.get("sll_analysis")
     patch_plan = payload.get("patch_plan", {})
+    retry_policy = payload.get("retry_policy", {})
+    symptoms = payload.get("symptoms", [])
+    test_attempts = payload.get("test_attempts", [])
 
     lines = [
         "# Aegis Code Run Report",
@@ -75,20 +80,62 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Failures",
+            "## Test Attempts",
             "",
         ]
     )
 
-    failed_tests = failures.get("failed_tests", [])
+    if test_attempts:
+        for attempt in test_attempts:
+            attempt_failures = attempt.get("failures", {}) if isinstance(attempt.get("failures", {}), dict) else {}
+            lines.append(
+                f"- Attempt `{attempt.get('attempt', '?')}` | status={attempt.get('status')} | exit={attempt.get('exit_code')} | failure_count={attempt_failures.get('failure_count', 0)}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        [
+            "",
+            "## Synthesized Symptoms",
+            "",
+        ]
+    )
+
+    if symptoms:
+        for symptom in symptoms:
+            lines.append(f"- `{symptom}`")
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        [
+            "",
+            "## Retry Policy",
+            "",
+            f"- Max retries: `{retry_policy.get('max_retries', 0)}`",
+            f"- Allow escalation: `{retry_policy.get('allow_escalation', False)}`",
+            f"- Retry attempted: `{retry_policy.get('retry_attempted', False)}`",
+            f"- Retry count: `{retry_policy.get('retry_count', 0)}`",
+            f"- Stopped reason: `{retry_policy.get('stopped_reason', 'n/a')}`",
+            "",
+            "## Final Failure State",
+            "",
+        ]
+    )
+
+    lines.append(
+        f"- Initial failure count: `{initial_failures.get('failure_count', 0)}`"
+    )
+    lines.append(
+        f"- Final failure count: `{final_failures.get('failure_count', 0)}`"
+    )
+    failed_tests = final_failures.get("failed_tests", [])
     if failed_tests:
-        lines.append(f"- Count: `{failures.get('failure_count', len(failed_tests))}`")
         for failure in failed_tests:
             lines.append(
                 f"- `{failure.get('test_name', 'unknown')}` ({failure.get('file', '?')}:{failure.get('line')})"
             )
-    else:
-        lines.append("- None")
 
     lines.extend(
         [

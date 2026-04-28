@@ -9,6 +9,7 @@ from aegis_code.budget import BudgetState
 from aegis_code.config import load_config
 from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
+from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
@@ -29,25 +30,8 @@ class TaskOptions:
     no_report: bool = False
 
 
-def _build_symptoms(sll_analysis: dict[str, Any]) -> list[str]:
-    symptoms: list[str] = ["unstable_workflow"]
-    if not sll_analysis.get("available", False):
-        return symptoms
-
-    if float(sll_analysis.get("fragmentation_risk", 0.0)) > 0.6:
-        symptoms.append("fragmented_output")
-    if float(sll_analysis.get("collapse_risk", 0.0)) > 0.6:
-        symptoms.append("degenerate_loop")
-    if float(sll_analysis.get("drift_risk", 0.0)) > 0.6:
-        symptoms.append("unstable_workflow")
-    if float(sll_analysis.get("stable_random_risk", 0.0)) > 0.6:
-        symptoms.append("ungrounded_output")
-
-    deduped: list[str] = []
-    for symptom in symptoms:
-        if symptom not in deduped:
-            deduped.append(symptom)
-    return deduped
+def _is_tests_passed(status: str, exit_code: int | None) -> bool:
+    return status == "ok" and exit_code == 0
 
 
 def build_run_payload(
@@ -63,82 +47,231 @@ def build_run_payload(
     repo_summary = scan_repo(cwd)
     commands_run: list[dict[str, Any]] = []
     failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
+    initial_failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
+    final_failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
     failure_context: dict[str, Any] = {"files": []}
     sll_analysis: dict[str, Any] = {"available": False}
+    symptoms: list[str] = ["unstable_workflow"]
+    test_attempts: list[dict[str, Any]] = []
     patch_plan: dict[str, Any] = {
         "strategy": "Failure analysis disabled.",
         "confidence": 0.0,
         "proposed_changes": [],
     }
+    retry_policy: dict[str, Any] = {
+        "max_retries": 0,
+        "allow_escalation": False,
+        "retry_attempted": False,
+        "retry_count": 0,
+        "stopped_reason": "not_evaluated",
+    }
 
     if options.dry_run:
+        aegis_client = client or client_from_env(config.aegis.base_url)
+        decision = aegis_client.step_scope(
+            step_name="aegis_code_task",
+            step_input={"task": options.task},
+            symptoms=symptoms,
+            severity="medium",
+            metadata={
+                "task": options.task,
+                "budget_total": budget.total,
+                "budget_remaining": budget.remaining,
+                **({"session_id": options.session} if options.session else {}),
+            },
+        )
+        retry_policy["stopped_reason"] = "dry_run"
         notes = [
             "Dry-run mode: no commands executed.",
-            "v0.2 is planning/reporting only and does not edit files.",
+            "v0.3 is planning/reporting only and does not edit files.",
         ]
         status = "dry_run_planned"
     else:
         test_command = config.commands.test.strip()
+        decision = None
         if test_command:
-            cmd_result: CommandResult = run_configured_tests(test_command, cwd=cwd)
-            commands_run.append(cmd_result.to_dict())
-            if options.analyze_failures:
-                failures = parse_pytest_output(cmd_result.full_output)
-                failure_context = build_failure_context(
-                    failures.get("failed_tests", []), cwd or Path.cwd()
-                )
-                sll_analysis = analyze_failures_sll(cmd_result.full_output)
-            status = "completed_with_safe_actions"
+            initial_result: CommandResult = run_configured_tests(test_command, cwd=cwd)
+            commands_run.append(initial_result.to_dict())
+            initial_failures = parse_pytest_output(initial_result.full_output)
+            final_failures = initial_failures
+            failure_context = build_failure_context(final_failures.get("failed_tests", []), cwd or Path.cwd())
+            sll_analysis = analyze_failures_sll(initial_result.full_output)
+            symptoms = synthesize_symptoms(
+                initial_failures,
+                sll_analysis,
+                base_symptoms=["unstable_workflow"],
+            )
+            test_attempts.append(
+                {
+                    "attempt": 1,
+                    "command": test_command,
+                    "status": initial_result.status,
+                    "exit_code": initial_result.exit_code,
+                    "failures": initial_failures,
+                }
+            )
+
+            aegis_client = client or client_from_env(config.aegis.base_url)
+            decision = aegis_client.step_scope(
+                step_name="aegis_code_task",
+                step_input={"task": options.task},
+                symptoms=symptoms,
+                severity="medium",
+                metadata={
+                    "task": options.task,
+                    "budget_total": budget.total,
+                    "budget_remaining": budget.remaining,
+                    "failure_count": initial_failures.get("failure_count", 0),
+                    "command_status": initial_result.status,
+                    "initial_test_exit_code": initial_result.exit_code,
+                    "sll_available": bool(sll_analysis.get("available", False)),
+                    **(
+                        {"sll_regime": sll_analysis.get("regime", "unknown")}
+                        if sll_analysis.get("available", False)
+                        else {}
+                    ),
+                    **({"session_id": options.session} if options.session else {}),
+                },
+            )
+
+            retry_policy = {
+                "max_retries": int(decision.max_retries),
+                "allow_escalation": bool(decision.allow_escalation),
+                "retry_attempted": False,
+                "retry_count": 0,
+                "stopped_reason": "initial_passed" if _is_tests_passed(initial_result.status, initial_result.exit_code) else "retry_not_permitted",
+            }
+
+            if should_retry_tests(
+                decision=decision,
+                initial_status=initial_result.status,
+                initial_exit_code=initial_result.exit_code,
+            ):
+                for retry_index in range(1, int(decision.max_retries) + 1):
+                    retry_result = run_configured_tests(test_command, cwd=cwd)
+                    commands_run.append(retry_result.to_dict())
+                    retry_failures = parse_pytest_output(retry_result.full_output)
+                    final_failures = retry_failures
+                    failure_context = build_failure_context(
+                        final_failures.get("failed_tests", []),
+                        cwd or Path.cwd(),
+                    )
+                    sll_analysis = analyze_failures_sll(retry_result.full_output)
+                    symptoms = synthesize_symptoms(
+                        final_failures,
+                        sll_analysis,
+                        base_symptoms=["unstable_workflow"],
+                    )
+                    test_attempts.append(
+                        {
+                            "attempt": retry_index + 1,
+                            "command": test_command,
+                            "status": retry_result.status,
+                            "exit_code": retry_result.exit_code,
+                            "failures": retry_failures,
+                        }
+                    )
+                    retry_policy["retry_attempted"] = True
+                    retry_policy["retry_count"] = retry_index
+                    if _is_tests_passed(retry_result.status, retry_result.exit_code):
+                        retry_policy["stopped_reason"] = "tests_passed_after_retry"
+                        break
+                else:
+                    retry_policy["stopped_reason"] = "max_retries_exhausted"
+
+            final_passed = _is_tests_passed(
+                test_attempts[-1]["status"],
+                test_attempts[-1]["exit_code"],
+            )
+            if isinstance(decision.execution, dict) and decision.execution.get("status") in {
+                "unavailable",
+                "error",
+            }:
+                status = "completed_with_aegis_unavailable"
+            elif final_passed and retry_policy["retry_count"] > 0:
+                status = "completed_tests_passed_after_retry"
+            elif final_passed:
+                status = "completed_tests_passed"
+            elif retry_policy["retry_count"] > 0:
+                status = "completed_tests_failed_after_retry"
+            else:
+                status = "completed_tests_failed"
+
             notes = [
                 "Executed safe baseline actions only.",
-                "v0.2 proposes patch plans only and does not edit files.",
+                "v0.3 controlled loop runs test retries only; no file edits.",
             ]
         else:
+            aegis_client = client or client_from_env(config.aegis.base_url)
+            decision = aegis_client.step_scope(
+                step_name="aegis_code_task",
+                step_input={"task": options.task},
+                symptoms=symptoms,
+                severity="medium",
+                metadata={
+                    "task": options.task,
+                    "budget_total": budget.total,
+                    "budget_remaining": budget.remaining,
+                    "failure_count": 0,
+                    "command_status": "missing",
+                    "initial_test_exit_code": None,
+                    "sll_available": False,
+                    **({"session_id": options.session} if options.session else {}),
+                },
+            )
             status = "completed_no_commands"
             notes = [
                 "No configured test command found.",
-                "v0.2 is planning/reporting only and does not edit files.",
+                "v0.3 is planning/reporting only and does not edit files.",
             ]
+            retry_policy["stopped_reason"] = "no_test_command"
+
+    if decision is None:
+        decision = client_from_env(config.aegis.base_url).step_scope(
+            step_name="aegis_code_task",
+            step_input={"task": options.task},
+            symptoms=symptoms,
+            severity="medium",
+            metadata={"task": options.task},
+        )
+
+    selected_tier = normalize_tier(decision.model_tier)
+    selected_model = resolve_model_for_tier(config, selected_tier)
+
+    if options.analyze_failures:
+        if final_failures.get("failure_count", 0) == 0 and retry_policy.get("retry_count", 0) > 0:
+            patch_plan = {
+                "strategy": "No patch required after retry success.",
+                "confidence": 0.98,
+                "proposed_changes": [],
+            }
+        elif status == "completed_no_commands":
             patch_plan = {
                 "strategy": "No test command executed; no failure-aware patch plan generated.",
                 "confidence": 0.0,
                 "proposed_changes": [],
             }
-
-    symptoms = _build_symptoms(sll_analysis)
-    aegis_client = client or client_from_env(config.aegis.base_url)
-    decision = aegis_client.step_scope(
-        step_name="aegis_code_task",
-        step_input={"task": options.task},
-        symptoms=symptoms,
-        severity="medium",
-        metadata={
-            "budget_total": budget.total,
-            "budget_remaining": budget.remaining,
-            **({"session_id": options.session} if options.session else {}),
-        },
-    )
-    selected_tier = normalize_tier(decision.model_tier)
-    selected_model = resolve_model_for_tier(config, selected_tier)
-
-    if options.analyze_failures:
+        else:
+            patch_plan = generate_patch_plan(
+                options.task,
+                final_failures.get("failed_tests", []),
+                failure_context,
+                asdict(decision),
+                sll_analysis,
+            )
+    else:
         patch_plan = generate_patch_plan(
             options.task,
-            failures.get("failed_tests", []),
-            failure_context,
+            final_failures.get("failed_tests", []),
+            {"files": []},
             asdict(decision),
-            sll_analysis,
+            {"available": False},
         )
-    else:
-        patch_plan = {
-            "strategy": "Failure analysis disabled via --no-analyze-failures.",
-            "confidence": 0.0,
-            "proposed_changes": [],
-        }
 
     execution_budget = {}
     if isinstance(decision.execution, dict):
         execution_budget = decision.execution.get("budget", {}) or {}
+    failures = final_failures
 
     payload = {
         "task": options.task,
@@ -151,6 +284,11 @@ def build_run_payload(
         "selected_model": selected_model,
         "repo_scan": repo_summary.to_dict(),
         "commands_run": commands_run,
+        "test_attempts": test_attempts,
+        "initial_failures": initial_failures,
+        "final_failures": final_failures,
+        "symptoms": symptoms,
+        "retry_policy": retry_policy,
         "failures": failures,
         "failure_context": failure_context,
         "sll_analysis": sll_analysis,

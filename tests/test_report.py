@@ -16,6 +16,17 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         "selected_model": "openai:gpt-4.1-mini",
         "repo_scan": {"file_count": 3, "top_level_directories": ["src", "tests"]},
         "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": ["unstable_workflow"],
+        "retry_policy": {
+            "max_retries": 1,
+            "allow_escalation": False,
+            "retry_attempted": False,
+            "retry_count": 0,
+            "stopped_reason": "dry_run",
+        },
         "failures": {"failed_tests": [], "failure_count": 0},
         "failure_context": {"files": []},
         "sll_analysis": None,
@@ -28,7 +39,8 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert paths["md"].exists()
     content = paths["md"].read_text(encoding="utf-8")
     assert "Aegis Code Run Report" in content
-    assert "## Failures" in content
-    assert "## Failure Context" in content
+    assert "## Test Attempts" in content
+    assert "## Retry Policy" in content
+    assert "## Final Failure State" in content
     assert "## Structural Analysis" in content
     assert "## Proposed Fix Plan" in content

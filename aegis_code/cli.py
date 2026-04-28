@@ -84,7 +84,7 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     payload = run_task(options=options, cwd=Path.cwd())
 
-    print("Aegis Code v0.2: failure-aware planning/reporting.")
+    print("Aegis Code v0.3: controlled failure-aware execution loop.")
     print(f"Task: {payload['task']}")
     print(f"Mode: {payload['mode']}")
     print(f"Dry run: {payload['dry_run']}")
@@ -94,8 +94,15 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     print(f"Status: {payload['status']}")
     failure_count = payload.get("failures", {}).get("failure_count", 0)
+    symptoms = payload.get("symptoms", [])
+    retry_policy = payload.get("retry_policy", {})
     has_patch_plan = bool(payload.get("patch_plan", {}).get("proposed_changes"))
     print(f"Failure count: {failure_count}")
+    print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
+    print(
+        "Retry attempted/count: "
+        f"{retry_policy.get('retry_attempted', False)}/{retry_policy.get('retry_count', 0)}"
+    )
     print(f"Patch plan available: {has_patch_plan}")
     if not args.no_report:
         paths = project_paths()
