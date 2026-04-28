@@ -399,8 +399,13 @@ def handle_fix(argv: Sequence[str]) -> int:
     parser = _build_fix_parser()
     args = parser.parse_args(list(argv))
     cfg = load_config(Path.cwd())
-    if not cfg.commands.test.strip():
+    verification_command = cfg.commands.test.strip()
+    if not verification_command:
+        print("Fix summary:")
+        print("- Verification command: none")
+        print("- Failure count: n/a")
         print("No test command detected. Aegis Code can inspect and plan, but cannot verify a fix yet.")
+        print("Next: run `aegis-code init` or set `commands.test` in `.aegis/aegis-code.yml`.")
         return 2
 
     options = TaskOptions(
@@ -418,13 +423,22 @@ def handle_fix(argv: Sequence[str]) -> int:
     failures = payload.get("failures", {})
     failure_count = int(failures.get("failure_count", 0) or 0)
     if failure_count == 0:
+        print("Fix summary:")
+        print(f"- Verification command: {verification_command}")
+        print(f"- Failure count: {failure_count}")
         print("Tests passed. No action required.")
+        print("Next: run `aegis-code report` for details.")
         return 0
 
     patch_diff = payload.get("patch_diff", {})
     diff_path = patch_diff.get("path")
     if not patch_diff.get("available", False) or not diff_path:
+        print("Fix summary:")
+        print(f"- Verification command: {verification_command}")
+        print(f"- Failure count: {failure_count}")
+        print("- Patch diff path: none")
         print("No patch proposal available. Use report to inspect failures.")
+        print("Next: run `aegis-code report`.")
         return 2
 
     diff_file = Path(str(diff_path))
@@ -435,6 +449,10 @@ def handle_fix(argv: Sequence[str]) -> int:
     summary = inspected.get("summary", {})
     patch_quality = payload.get("patch_quality")
 
+    print("Fix summary:")
+    print(f"- Verification command: {verification_command}")
+    print(f"- Failure count: {failure_count}")
+    print(f"- Patch diff path: {diff_path}")
     print("Patch proposal:")
     print(f"- Files: {summary.get('file_count', 0)}")
     print(f"- Changes: +{summary.get('additions', 0)} / -{summary.get('deletions', 0)}")
@@ -444,21 +462,24 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("- Quality: n/a")
 
     if not args.confirm:
-        print(f"Preview available. Use aegis-code apply {diff_path} to inspect.")
-        print("Use --confirm to apply this patch.")
+        print(f"Preview available. Use `aegis-code apply {diff_path}` to inspect.")
+        print("Use `aegis-code fix --confirm` to apply this patch.")
         return 1
 
     apply_result = apply_patch_file(diff_file, cwd=Path.cwd())
+    print("Apply result:")
     print(format_apply_result(apply_result))
     if not apply_result.get("applied", False):
+        print("Next: run `aegis-code apply --check .aegis/runs/latest.diff` and `aegis-code report`.")
         return 2
 
-    command = cfg.commands.test.strip()
-    result = run_configured_tests(command, cwd=Path.cwd())
+    result = run_configured_tests(verification_command, cwd=Path.cwd())
     if result.status == "ok" and result.exit_code == 0:
         print("Post-apply tests passed.")
+        print("Next: run `aegis-code report` and `aegis-code status`.")
         return 0
     print("Post-apply tests are still failing.")
+    print("Next: run `aegis-code report` to inspect remaining failures.")
     return 2
 
 

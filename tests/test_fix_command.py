@@ -31,7 +31,11 @@ def test_fix_tests_pass_no_action(tmp_path: Path, monkeypatch, capsys) -> None:
     exit_code = cli.main(["fix"])
     out = capsys.readouterr().out
     assert exit_code == 0
+    assert "Fix summary:" in out
+    assert "Verification command: pytest -q" in out
+    assert "Failure count: 0" in out
     assert "Tests passed. No action required." in out
+    assert "Next: run `aegis-code report` for details." in out
 
 
 def test_fix_fail_diff_exists_no_confirm_no_apply(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -67,8 +71,13 @@ def test_fix_fail_diff_exists_no_confirm_no_apply(tmp_path: Path, monkeypatch, c
     exit_code = cli.main(["fix"])
     out = capsys.readouterr().out
     assert exit_code != 0
+    assert "Fix summary:" in out
+    assert "Failure count: 1" in out
+    assert f"Patch diff path: {diff}" in out
     assert "Patch proposal:" in out
-    assert "Use --confirm to apply this patch." in out
+    assert "Quality: 0.8" in out
+    assert f"Preview available. Use `aegis-code apply {diff}` to inspect." in out
+    assert "Use `aegis-code fix --confirm` to apply this patch." in out
 
 
 def test_fix_fail_diff_exists_confirm_applies_and_reruns_tests(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -113,7 +122,9 @@ def test_fix_fail_diff_exists_confirm_applies_and_reruns_tests(tmp_path: Path, m
     assert exit_code == 0
     assert called["apply"] is True
     assert called["tests"] is True
+    assert "Apply result:" in out
     assert "Post-apply tests passed." in out
+    assert "Next: run `aegis-code report` and `aegis-code status`." in out
 
 
 def test_fix_diff_missing_message(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -138,7 +149,12 @@ def test_fix_diff_missing_message(tmp_path: Path, monkeypatch, capsys) -> None:
     exit_code = cli.main(["fix"])
     out = capsys.readouterr().out
     assert exit_code != 0
+    assert "Fix summary:" in out
+    assert "Verification command: pytest -q" in out
+    assert "Failure count: 2" in out
+    assert "Patch diff path: none" in out
     assert "No patch proposal available. Use report to inspect failures." in out
+    assert "Next: run `aegis-code report`." in out
 
 
 def test_fix_no_test_command_exits_with_unverified_message(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -174,4 +190,48 @@ def test_fix_no_test_command_exits_with_unverified_message(tmp_path: Path, monke
     exit_code = cli.main(["fix"])
     out = capsys.readouterr().out
     assert exit_code != 0
+    assert "Fix summary:" in out
+    assert "Verification command: none" in out
     assert "No test command detected. Aegis Code can inspect and plan, but cannot verify a fix yet." in out
+    assert "Next: run `aegis-code init` or set `commands.test` in `.aegis/aegis-code.yml`." in out
+
+
+def test_fix_confirm_apply_failure_reports_next_step(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    diff = tmp_path / ".aegis" / "runs" / "latest.diff"
+    diff.parent.mkdir(parents=True, exist_ok=True)
+    diff.write_text(
+        "diff --git a/aegis_code/x.py b/aegis_code/x.py\n"
+        "--- a/aegis_code/x.py\n"
+        "+++ b/aegis_code/x.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n",
+        encoding="utf-8",
+    )
+
+    def _fake_run_task(**_: object):
+        _write_latest_json(
+            tmp_path,
+            {
+                "failures": {"failure_count": 1},
+                "patch_diff": {"available": True, "path": str(diff)},
+                "patch_quality": None,
+            },
+        )
+        return {}
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    monkeypatch.setattr(
+        "aegis_code.cli.apply_patch_file",
+        lambda *_a, **_k: {"applied": False, "path": str(diff), "files_changed": [], "warnings": [], "errors": ["x"]},
+    )
+    monkeypatch.setattr(
+        "aegis_code.cli.run_configured_tests",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no tests")),
+    )
+    exit_code = cli.main(["fix", "--confirm"])
+    out = capsys.readouterr().out
+    assert exit_code != 0
+    assert "Apply result:" in out
+    assert "Next: run `aegis-code apply --check .aegis/runs/latest.diff` and `aegis-code report`." in out
