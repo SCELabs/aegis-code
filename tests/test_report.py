@@ -210,3 +210,16 @@ def test_report_shows_available_sll_block_and_mapped_symptoms(tmp_path: Path) ->
     assert "Regime: `chaotic`" in content
     assert "Collapse risk: `0.7`" in content
     assert "Mapped symptoms: `fragmented_output, degenerate_loop`" in content
+
+
+def test_report_writes_history_snapshots(tmp_path: Path) -> None:
+    payload = {"task": "history", "mode": "balanced", "dry_run": True}
+    paths1 = write_reports(payload, cwd=tmp_path)
+    paths2 = write_reports(payload, cwd=tmp_path)
+    history_dir = tmp_path / ".aegis" / "runs" / "history"
+    history_files = sorted(history_dir.glob("*.json"))
+    assert paths1["json"].exists()
+    assert paths1["md"].exists()
+    assert paths1["history_json"].exists()
+    assert paths2["history_json"].exists()
+    assert len(history_files) == 2

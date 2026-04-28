@@ -8,6 +8,7 @@ from typing import Sequence
 
 from aegis_code.budget import can_spend, clear_budget, get_budget_state, load_budget, record_event, set_budget
 from aegis_code.config import load_config
+from aegis_code.compare import build_comparison, format_comparison, load_last_runs
 from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.context_state import (
     format_context_refresh,
@@ -67,6 +68,10 @@ def _build_report_parser() -> argparse.ArgumentParser:
 
 def _build_status_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code status")
+
+
+def _build_compare_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code compare")
 
 
 def _build_overview_parser() -> argparse.ArgumentParser:
@@ -263,6 +268,21 @@ def handle_status(argv: Sequence[str]) -> int:
     else:
         print("- Patch quality confidence: n/a")
     print(f"- Backup count: {len(backups)}")
+    return 0
+
+
+def handle_compare(argv: Sequence[str]) -> int:
+    parser = _build_compare_parser()
+    parser.parse_args(list(argv))
+    prev, current = load_last_runs(cwd=Path.cwd())
+    if current is None:
+        print("No runs found. Run aegis-code \"<task>\" first.")
+        return 1
+    if prev is None:
+        print("Only one run found. Need at least two runs to compare.")
+        return 1
+    data = build_comparison(prev, current)
+    print(format_comparison(data))
     return 0
 
 
@@ -796,6 +816,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_report(args[1:])
     if command == "status":
         return handle_status(args[1:])
+    if command == "compare":
+        return handle_compare(args[1:])
     if command == "overview":
         return handle_overview(args[1:])
     if command == "maintain":

@@ -12,6 +12,11 @@
   Show compact full project state summary (config, budget, context, runtime policy, latest run, backups).  
   Example: `aegis-code overview`
 
+- `aegis-code compare`  
+  Compare the last two run artifacts and show compact runtime behavior changes.  
+  Uses `.aegis/runs/history/*.json` snapshots when available.  
+  Example: `aegis-code compare`
+
 - `aegis-code policy status`  
   Show read-only local runtime policy summary (mode, model tiers, budget, context, verification).  
   Example: `aegis-code policy status`
@@ -62,6 +67,7 @@
 
 - `aegis-code report`  
   Print the latest markdown report.  
+  Report writes also append JSON snapshots to `.aegis/runs/history/`.  
   Example: `aegis-code report`
 
 - `aegis-code status`  

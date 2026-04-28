@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -10,13 +11,20 @@ from aegis_code.config import project_paths
 def write_reports(payload: dict[str, Any], cwd: Path | None = None) -> dict[str, Path]:
     paths = project_paths(cwd)
     paths["runs_dir"].mkdir(parents=True, exist_ok=True)
+    history_dir = paths["runs_dir"] / "history"
+    history_dir.mkdir(parents=True, exist_ok=True)
 
     md_content = render_markdown_report(payload)
+    history_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".json"
+    history_path = history_dir / history_name
+    history_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
+    )
     paths["latest_json"].write_text(
         json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8"
     )
     paths["latest_md"].write_text(md_content, encoding="utf-8")
-    return {"json": paths["latest_json"], "md": paths["latest_md"]}
+    return {"json": paths["latest_json"], "md": paths["latest_md"], "history_json": history_path}
 
 
 def render_markdown_report(payload: dict[str, Any]) -> str:

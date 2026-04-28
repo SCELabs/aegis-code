@@ -42,6 +42,14 @@ Inspect read-only runtime policy status:
 aegis-code policy status
 ```
 
+Compare the last two runtime runs:
+
+```bash
+aegis-code compare
+```
+
+Run reports now also keep JSON history snapshots under `.aegis/runs/history/`.
+
 Refresh deterministic project-local context:
 
 ```bash
@@ -179,6 +187,7 @@ This is local-only, deterministic, and read-only.
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
 - `aegis-code overview` - show compact full-project state summary
+- `aegis-code compare` - compare last two runs and show runtime behavior changes
 - `aegis-code policy status` - show read-only local runtime policy summary
 - `aegis-code context refresh` - build deterministic project-local context files
 - `aegis-code context show` - show context status, paths, and compact previews
@@ -222,3 +231,4 @@ This is local-only, deterministic, and read-only.
 - Enhanced runtime is feature-flagged via `aegis.enhanced_runtime` and uses `client.auto().step(...)` as a control-layer call.
 - Local verification/execution remains primary; Aegis guidance is attached as `aegis_result`.
 - Fallback stays local when disabled, import is missing, or client execution errors.
+- JSON run history snapshots are stored in `.aegis/runs/history`, and `aegis-code compare` uses the last two snapshots when available.
