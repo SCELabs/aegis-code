@@ -215,3 +215,4 @@ This is local-only, deterministic, and read-only.
 
 - SLL (`structural_language_lab`) is optional and local-install only.
 - Provider-backed patch diffs are optional and proposal-only.
+- Optional `aegis` client auto-detection is supported at runtime; when unavailable, Aegis Code automatically falls back to local runtime execution with no config changes required.

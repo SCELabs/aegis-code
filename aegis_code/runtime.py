@@ -404,7 +404,7 @@ def build_run_payload(
     return payload
 
 
-def run_task(
+def _run_task_local(
     *,
     options: TaskOptions,
     cwd: Path | None = None,
@@ -414,3 +414,14 @@ def run_task(
     if not options.no_report:
         write_reports(payload, cwd=cwd)
     return payload
+
+
+def run_task(
+    *,
+    options: TaskOptions,
+    cwd: Path | None = None,
+    client: AegisBackendClient | None = None,
+) -> dict[str, Any]:
+    from aegis_code.runtime_adapter import execute_task
+
+    return execute_task(task_options=options, cwd=cwd, client=client)
