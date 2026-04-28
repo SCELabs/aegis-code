@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
+from aegis_code.patches.apply_check import check_patch_file
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
@@ -18,6 +19,12 @@ def _build_init_parser() -> argparse.ArgumentParser:
 
 def _build_report_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code report")
+
+
+def _build_apply_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code apply")
+    parser.add_argument("--check", metavar="PATH", default=None, help="Validate diff file without applying.")
+    return parser
 
 
 def _build_check_sll_parser() -> argparse.ArgumentParser:
@@ -77,6 +84,48 @@ def handle_report(argv: Sequence[str]) -> int:
     print(f"Latest report: {path}")
     print("")
     print(content)
+    return 0
+
+
+def handle_apply(argv: Sequence[str]) -> int:
+    parser = _build_apply_parser()
+    args = parser.parse_args(list(argv))
+    if not args.check:
+        print("Apply is not implemented yet. Use --check to validate a diff without modifying files.")
+        return 2
+
+    path = Path(args.check)
+    try:
+        result = check_patch_file(path, cwd=Path.cwd())
+    except FileNotFoundError:
+        print(f"Patch check failed: file not found: {path}")
+        return 2
+    except Exception as exc:
+        print(f"Patch check failed: {exc}")
+        return 2
+
+    summary = result.get("summary", {})
+    print(f"Patch check: {result.get('path')}")
+    print(f"Valid: {result.get('valid', False)}")
+    print(f"Files: {summary.get('file_count', 0)}")
+    print(f"Hunks: {summary.get('hunk_count', 0)}")
+    print(f"Additions: {summary.get('additions', 0)}")
+    print(f"Deletions: {summary.get('deletions', 0)}")
+    print("Warnings:")
+    warnings = result.get("warnings", [])
+    if warnings:
+        for item in warnings:
+            print(f"- {item}")
+    else:
+        print("- none")
+    print("Errors:")
+    errors = result.get("errors", [])
+    if errors:
+        for item in errors:
+            print(f"- {item}")
+    else:
+        print("- none")
+    print(f"Applied: {result.get('applied', False)}")
     return 0
 
 
@@ -184,6 +233,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_init(args[1:])
     if command == "report":
         return handle_report(args[1:])
+    if command == "apply":
+        return handle_apply(args[1:])
     return handle_task(args)
 
 
