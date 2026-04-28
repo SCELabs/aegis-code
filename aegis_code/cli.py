@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Sequence
 
@@ -21,6 +22,10 @@ def _build_init_parser() -> argparse.ArgumentParser:
 
 def _build_report_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code report")
+
+
+def _build_status_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code status")
 
 
 def _build_backups_parser() -> argparse.ArgumentParser:
@@ -98,6 +103,38 @@ def handle_report(argv: Sequence[str]) -> int:
     print(f"Latest report: {path}")
     print("")
     print(content)
+    return 0
+
+
+def handle_status(argv: Sequence[str]) -> int:
+    parser = _build_status_parser()
+    parser.parse_args(list(argv))
+    paths = project_paths()
+    latest = paths["latest_json"]
+    if not latest.exists():
+        print('No latest run found. Run aegis-code "<task>" first.')
+        return 1
+    payload = json.loads(latest.read_text(encoding="utf-8"))
+    backups = list_backups(cwd=Path.cwd()).get("backups", [])
+    sll = payload.get("sll_analysis", {}) or {}
+    patch_diff = payload.get("patch_diff", {}) or {}
+    patch_quality = payload.get("patch_quality")
+
+    print("Status:")
+    print(f"- Task: {payload.get('task', '')}")
+    print(f"- Run status: {payload.get('status', '')}")
+    print(f"- Failure count: {payload.get('failures', {}).get('failure_count', 0)}")
+    print(
+        f"- SLL: available={sll.get('available', False)} regime={sll.get('regime', 'n/a') if sll.get('available', False) else 'n/a'}"
+    )
+    print(
+        f"- Patch diff: attempted={patch_diff.get('attempted', False)} available={patch_diff.get('available', False)} path={patch_diff.get('path', 'n/a')}"
+    )
+    if patch_quality:
+        print(f"- Patch quality confidence: {patch_quality.get('confidence', 0.0)}")
+    else:
+        print("- Patch quality confidence: n/a")
+    print(f"- Backup count: {len(backups)}")
     return 0
 
 
@@ -300,6 +337,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_init(args[1:])
     if command == "report":
         return handle_report(args[1:])
+    if command == "status":
+        return handle_status(args[1:])
     if command == "apply":
         return handle_apply(args[1:])
     if command == "backups":

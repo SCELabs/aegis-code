@@ -1,36 +1,8 @@
 # aegis-code
 
-`aegis-code` is a terminal-native, budget-aware coding runtime powered by Aegis execution guidance.
+`aegis-code` is a terminal-native, Aegis-guided coding workflow runner focused on safe, supervised operation.
 
-This repository currently implements the first MVP vertical slice (`v0.1`): planning and reporting only, with no autonomous file editing.
-
-## v0.1 Scope
-
-- Installable Python package (`aegis-code`, import as `aegis_code`)
-- CLI command: `aegis-code`
-- Project bootstrap: `aegis-code init`
-- Task planning/execution guidance fetch: `aegis-code "<task>"`
-- Report rendering: `aegis-code report`
-- Local project state in `.aegis/`
-- Aegis backend client integration using `scelabs-aegis>=0.6.1`
-- Execution guidance consumption:
-  - `result.execution`
-  - `result.model_tier`
-  - `result.context_mode`
-  - `result.max_retries`
-  - `result.allow_escalation`
-- Model tier routing (`cheap`, `mid`, `premium`)
-- Budget tracking (`total`, `spent`, `remaining`)
-- Markdown + JSON report output
-
-## Important Limitations in v0.1
-
-- No model provider calls (OpenAI/Anthropic/etc.) yet
-- No code modifications yet
-- No autonomous coding loop yet
-- Only safe baseline local actions:
-  - repository file tree scan
-  - optional configured test command (when not `--dry-run`)
+Current capabilities include failure-aware test triage, optional structural analysis, proposal-only patch diffs, deterministic patch-quality scoring, and explicit human-confirmed apply with backups.
 
 ## Install (Dev)
 
@@ -42,21 +14,20 @@ pip install -e .
 
 - `AEGIS_API_KEY` (optional for local smoke tests, required for real backend auth)
 - `AEGIS_BASE_URL` (optional override; otherwise config/default is used)
+- `OPENAI_API_KEY` (optional; only needed for provider-backed proposal diffs)
 
 See `.env.example` for a starter template.
 
 ## Quick Start
 
-Initialize project files:
-
 ```bash
 aegis-code init
 ```
 
-Run a planning task:
+Run a task:
 
 ```bash
-aegis-code "triage current test failures" --budget 1.25 --mode balanced --dry-run
+aegis-code "triage current test failures" --budget 1.25
 ```
 
 Show latest report:
@@ -65,12 +36,35 @@ Show latest report:
 aegis-code report
 ```
 
-## Aegis Guidance Flow
+Show compact workflow status:
 
-For each task, `aegis-code` requests Aegis execution guidance and then maps returned `model_tier` to a concrete local model from config:
+```bash
+aegis-code status
+```
 
-- `cheap` -> `models.cheap`
-- `mid` -> `models.mid`
-- `premium` -> `models.premium`
+## Command Index
 
-This preserves centralized policy from Aegis while keeping local model resolution configurable per repo.
+- `aegis-code init` - create `.aegis` config/project model files
+- `aegis-code "<task>"` - run controlled failure-aware workflow
+- `aegis-code report` - print latest markdown report
+- `aegis-code status` - compact latest-run summary
+- `aegis-code --check-sll` - verify optional SLL local import
+- `aegis-code apply --check PATH` - inspect diff without modifying files
+- `aegis-code apply PATH` - preview apply and require explicit confirmation
+- `aegis-code apply PATH --confirm` - human-confirmed apply with backups
+- `aegis-code backups` - list backup snapshots
+- `aegis-code restore BACKUP_ID` - restore files from backup snapshot
+
+## Safety Model
+
+- No autonomous edits.
+- No patch auto-apply.
+- `--confirm` required for file mutation.
+- Confirmed apply creates backups under `.aegis/backups/...`.
+- Restore is available for rollback.
+- No git commands are run by `aegis-code`.
+
+## Optional Integrations
+
+- SLL (`structural_language_lab`) is optional and local-install only.
+- Provider-backed patch diffs are optional and proposal-only.

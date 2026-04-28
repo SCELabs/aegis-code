@@ -56,3 +56,10 @@ def test_cli_omits_patch_quality_when_not_present(tmp_path: Path, monkeypatch, c
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "Patch quality:" not in out
+
+
+def test_help_mentions_key_commands(capsys) -> None:
+    exit_code = cli.main([])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "aegis-code" in out
