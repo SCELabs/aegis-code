@@ -11,6 +11,7 @@ from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
+from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_writer import write_latest_diff
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
@@ -74,6 +75,7 @@ def build_run_payload(
         "proposed_changes": [],
     }
     patch_diff: dict[str, Any] = _patch_diff_default()
+    patch_quality: dict[str, Any] | None = None
     retry_policy: dict[str, Any] = {
         "max_retries": 0,
         "allow_escalation": False,
@@ -317,6 +319,7 @@ def build_run_payload(
         if provider_result.get("available", False) and diff_text:
             diff_path = write_latest_diff(diff_text, cwd=cwd)
             path_value = str(diff_path)
+            patch_quality = evaluate_diff(diff_text, final_failures, failure_context)
         patch_diff = {
             "attempted": True,
             "available": bool(provider_result.get("available", False)) and bool(path_value),
@@ -361,6 +364,7 @@ def build_run_payload(
         "sll_analysis": sll_analysis,
         "patch_plan": patch_plan,
         "patch_diff": patch_diff,
+        "patch_quality": patch_quality,
         "status": status,
         "notes": notes,
         "execution_budget_pressure": execution_budget,

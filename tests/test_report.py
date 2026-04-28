@@ -40,6 +40,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
             "error": None,
             "preview": "",
         },
+        "patch_quality": None,
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -54,7 +55,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Structural Analysis" in content
     assert "## Proposed Fix Plan" in content
     assert "## Patch Diff Proposal" in content
-    assert "v0.4 runs a controlled execution loop with optional proposal-only patch diffs." in content
+    assert "v0.5 runs a controlled execution loop with optional proposal-only patch diffs and deterministic patch-quality scoring." in content
     assert "Run `aegis-code --check-sll` to verify local setup" in content
 
 
@@ -103,6 +104,12 @@ def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
             "error": None,
             "preview": "diff --git a/x.py b/x.py\n" + ("+" * 2000),
         },
+        "patch_quality": {
+            "grounded": True,
+            "relevant_files": True,
+            "confidence": 0.9,
+            "issues": [],
+        },
         "status": "completed_tests_failed",
         "notes": ["planning only"],
     }
@@ -111,6 +118,7 @@ def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
     assert "VERY_LONG_INTERNAL_OUTPUT" not in content
     assert "SENSITIVE_FILE_CONTENT_SHOULD_NOT_APPEAR" not in content
     assert ("+" * 1200) not in content
+    assert "## Patch Quality" in content
 
 
 def test_report_shows_available_sll_block_and_mapped_symptoms(tmp_path: Path) -> None:

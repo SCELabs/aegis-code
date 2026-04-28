@@ -1,4 +1,6 @@
-# v0.4 Patch Proposal Validation
+# v0.5 Patch Proposal Validation
+
+Aegis Code v0.5 runs a controlled execution loop with proposal-only patch diffs and deterministic diff quality scoring.
 
 ## Manual failing-test validation
 1. Manually create `tests/test_tmp_failure.py` with:

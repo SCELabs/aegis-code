@@ -33,6 +33,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     sll_analysis = payload.get("sll_analysis")
     patch_plan = payload.get("patch_plan", {})
     patch_diff = payload.get("patch_diff", {})
+    patch_quality = payload.get("patch_quality")
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
     test_attempts = payload.get("test_attempts", [])
@@ -233,14 +234,31 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
 
+    if patch_quality:
+        lines.extend(
+            [
+                "",
+                "## Patch Quality",
+                "",
+                f"- Grounded: `{patch_quality.get('grounded', False)}`",
+                f"- Relevant files: `{patch_quality.get('relevant_files', False)}`",
+                f"- Confidence: `{patch_quality.get('confidence', 0.0)}`",
+            ]
+        )
+        issues = patch_quality.get("issues", [])
+        if issues:
+            lines.append(f"- Issues: `{', '.join(str(item) for item in issues)}`")
+        else:
+            lines.append("- Issues: none")
+
     lines.extend(
         [
             "",
             "## Next Steps",
             "",
-            "- v0.4 runs a controlled execution loop with optional proposal-only patch diffs.",
+            "- v0.5 runs a controlled execution loop with optional proposal-only patch diffs and deterministic patch-quality scoring.",
             "- No file edits or patch applications are performed.",
-            "- Use the report output and diff proposal to guide the next supervised action.",
+            "- Use the report output, diff proposal, and patch-quality score to guide the next supervised action.",
             "",
         ]
     )

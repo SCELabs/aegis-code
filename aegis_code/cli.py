@@ -106,7 +106,9 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     payload = run_task(options=options, cwd=Path.cwd())
 
-    print("Aegis Code v0.4: controlled execution with proposal-only patch diffs.")
+    print(
+        "Aegis Code v0.5 runs a controlled execution loop with proposal-only patch diffs and deterministic diff quality scoring."
+    )
     print(f"Task: {payload['task']}")
     print(f"Mode: {payload['mode']}")
     print(f"Dry run: {payload['dry_run']}")
@@ -120,6 +122,7 @@ def handle_task(argv: Sequence[str]) -> int:
     retry_policy = payload.get("retry_policy", {})
     has_patch_plan = bool(payload.get("patch_plan", {}).get("proposed_changes"))
     patch_diff = payload.get("patch_diff", {})
+    patch_quality = payload.get("patch_quality")
     sll_analysis = payload.get("sll_analysis", {})
     print(f"Failure count: {failure_count}")
     print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
@@ -140,6 +143,21 @@ def handle_task(argv: Sequence[str]) -> int:
         print(f"Patch diff written: {patch_diff.get('path')}")
     if patch_diff.get("error"):
         print(f"Patch diff error: {patch_diff.get('error')}")
+    if patch_quality:
+        quality_state = []
+        if patch_quality.get("grounded", False):
+            quality_state.append("grounded")
+        if patch_quality.get("relevant_files", False):
+            quality_state.append("relevant")
+        if quality_state:
+            print(
+                f"Patch quality: {patch_quality.get('confidence', 0.0)} ({', '.join(quality_state)})"
+            )
+        else:
+            issues = patch_quality.get("issues", [])
+            print(
+                f"Patch quality: low (issues: {', '.join(str(item) for item in issues) if issues else 'unknown'})"
+            )
     if not args.no_report:
         paths = project_paths()
         print(f"Report JSON: {paths['latest_json']}")

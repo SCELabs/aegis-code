@@ -111,7 +111,7 @@ def test_propose_patch_triggers_attempt_and_writes_diff(monkeypatch, tmp_path: P
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
             "error": None,
         },
     )
@@ -126,8 +126,11 @@ def test_propose_patch_triggers_attempt_and_writes_diff(monkeypatch, tmp_path: P
     assert patch_diff["available"] is True
     assert patch_diff["path"]
     assert Path(patch_diff["path"]).exists()
+    assert payload["patch_quality"] is not None
+    assert payload["patch_quality"]["grounded"] is True
     report = render_markdown_report(payload)
     assert "## Patch Diff Proposal" in report
+    assert "## Patch Quality" in report
     assert "Provider: `openai`" in report
     assert "Path: `" in report
     assert source_file.read_text(encoding="utf-8") == before
@@ -220,6 +223,7 @@ def test_invalid_provider_diff_no_file_written(monkeypatch, tmp_path: Path) -> N
     assert patch_diff["available"] is False
     assert "unified diff" in str(patch_diff["error"]).lower()
     assert patch_diff["path"] is None
+    assert payload["patch_quality"] is None
     assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
 
 
