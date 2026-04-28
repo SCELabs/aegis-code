@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence
 
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
+from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
@@ -23,7 +24,9 @@ def _build_report_parser() -> argparse.ArgumentParser:
 
 def _build_apply_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code apply")
+    parser.add_argument("path", nargs="?", default=None, help="Patch diff path.")
     parser.add_argument("--check", metavar="PATH", default=None, help="Validate diff file without applying.")
+    parser.add_argument("--confirm", action="store_true", help="Confirm patch apply (human-approved).")
     return parser
 
 
@@ -90,23 +93,29 @@ def handle_report(argv: Sequence[str]) -> int:
 def handle_apply(argv: Sequence[str]) -> int:
     parser = _build_apply_parser()
     args = parser.parse_args(list(argv))
-    if not args.check:
-        print("Apply is not implemented yet. Use --check to validate a diff without modifying files.")
+    cwd = Path.cwd()
+    if args.check:
+        path = Path(args.check)
+        try:
+            result = check_patch_file(path, cwd=cwd)
+        except FileNotFoundError:
+            print(f"Diff file not found: {path}")
+            print("Run a failing task with --propose-patch first, or provide a valid diff path.")
+            return 2
+        except Exception as exc:
+            print(f"Patch check failed: {exc}")
+            return 2
+        print(format_apply_check_result(result))
+        return 0
+
+    if not args.path or not args.confirm:
+        print("Patch application requires --confirm. Use --check to preview without modifying files.")
         return 2
 
-    path = Path(args.check)
-    try:
-        result = check_patch_file(path, cwd=Path.cwd())
-    except FileNotFoundError:
-        print(f"Diff file not found: {path}")
-        print("Run a failing task with --propose-patch first, or provide a valid diff path.")
-        return 2
-    except Exception as exc:
-        print(f"Patch check failed: {exc}")
-        return 2
-
-    print(format_apply_check_result(result))
-    return 0
+    path = Path(args.path)
+    result = apply_patch_file(path, cwd=cwd)
+    print(format_apply_result(result))
+    return 0 if result.get("applied", False) else 2
 
 
 def handle_check_sll(argv: Sequence[str]) -> int:

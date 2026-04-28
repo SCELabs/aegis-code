@@ -84,7 +84,7 @@ def test_cli_apply_without_check_is_not_implemented(tmp_path: Path, monkeypatch,
     exit_code = cli.main(["apply"])
     out = capsys.readouterr().out
     assert exit_code != 0
-    assert "Apply is not implemented yet" in out
+    assert "Patch application requires --confirm" in out
 
 
 def test_cli_apply_missing_diff_path_has_helpful_message(tmp_path: Path, monkeypatch, capsys) -> None:

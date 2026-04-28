@@ -34,3 +34,4 @@ Warnings do not apply or block anything by themselves. They are advisory for hum
 
 ## Future note
 - A real apply command may be added later behind explicit human confirmation.
+- `aegis-code apply PATH --confirm` is explicit and separate from `--check`.
