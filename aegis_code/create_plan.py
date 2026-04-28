@@ -3,73 +3,43 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from aegis_code.scaffolds import resolve_stack_profile, select_stack_profile
+
 
 def _normalize_idea(idea: str) -> str:
     return " ".join(str(idea or "").strip().split())
 
 
-def build_create_plan(idea: str, cwd: Path | None = None) -> dict[str, Any]:
+def build_create_plan(idea: str, cwd: Path | None = None, stack_id: str | None = None) -> dict[str, Any]:
     _ = cwd
     normalized = _normalize_idea(idea)
-    lowered = normalized.lower()
 
-    if any(token in lowered for token in ("api", "rest", "backend", "fastapi")):
-        stack_name = "python-fastapi"
-        stack_reason = "API/backend keywords detected."
-        structure = [
-            {"path": "app/main.py", "purpose": "FastAPI application entrypoint"},
-            {"path": "app/routes.py", "purpose": "Route definitions"},
-            {"path": "app/models.py", "purpose": "Data models"},
-            {"path": "tests/test_app.py", "purpose": "Application tests"},
-        ]
-        dependencies = ["fastapi", "uvicorn", "pytest"]
-        test_command = "python -m pytest -q"
-    elif any(token in lowered for token in ("cli", "command", "terminal")):
-        stack_name = "python-cli"
-        stack_reason = "CLI/terminal keywords detected."
-        structure = [
-            {"path": "src/main.py", "purpose": "CLI entrypoint"},
-            {"path": "tests/test_cli.py", "purpose": "CLI behavior tests"},
-            {"path": "README.md", "purpose": "Usage documentation"},
-        ]
-        dependencies = ["pytest"]
-        test_command = "python -m pytest -q"
-    elif any(token in lowered for token in ("react", "frontend", "ui", "dashboard")):
-        stack_name = "node-react"
-        stack_reason = "Frontend/react keywords detected."
-        structure = [
-            {"path": "src/App.jsx", "purpose": "Main React view"},
-            {"path": "src/main.jsx", "purpose": "Application bootstrap"},
-            {"path": "tests/App.test.jsx", "purpose": "UI tests"},
-            {"path": "package.json", "purpose": "Node scripts and dependencies"},
-        ]
-        dependencies = ["react", "vite", "vitest"]
-        test_command = "npm test"
+    if stack_id:
+        profile = resolve_stack_profile(stack_id)
+        stack_reason = f"Explicit stack override requested: {profile['id']}."
     else:
-        stack_name = "python-basic"
-        stack_reason = "Defaulting to a simple Python baseline."
-        structure = [
-            {"path": "src/main.py", "purpose": "Application entrypoint"},
-            {"path": "tests/test_main.py", "purpose": "Baseline tests"},
-            {"path": "README.md", "purpose": "Project documentation"},
-        ]
-        dependencies = ["pytest"]
-        test_command = "python -m pytest -q"
+        profile, stack_reason = select_stack_profile(normalized)
 
     return {
         "idea": normalized,
         "mode": "plan_only",
-        "stack": {"name": stack_name, "reason": stack_reason},
-        "structure": structure,
-        "dependencies": dependencies,
-        "test_command": test_command,
+        "stack": {
+            "name": profile["id"],
+            "display_name": profile["display_name"],
+            "version": profile["version"],
+            "reason": stack_reason,
+        },
+        "structure": profile["structure"],
+        "dependencies": profile["dependencies"],
+        "test_command": profile["test_command"],
         "notes": [
             "Planning only: no project files were created.",
             "Review the plan before scaffolding.",
+            *list(profile.get("notes", [])),
         ],
         "next_steps": [
             "Use this plan as a starting point.",
-            "Future scaffold/write mode should require explicit confirmation.",
+            "Use --target PATH --confirm to write scaffold files.",
         ],
     }
 
@@ -83,6 +53,7 @@ def format_create_plan(plan: dict[str, Any]) -> str:
         "",
         "Stack:",
         f"- Name: {plan.get('stack', {}).get('name', 'unknown')}",
+        f"- Version: {plan.get('stack', {}).get('version', 'unknown')}",
         f"- Reason: {plan.get('stack', {}).get('reason', '')}",
         "",
         "Structure:",

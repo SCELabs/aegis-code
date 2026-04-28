@@ -18,6 +18,7 @@ from aegis_code.patches.patch_applier import apply_patch_file, format_apply_resu
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
+from aegis_code.scaffolds import list_stacks
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
 
@@ -42,9 +43,12 @@ def _build_maintain_parser() -> argparse.ArgumentParser:
 
 def _build_create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code create")
-    parser.add_argument("idea", help="Project idea to plan.")
+    parser.add_argument("idea", nargs="?", default=None, help="Project idea to plan.")
+    parser.add_argument("--list-stacks", action="store_true", help="List available stack profiles and exit.")
+    parser.add_argument("--stack", default=None, help="Optional stack profile id override.")
     parser.add_argument("--target", default=None, help="Optional scaffold target directory (requires --confirm).")
     parser.add_argument("--confirm", action="store_true", help="Confirm writing scaffold files to --target.")
+    parser.add_argument("--validate", action="store_true", help="Run validation after confirmed scaffold.")
     return parser
 
 
@@ -212,7 +216,23 @@ def handle_maintain(argv: Sequence[str]) -> int:
 def handle_create(argv: Sequence[str]) -> int:
     parser = _build_create_parser()
     args = parser.parse_args(list(argv))
-    plan = build_create_plan(args.idea, cwd=Path.cwd())
+    if args.list_stacks:
+        print("Available stacks:")
+        for profile in list_stacks():
+            print(f"- {profile.get('id', 'unknown')}@{profile.get('version', 'unknown')}")
+        return 0
+    if not args.idea:
+        parser.print_usage()
+        print("error: the following arguments are required: idea")
+        return 2
+    if args.validate and (not args.confirm or not args.target):
+        print("Validation requires --confirm (scaffold must exist).")
+        return 2
+    try:
+        plan = build_create_plan(args.idea, cwd=Path.cwd(), stack_id=args.stack)
+    except ValueError as exc:
+        print(str(exc))
+        return 2
     print(format_create_plan(plan))
     if not args.target:
         return 0
@@ -220,7 +240,8 @@ def handle_create(argv: Sequence[str]) -> int:
     result = create_scaffold(
         target=Path(args.target),
         cwd=Path.cwd(),
-        stack_name=str(plan.get("stack", {}).get("name", "python-basic")),
+        stack_id=str(plan.get("stack", {}).get("name", "python-basic")),
+        stack_version=str(plan.get("stack", {}).get("version", "0.1")),
         idea=str(plan.get("idea", "")),
         test_command=str(plan.get("test_command", "python -m pytest -q")),
         confirm=bool(args.confirm),
@@ -233,7 +254,29 @@ def handle_create(argv: Sequence[str]) -> int:
         print("Files:")
         for item in files:
             print(f"- {item}")
-    return int(result.get("code", 2))
+    print(f"Applied: {'true' if result.get('applied', False) else 'false'}")
+    exit_code = int(result.get("code", 2))
+    if exit_code != 0 or not args.validate:
+        return exit_code
+
+    target_path = Path(args.target)
+    validation = run_configured_tests(str(plan.get("test_command", "") or "").strip(), cwd=target_path)
+    if validation.status == "ok" and validation.exit_code == 0:
+        print("Validation: tests passed.")
+        return 0
+
+    print("Validation: tests failed. Running Aegis stabilization...")
+    run_task(
+        options=TaskOptions(
+            task="fix failing tests after scaffold",
+            propose_patch=True,
+        ),
+        cwd=target_path,
+    )
+    print("Aegis stabilization plan generated.")
+    print("Report JSON: .aegis/runs/latest.json")
+    print("Report MD: .aegis/runs/latest.md")
+    return 0
 
 
 def handle_doctor(argv: Sequence[str]) -> int:

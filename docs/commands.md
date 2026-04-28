@@ -8,17 +8,29 @@
   Run the controlled workflow for a task.  
   Example: `aegis-code "triage current test failures" --budget 1.25`
 
+- `aegis-code create --list-stacks`  
+  List available internal stack profiles and versions; no plan/scaffold and no files written.  
+  Example: `aegis-code create --list-stacks`
+
 - `aegis-code create "<idea>"`  
   Generate a planning-only project plan preview (no files written).  
-  Example: `aegis-code create "build a REST API for user management"`
+  Example: `aegis-code create "inventory tracker"`
+
+- `aegis-code create "<idea>" --stack STACK_ID`  
+  Force a specific internal stack profile (versioned).  
+  Example: `aegis-code create "inventory tracker" --stack python-fastapi`
 
 - `aegis-code create "<idea>" --target PATH`  
   Preview scaffold files for a target path (still no files written; confirmation required).  
-  Example: `aegis-code create "build a REST API" --target ./my-project`
+  Example: `aegis-code create "inventory tracker" --target ./inventory-api`
 
 - `aegis-code create "<idea>" --target PATH --confirm`  
   Write deterministic scaffold files to an empty target directory.  
-  Example: `aegis-code create "build a REST API" --target ./my-project --confirm`
+  Example: `aegis-code create "inventory tracker" --target ./inventory-api --confirm`
+
+- `aegis-code create "<idea>" --target PATH --confirm --validate`  
+  Scaffold, run tests, and if failing run Aegis stabilization planning/proposal flow.  
+  Example: `aegis-code create "inventory tracker" --target ./inventory-api --confirm --validate`
 
 - `aegis-code report`  
   Print the latest markdown report.  
