@@ -14,13 +14,30 @@ def _norm(path: str) -> str:
 def _is_generated_or_cache(path: str) -> bool:
     parts = set(PurePosixPath(path).parts)
     generated_markers = {
+        ".git",
+        ".venv",
+        "venv",
         "__pycache__",
         ".pytest_cache",
         ".mypy_cache",
         ".ruff_cache",
         ".aegis",
     }
-    return bool(parts & generated_markers)
+    if bool(parts & generated_markers):
+        return True
+    return any(part.endswith(".egg-info") for part in parts)
+
+
+def _has_parent_traversal(path: str) -> bool:
+    return ".." in PurePosixPath(path).parts
+
+
+def _is_absolute_like(path: str) -> bool:
+    p = PurePosixPath(path)
+    if p.is_absolute():
+        return True
+    # Windows-like path forms after slash-normalization, e.g. C:/...
+    return len(path) >= 3 and path[1:3] == ":/"
 
 
 def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
@@ -55,10 +72,12 @@ def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
             exists = check_path.exists()
             if not exists:
                 warnings.append(f"referenced file missing: {candidate}")
+            if _is_absolute_like(candidate):
+                warnings.append(f"unsafe_absolute_path: {candidate}")
+            if _has_parent_traversal(candidate):
+                warnings.append(f"unsafe_parent_traversal: {candidate}")
             if _is_generated_or_cache(candidate):
-                warnings.append(f"touches generated/internal path: {candidate}")
-            if candidate.startswith(".aegis/"):
-                warnings.append(f"touches .aegis path: {candidate}")
+                warnings.append(f"internal_or_generated_path: {candidate}")
         current["exists"] = exists
         files.append(current)
         current = None
@@ -138,4 +157,3 @@ def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
         "warnings": sorted(set(warnings)),
         "errors": sorted(set(errors)),
     }
-

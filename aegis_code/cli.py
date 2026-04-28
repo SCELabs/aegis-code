@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
-from aegis_code.patches.apply_check import check_patch_file
+from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
@@ -98,34 +98,14 @@ def handle_apply(argv: Sequence[str]) -> int:
     try:
         result = check_patch_file(path, cwd=Path.cwd())
     except FileNotFoundError:
-        print(f"Patch check failed: file not found: {path}")
+        print(f"Diff file not found: {path}")
+        print("Run a failing task with --propose-patch first, or provide a valid diff path.")
         return 2
     except Exception as exc:
         print(f"Patch check failed: {exc}")
         return 2
 
-    summary = result.get("summary", {})
-    print(f"Patch check: {result.get('path')}")
-    print(f"Valid: {result.get('valid', False)}")
-    print(f"Files: {summary.get('file_count', 0)}")
-    print(f"Hunks: {summary.get('hunk_count', 0)}")
-    print(f"Additions: {summary.get('additions', 0)}")
-    print(f"Deletions: {summary.get('deletions', 0)}")
-    print("Warnings:")
-    warnings = result.get("warnings", [])
-    if warnings:
-        for item in warnings:
-            print(f"- {item}")
-    else:
-        print("- none")
-    print("Errors:")
-    errors = result.get("errors", [])
-    if errors:
-        for item in errors:
-            print(f"- {item}")
-    else:
-        print("- none")
-    print(f"Applied: {result.get('applied', False)}")
+    print(format_apply_check_result(result))
     return 0
 
 

@@ -56,7 +56,62 @@ def test_inspect_diff_touches_aegis_warns(tmp_path: Path) -> None:
         "+b\n"
     )
     result = inspect_diff(diff, cwd=tmp_path)
-    assert any(".aegis" in item for item in result["warnings"])
+    assert any("internal_or_generated_path" in item for item in result["warnings"])
+
+
+def test_inspect_diff_normalizes_a_b_prefixes(tmp_path: Path) -> None:
+    target = tmp_path / "foo.py"
+    target.write_text("x=1\n", encoding="utf-8")
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n"
+    )
+    result = inspect_diff(diff, cwd=tmp_path)
+    assert result["files"][0]["old_path"] == "foo.py"
+    assert result["files"][0]["new_path"] == "foo.py"
+
+
+def test_inspect_diff_warns_unsafe_absolute_path(tmp_path: Path) -> None:
+    diff = (
+        "diff --git a//absolute/foo.py b//absolute/foo.py\n"
+        "--- /absolute/foo.py\n"
+        "+++ /absolute/foo.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    result = inspect_diff(diff, cwd=tmp_path)
+    assert any("unsafe_absolute_path" in item for item in result["warnings"])
+
+
+def test_inspect_diff_warns_parent_traversal(tmp_path: Path) -> None:
+    diff = (
+        "diff --git a/../foo.py b/../foo.py\n"
+        "--- a/../foo.py\n"
+        "+++ b/../foo.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    result = inspect_diff(diff, cwd=tmp_path)
+    assert any("unsafe_parent_traversal" in item for item in result["warnings"])
+
+
+def test_inspect_diff_warns_internal_generated_paths(tmp_path: Path) -> None:
+    diff = (
+        "diff --git a/package.egg-info/PKG-INFO b/package.egg-info/PKG-INFO\n"
+        "--- a/package.egg-info/PKG-INFO\n"
+        "+++ b/package.egg-info/PKG-INFO\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    result = inspect_diff(diff, cwd=tmp_path)
+    assert any("internal_or_generated_path" in item for item in result["warnings"])
 
 
 def test_inspect_diff_large_warns(tmp_path: Path) -> None:
@@ -70,4 +125,3 @@ def test_inspect_diff_large_warns(tmp_path: Path) -> None:
     )
     result = inspect_diff(diff, cwd=tmp_path)
     assert "very_large_diff" in result["warnings"]
-
