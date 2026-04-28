@@ -29,3 +29,23 @@ Runtime invocations apply a deterministic pre-run mode selector:
 - otherwise: keep configured/requested mode
 
 This is an initial mode decision only; no mid-run switching is performed.
+
+## Runtime control payload
+
+Before runtime calls, Aegis Code now passes a structured control payload into runtime options:
+
+- `project_context`
+- `budget_state`
+- `runtime_policy`
+
+This is local-only metadata to prepare for deeper client integration later.
+
+## Budget event observability
+
+When runtime is invoked and budget tracking is active, budget events include:
+
+- `selected_mode`
+- `reason` (`default`, `low_budget`, `policy_adjustment`)
+- `timestamp`
+
+This logging is local-only and deterministic.

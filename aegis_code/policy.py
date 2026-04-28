@@ -20,6 +20,37 @@ def select_runtime_mode(config_mode: str, cwd: Path | None = None) -> str:
     return config_mode
 
 
+def get_mode_reason(config_mode: str, final_mode: str, cwd: Path | None = None) -> str:
+    budget = load_budget(cwd or Path.cwd())
+    if not budget:
+        return "default"
+    if final_mode == config_mode:
+        return "default"
+    limit = float(budget.get("limit", 0.0) or 0.0)
+    spent = float(budget.get("spent_estimate", 0.0) or 0.0)
+    remaining = limit - spent
+    if final_mode == "cheapest" and remaining < 0.10:
+        return "low_budget"
+    return "policy_adjustment"
+
+
+def build_runtime_policy_payload(
+    config_mode: str,
+    final_mode: str,
+    cwd: Path | None = None,
+) -> dict[str, Any]:
+    root = cwd or Path.cwd()
+    budget = load_budget(root)
+    runtime_context = load_runtime_context(root)
+    return {
+        "requested_mode": config_mode,
+        "selected_mode": final_mode,
+        "reason": get_mode_reason(config_mode, final_mode, root),
+        "budget_present": budget is not None,
+        "context_available": bool(runtime_context.get("available", False)),
+    }
+
+
 def build_policy_status(cwd: Path | None = None) -> dict[str, Any]:
     root = cwd or Path.cwd()
     cfg = load_config(root)
@@ -93,3 +124,30 @@ def format_policy_status(status: dict[str, Any]) -> str:
     for item in guards:
         lines.append(f"  - {item}")
     return "\n".join(lines)
+
+
+def format_runtime_control_summary(
+    runtime_policy: dict[str, Any] | None,
+    budget_state: dict[str, Any] | None,
+    project_context: dict[str, Any] | None,
+) -> str:
+    policy = runtime_policy or {}
+    budget = budget_state or {}
+    context = project_context or {}
+    selected_mode = str(policy.get("selected_mode") or "n/a")
+    reason = str(policy.get("reason") or "default")
+    budget_available = bool(budget.get("available", False))
+    remaining = budget.get("remaining_estimate")
+    if budget_available and isinstance(remaining, (int, float)):
+        budget_line = f"- Budget remaining: ${float(remaining):.2f}"
+    else:
+        budget_line = "- Budget: not set"
+    return "\n".join(
+        [
+            "Runtime Control:",
+            f"- Selected mode: {selected_mode}",
+            f"- Reason: {reason}",
+            budget_line,
+            f"- Context available: {'true' if bool(context.get('available', False)) else 'false'}",
+        ]
+    )

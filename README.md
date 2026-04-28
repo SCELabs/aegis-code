@@ -126,6 +126,16 @@ Budget-aware mode selection policy (v1):
 - no mid-run mode switching
 - deterministic per invocation
 
+Runtime calls now receive a structured local control payload:
+
+- `project_context`
+- `budget_state`
+- `runtime_policy`
+
+This prepares Aegis Code for deeper client integration without adding new external calls.
+
+Budget runtime events now record selected mode and decision reason (`default`, `low_budget`, or `policy_adjustment`) in `.aegis/budget.json` for local observability.
+
 ## Project Context
 
 `aegis-code context refresh` and `aegis-code context show` manage deterministic local context under `.aegis/context/`.

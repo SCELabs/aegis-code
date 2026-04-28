@@ -239,11 +239,13 @@ def test_fix_confirm_apply_failure_reports_next_step(tmp_path: Path, monkeypatch
 
 def test_fix_passes_project_context_to_runtime(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
-    captured = {"context": None}
+    captured = {"context": None, "budget_state": None, "runtime_policy": None}
 
     def _fake_run_task(**kwargs: object):
         options = kwargs["options"]
         captured["context"] = options.project_context
+        captured["budget_state"] = options.budget_state
+        captured["runtime_policy"] = options.runtime_policy
         _write_latest_json(
             tmp_path,
             {
@@ -264,6 +266,8 @@ def test_fix_passes_project_context_to_runtime(tmp_path: Path, monkeypatch, caps
     assert exit_code == 0
     assert captured["context"] is not None
     assert captured["context"]["available"] is True
+    assert isinstance(captured["budget_state"], dict)
+    assert isinstance(captured["runtime_policy"], dict)
 
 
 def test_fix_low_budget_forces_cheapest_mode(tmp_path: Path, monkeypatch, capsys) -> None:

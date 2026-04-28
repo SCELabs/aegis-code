@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,14 +72,48 @@ def can_spend(operation: str, estimated_cost: float, cwd: Path | None = None) ->
     return spent + float(estimated_cost) <= limit
 
 
-def record_event(operation: str, estimated_cost: float, cwd: Path | None = None) -> dict[str, Any] | None:
+def record_event(
+    operation: str,
+    estimated_cost: float,
+    cwd: Path | None = None,
+    selected_mode: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any] | None:
     data = load_budget(cwd)
     if not data:
         return None
     spent = float(data.get("spent_estimate", 0.0) or 0.0) + float(estimated_cost)
     events = list(data.get("events", []))
-    events.append({"operation": operation, "estimated_cost": float(estimated_cost)})
+    event: dict[str, Any] = {
+        "operation": operation,
+        "estimated_cost": float(estimated_cost),
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    if selected_mode is not None:
+        event["selected_mode"] = selected_mode
+    if reason is not None:
+        event["reason"] = reason
+    events.append(event)
     data["spent_estimate"] = spent
     data["events"] = events
     save_budget(data, cwd)
     return data
+
+
+def get_budget_state(cwd: Path | None = None) -> dict[str, Any]:
+    data = load_budget(cwd)
+    if not data:
+        return {
+            "available": False,
+            "limit": None,
+            "spent_estimate": None,
+            "remaining_estimate": None,
+        }
+    limit = float(data.get("limit", 0.0) or 0.0)
+    spent = float(data.get("spent_estimate", 0.0) or 0.0)
+    return {
+        "available": True,
+        "limit": limit,
+        "spent_estimate": spent,
+        "remaining_estimate": max(0.0, limit - spent),
+    }

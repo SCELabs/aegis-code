@@ -164,7 +164,13 @@ def test_cli_create_confirm_validate_success(monkeypatch, tmp_path: Path, capsys
 def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: Path, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "proj"
-    called: dict[str, object] = {"cwd": None, "context": None, "mode": None}
+    called: dict[str, object] = {
+        "cwd": None,
+        "context": None,
+        "mode": None,
+        "budget_state": None,
+        "runtime_policy": None,
+    }
 
     def _fail_result(*_a, **_k) -> CommandResult:
         return CommandResult(name="test", command="python -m pytest -q", status="error", exit_code=1)
@@ -173,6 +179,8 @@ def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: P
         called["cwd"] = cwd
         called["context"] = options.project_context
         called["mode"] = options.mode
+        called["budget_state"] = options.budget_state
+        called["runtime_policy"] = options.runtime_policy
         return {"status": "completed_tests_failed"}
 
     monkeypatch.setattr("aegis_code.cli.run_configured_tests", _fail_result)
@@ -187,3 +195,5 @@ def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: P
     assert called["cwd"] == target
     assert isinstance(called["context"], dict)
     assert called["mode"] == "cheapest"
+    assert isinstance(called["budget_state"], dict)
+    assert isinstance(called["runtime_policy"], dict)

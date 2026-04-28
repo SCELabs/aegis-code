@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-from aegis_code.budget import can_spend, clear_budget, load_budget, record_event, set_budget
+from aegis_code.budget import can_spend, clear_budget, get_budget_state, load_budget, record_event, set_budget
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.context_state import (
@@ -23,7 +23,14 @@ from aegis_code.patches.apply_check import check_patch_file, format_apply_check_
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
-from aegis_code.policy import build_policy_status, format_policy_status, select_runtime_mode
+from aegis_code.policy import (
+    build_runtime_policy_payload,
+    build_policy_status,
+    format_runtime_control_summary,
+    format_policy_status,
+    get_mode_reason,
+    select_runtime_mode,
+)
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
@@ -300,20 +307,27 @@ def handle_create(argv: Sequence[str]) -> int:
         return 0
 
     print("Validation: tests failed. Running Aegis stabilization...")
-    if not _allow_runtime_or_print(target_path):
-        return 0
     cfg = load_config(target_path)
-    final_mode = select_runtime_mode(cfg.mode, cwd=target_path)
+    base_mode = cfg.mode
+    final_mode = select_runtime_mode(base_mode, cwd=target_path)
+    reason = get_mode_reason(base_mode, final_mode, cwd=target_path)
+    if not _allow_runtime_or_print(target_path, selected_mode=final_mode, reason=reason):
+        return 0
     project_context = load_runtime_context(cwd=target_path)
+    budget_state = get_budget_state(cwd=target_path)
+    runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=target_path)
     run_task(
         options=TaskOptions(
             task="fix failing tests after scaffold",
             mode=final_mode,
             propose_patch=True,
             project_context=project_context,
+            budget_state=budget_state,
+            runtime_policy=runtime_policy,
         ),
         cwd=target_path,
     )
+    print(format_runtime_control_summary(runtime_policy, budget_state, project_context))
     print("Aegis stabilization plan generated.")
     print("Report JSON: .aegis/runs/latest.json")
     print("Report MD: .aegis/runs/latest.md")
@@ -378,14 +392,20 @@ def handle_context(argv: Sequence[str]) -> int:
     return 1
 
 
-def _allow_runtime_or_print(cwd: Path, operation: str = "run_task", estimated_cost: float = 0.01) -> bool:
+def _allow_runtime_or_print(
+    cwd: Path,
+    operation: str = "run_task",
+    estimated_cost: float = 0.01,
+    selected_mode: str | None = None,
+    reason: str | None = None,
+) -> bool:
     budget = load_budget(cwd)
     if not budget:
         return True
     if not can_spend(operation, estimated_cost, cwd):
         print("Budget limit reached. Skipping Aegis runtime.")
         return False
-    record_event(operation, estimated_cost, cwd)
+    record_event(operation, estimated_cost, cwd, selected_mode=selected_mode, reason=reason)
     return True
 
 
@@ -536,12 +556,15 @@ def handle_task(argv: Sequence[str]) -> int:
     parser = _build_task_parser()
     args = parser.parse_args(list(argv))
     cwd = Path.cwd()
-    if not _allow_runtime_or_print(cwd):
-        return 0
     cfg = load_config(cwd)
     base_mode = args.mode or cfg.mode
     final_mode = select_runtime_mode(base_mode, cwd=cwd)
+    reason = get_mode_reason(base_mode, final_mode, cwd=cwd)
+    if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
+        return 0
     project_context = load_runtime_context(cwd=cwd)
+    budget_state = get_budget_state(cwd=cwd)
+    runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=cwd)
     options = TaskOptions(
         task=args.task,
         budget=args.budget,
@@ -552,6 +575,8 @@ def handle_task(argv: Sequence[str]) -> int:
         session=args.session,
         no_report=args.no_report,
         project_context=project_context,
+        budget_state=budget_state,
+        runtime_policy=runtime_policy,
     )
     payload = run_task(options=options, cwd=cwd)
 
@@ -615,6 +640,7 @@ def handle_task(argv: Sequence[str]) -> int:
         paths = project_paths()
         print(f"Report JSON: {paths['latest_json']}")
         print(f"Report MD: {paths['latest_md']}")
+    print(format_runtime_control_summary(payload.get("runtime_policy"), payload.get("budget_state"), payload.get("project_context")))
     return 0
 
 
@@ -632,17 +658,23 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("Next: run `aegis-code init` or set `commands.test` in `.aegis/aegis-code.yml`.")
         return 2
 
+    base_mode = cfg.mode
+    final_mode = select_runtime_mode(base_mode, cwd=cwd)
     options = TaskOptions(
         task="triage current test failures",
-        mode=select_runtime_mode(cfg.mode, cwd=cwd),
+        mode=final_mode,
         propose_patch=True,
         no_report=False,
         project_context={},
     )
-    if not _allow_runtime_or_print(cwd):
+    reason = get_mode_reason(base_mode, final_mode, cwd=cwd)
+    if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
         return 0
     options.project_context = load_runtime_context(cwd=cwd)
+    options.budget_state = get_budget_state(cwd=cwd)
+    options.runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=cwd)
     run_task(options=options, cwd=cwd)
+    print(format_runtime_control_summary(options.runtime_policy, options.budget_state, options.project_context))
 
     latest = project_paths()["latest_json"]
     if not latest.exists():

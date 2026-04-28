@@ -4,7 +4,7 @@ from pathlib import Path
 
 from aegis_code import cli
 from aegis_code.budget import set_budget
-from aegis_code.policy import select_runtime_mode
+from aegis_code.policy import format_runtime_control_summary, select_runtime_mode
 
 
 def test_policy_status_no_budget_no_context(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -85,3 +85,36 @@ def test_select_runtime_mode_with_budget_enough_keeps_mode(tmp_path: Path) -> No
 def test_select_runtime_mode_low_remaining_forces_cheapest(tmp_path: Path) -> None:
     set_budget(0.05, cwd=tmp_path)
     assert select_runtime_mode("balanced", cwd=tmp_path) == "cheapest"
+
+
+def test_format_runtime_control_summary_low_budget_case() -> None:
+    text = format_runtime_control_summary(
+        {"selected_mode": "cheapest", "reason": "low_budget"},
+        {"available": True, "remaining_estimate": 0.08},
+        {"available": True},
+    )
+    assert "Selected mode: cheapest" in text
+    assert "Reason: low_budget" in text
+    assert "Budget remaining: $0.08" in text
+    assert "Context available: true" in text
+
+
+def test_format_runtime_control_summary_default_case() -> None:
+    text = format_runtime_control_summary(
+        {"selected_mode": "balanced", "reason": "default"},
+        {"available": True, "remaining_estimate": 1.0},
+        {"available": True},
+    )
+    assert "Selected mode: balanced" in text
+    assert "Reason: default" in text
+    assert "Budget remaining: $1.00" in text
+
+
+def test_format_runtime_control_summary_no_budget_no_context() -> None:
+    text = format_runtime_control_summary(
+        {"selected_mode": "balanced", "reason": "default"},
+        {"available": False},
+        {"available": False},
+    )
+    assert "Budget: not set" in text
+    assert "Context available: false" in text

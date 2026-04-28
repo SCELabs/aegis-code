@@ -42,6 +42,14 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         },
         "patch_quality": None,
         "project_context": {"available": True, "included_paths": [".aegis/context/project_summary.md"], "total_chars": 123},
+        "budget_state": {"available": True, "limit": 1.0, "spent_estimate": 0.2, "remaining_estimate": 0.8},
+        "runtime_policy": {
+            "requested_mode": "balanced",
+            "selected_mode": "balanced",
+            "reason": "default",
+            "budget_present": True,
+            "context_available": True,
+        },
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -51,6 +59,10 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     content = paths["md"].read_text(encoding="utf-8")
     assert "Aegis Code Run Report" in content
     assert "## Test Attempts" in content
+    assert "## Runtime Control" in content
+    assert "Selected mode: `balanced`" in content
+    assert "Reason: `default`" in content
+    assert "Budget remaining: `$0.80`" in content
     assert "## Project Context" in content
     assert "Total chars: `123`" in content
     assert "## Retry Policy" in content

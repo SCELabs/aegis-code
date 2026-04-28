@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code import cli
+from aegis_code.budget import load_budget
 from aegis_code.models import AegisDecision
 
 
@@ -81,7 +82,7 @@ def test_help_mentions_key_commands(capsys) -> None:
 
 def test_task_passes_project_context_to_runtime(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    captured = {"context": None}
+    captured = {"context": None, "budget_state": None, "runtime_policy": None}
 
     def _fake_context(**_: object):
         return {"available": True, "files": {}, "included_paths": [".aegis/context/project_summary.md"], "total_chars": 42}
@@ -89,6 +90,8 @@ def test_task_passes_project_context_to_runtime(tmp_path: Path, monkeypatch) -> 
     def _fake_run_task(**kwargs: object):
         options = kwargs["options"]
         captured["context"] = options.project_context
+        captured["budget_state"] = options.budget_state
+        captured["runtime_policy"] = options.runtime_policy
         return {
             "task": "x",
             "mode": "balanced",
@@ -110,6 +113,8 @@ def test_task_passes_project_context_to_runtime(tmp_path: Path, monkeypatch) -> 
     assert exit_code == 0
     assert captured["context"] is not None
     assert captured["context"]["available"] is True
+    assert isinstance(captured["budget_state"], dict)
+    assert isinstance(captured["runtime_policy"], dict)
 
 
 def test_task_low_budget_forces_cheapest_mode(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -145,3 +150,63 @@ def test_task_low_budget_forces_cheapest_mode(tmp_path: Path, monkeypatch, capsy
     assert exit_code == 0
     assert captured["mode"] == "cheapest"
     assert "Selected runtime mode: cheapest" in out
+
+
+def test_task_runtime_event_includes_selected_mode(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "budget.json").write_text(
+        '{"limit": 1.0, "spent_estimate": 0.0, "currency": "USD", "events": []}',
+        encoding="utf-8",
+    )
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": True,
+            "status": "dry_run_planned",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": False, "test_command": "n/a"},
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    assert cli.main(["x", "--dry-run"]) == 0
+    data = load_budget(cwd=tmp_path) or {}
+    event = data.get("events", [])[0]
+    assert event.get("selected_mode") == "balanced"
+
+
+def test_task_prints_runtime_control_summary_when_runtime_runs(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": True,
+            "status": "dry_run_planned",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": False, "test_command": "n/a"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--dry-run"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Runtime Control:" in out

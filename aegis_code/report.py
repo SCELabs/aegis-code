@@ -77,6 +77,17 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         f"- Confidence: `{verification.get('confidence', 'low')}`",
         f"- Reason: `{verification.get('reason', 'n/a')}`",
         "",
+        "## Runtime Control",
+        "",
+        f"- Selected mode: `{(payload.get('runtime_policy', {}) or {}).get('selected_mode', 'n/a')}`",
+        f"- Reason: `{(payload.get('runtime_policy', {}) or {}).get('reason', 'default')}`",
+        (
+            f"- Budget remaining: `${float((payload.get('budget_state', {}) or {}).get('remaining_estimate', 0.0)):.2f}`"
+            if bool((payload.get('budget_state', {}) or {}).get("available", False))
+            else "- Budget: not set"
+        ),
+        f"- Context available: `{bool((payload.get('project_context', {}) or {}).get('available', False))}`",
+        "",
         "## Project Context",
         "",
         f"- Available: `{project_context.get('available', False)}`",

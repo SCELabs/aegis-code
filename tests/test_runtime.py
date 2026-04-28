@@ -290,3 +290,37 @@ def test_runtime_payload_includes_project_context_metadata(monkeypatch, tmp_path
     assert payload["project_context"]["available"] is True
     assert payload["project_context"]["included_paths"] == [".aegis/context/project_summary.md"]
     assert payload["project_context"]["total_chars"] == 88
+
+
+def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="control payload",
+            budget_state={
+                "available": True,
+                "limit": 1.0,
+                "spent_estimate": 0.2,
+                "remaining_estimate": 0.8,
+            },
+            runtime_policy={
+                "requested_mode": "balanced",
+                "selected_mode": "balanced",
+                "reason": "default",
+                "budget_present": True,
+                "context_available": True,
+            },
+        ),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["budget_state"]["available"] is True
+    assert payload["budget_state"]["remaining_estimate"] == 0.8
+    assert payload["runtime_policy"]["requested_mode"] == "balanced"
+    assert payload["runtime_policy"]["selected_mode"] == "balanced"
+    assert payload["runtime_policy"]["reason"] == "default"

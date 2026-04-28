@@ -34,6 +34,8 @@ class TaskOptions:
     session: str | None = None
     no_report: bool = False
     project_context: dict[str, Any] | None = None
+    budget_state: dict[str, Any] | None = None
+    runtime_policy: dict[str, Any] | None = None
 
 
 def _is_tests_passed(status: str, exit_code: int | None) -> bool:
@@ -384,6 +386,19 @@ def build_run_payload(
             "available": bool((options.project_context or {}).get("available", False)),
             "included_paths": list((options.project_context or {}).get("included_paths", [])),
             "total_chars": int((options.project_context or {}).get("total_chars", 0) or 0),
+        },
+        "budget_state": {
+            "available": bool((options.budget_state or {}).get("available", False)),
+            "limit": (options.budget_state or {}).get("limit"),
+            "spent_estimate": (options.budget_state or {}).get("spent_estimate"),
+            "remaining_estimate": (options.budget_state or {}).get("remaining_estimate"),
+        },
+        "runtime_policy": {
+            "requested_mode": (options.runtime_policy or {}).get("requested_mode"),
+            "selected_mode": (options.runtime_policy or {}).get("selected_mode"),
+            "reason": (options.runtime_policy or {}).get("reason"),
+            "budget_present": bool((options.runtime_policy or {}).get("budget_present", False)),
+            "context_available": bool((options.runtime_policy or {}).get("context_available", False)),
         },
     }
     return payload
