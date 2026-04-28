@@ -409,9 +409,10 @@ def _run_task_local(
     options: TaskOptions,
     cwd: Path | None = None,
     client: AegisBackendClient | None = None,
+    write_report: bool = True,
 ) -> dict[str, Any]:
     payload = build_run_payload(options=options, cwd=cwd, client=client)
-    if not options.no_report:
+    if write_report and not options.no_report:
         write_reports(payload, cwd=cwd)
     return payload
 

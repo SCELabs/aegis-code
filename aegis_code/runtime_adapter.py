@@ -60,7 +60,12 @@ def execute_task(
 
     cfg = load_config(cwd)
     enhanced_enabled = bool(cfg.aegis.enhanced_runtime)
-    local_result = _run_task_local(options=task_options, cwd=cwd, client=client)
+    local_result = _run_task_local(
+        options=task_options,
+        cwd=cwd,
+        client=client,
+        write_report=False,
+    )
     aegis_available = False
     adapter_mode = "local"
     fallback_reason = "disabled"

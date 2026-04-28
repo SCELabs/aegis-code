@@ -31,7 +31,8 @@ def _fake_local_payload(options: TaskOptions, cwd: Path | None = None) -> dict[s
 def test_execute_task_uses_local_when_enhanced_disabled(monkeypatch, tmp_path: Path) -> None:
     called = {"local": False}
 
-    def _fake_local(*, options, cwd=None, client=None):
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
         called["local"] = True
         return _fake_local_payload(options, cwd)
 
@@ -52,7 +53,8 @@ def test_execute_task_falls_back_when_enhanced_enabled_but_import_missing(monkey
         encoding="utf-8",
     )
 
-    def _fake_local(*, options, cwd=None, client=None):
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
         called["local"] = True
         return _fake_local_payload(options, cwd)
 
@@ -74,7 +76,8 @@ def test_execute_task_uses_aegis_step_when_enabled_and_available(monkeypatch, tm
         encoding="utf-8",
     )
 
-    def _fake_local(*, options, cwd=None, client=None):
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
         called["local"] = True
         return _fake_local_payload(options, cwd)
 
@@ -135,7 +138,8 @@ def test_execute_task_partial_step_result_keeps_local_structure(monkeypatch, tmp
         encoding="utf-8",
     )
 
-    def _fake_local(*, options, cwd=None, client=None):
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
         return _fake_local_payload(options, cwd)
 
     class _FakeFlow:
@@ -170,7 +174,8 @@ def test_execute_task_falls_back_on_client_error_with_error_fields(monkeypatch, 
         encoding="utf-8",
     )
 
-    def _fake_local(*, options, cwd=None, client=None):
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
         called["local"] = True
         return _fake_local_payload(options, cwd)
 
@@ -206,7 +211,8 @@ def test_execute_task_success_persists_adapter_metadata_to_reports(monkeypatch, 
         encoding="utf-8",
     )
 
-    def _fake_local(*, options, cwd=None, client=None):
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
         return _fake_local_payload(options, cwd)
 
     class _FakeFlow:
@@ -233,7 +239,40 @@ def test_execute_task_success_persists_adapter_metadata_to_reports(monkeypatch, 
     latest_md = paths["latest_md"].read_text(encoding="utf-8")
 
     assert latest_json["adapter"]["mode"] == "aegis"
+    assert latest_json["adapter"]["aegis_client_available"] is True
     assert latest_json["adapter"]["fallback_reason"] is None
     assert latest_json["adapter"]["fallback_reason"] != "import_missing"
     assert "## Runtime Adapter" in latest_md
     assert "Mode: `aegis`" in latest_md
+    assert "Aegis client available: `True`" in latest_md
+    assert "Fallback reason: `None`" in latest_md
+
+
+def test_execute_task_fallback_persists_local_adapter_metadata_to_reports(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        "aegis:\n  enhanced_runtime: true\n",
+        encoding="utf-8",
+    )
+
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = write_report
+        return _fake_local_payload(options, cwd)
+
+    monkeypatch.setattr("aegis_code.runtime._run_task_local", _fake_local)
+    monkeypatch.setitem(sys.modules, "aegis", types.ModuleType("aegis"))
+
+    result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
+    assert result["adapter"]["mode"] == "local"
+    assert result["adapter"]["fallback_reason"] == "import_missing"
+
+    paths = project_paths(tmp_path)
+    latest_json = json.loads(paths["latest_json"].read_text(encoding="utf-8"))
+    latest_md = paths["latest_md"].read_text(encoding="utf-8")
+
+    assert latest_json["adapter"]["mode"] == "local"
+    assert latest_json["adapter"]["aegis_client_available"] is False
+    assert latest_json["adapter"]["fallback_reason"] == "import_missing"
+    assert "Mode: `local`" in latest_md
+    assert "Aegis client available: `False`" in latest_md
+    assert "Fallback reason: `import_missing`" in latest_md
