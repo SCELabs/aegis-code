@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence
 
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
+from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
@@ -20,6 +21,16 @@ def _build_init_parser() -> argparse.ArgumentParser:
 
 def _build_report_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code report")
+
+
+def _build_backups_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code backups")
+
+
+def _build_restore_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code restore")
+    parser.add_argument("backup_id", help="Backup snapshot id under .aegis/backups.")
+    return parser
 
 
 def _build_apply_parser() -> argparse.ArgumentParser:
@@ -108,14 +119,81 @@ def handle_apply(argv: Sequence[str]) -> int:
         print(format_apply_check_result(result))
         return 0
 
-    if not args.path or not args.confirm:
+    if not args.path:
         print("Patch application requires --confirm. Use --check to preview without modifying files.")
         return 2
+
+    if not args.confirm:
+        path = Path(args.path)
+        try:
+            result = check_patch_file(path, cwd=cwd)
+        except FileNotFoundError:
+            print(f"Diff file not found: {path}")
+            print("Run a failing task with --propose-patch first, or provide a valid diff path.")
+            return 2
+        except Exception as exc:
+            print(f"Patch preview failed: {exc}")
+            return 2
+        summary = result.get("summary", {})
+        print(f"Patch preview: {result.get('path')}")
+        print(f"Valid: {result.get('valid', False)}")
+        print(f"Files: {summary.get('file_count', 0)}")
+        print(f"Hunks: {summary.get('hunk_count', 0)}")
+        print(f"Additions: {summary.get('additions', 0)}")
+        print(f"Deletions: {summary.get('deletions', 0)}")
+        print("Warnings:")
+        warnings = result.get("warnings", [])
+        if warnings:
+            for item in warnings:
+                print(f"- {item}")
+        else:
+            print("- none")
+        print("Applied: false")
+        print("Patch application requires --confirm.")
+        print("Use --confirm to apply this patch.")
+        return 1
 
     path = Path(args.path)
     result = apply_patch_file(path, cwd=cwd)
     print(format_apply_result(result))
     return 0 if result.get("applied", False) else 2
+
+
+def handle_backups(argv: Sequence[str]) -> int:
+    parser = _build_backups_parser()
+    parser.parse_args(list(argv))
+    result = list_backups(cwd=Path.cwd())
+    backups = result.get("backups", [])
+    if not backups:
+        print("No backups found.")
+        return 0
+    print("Backups:")
+    for item in backups:
+        print(f"- {item.get('id')}")
+        for file_path in item.get("files", []):
+            print(f"  - {file_path}")
+    return 0
+
+
+def handle_restore(argv: Sequence[str]) -> int:
+    parser = _build_restore_parser()
+    args = parser.parse_args(list(argv))
+    result = restore_backup(args.backup_id, cwd=Path.cwd())
+    print(f"Restore: {result.get('backup_id')}")
+    print(f"Restored: {result.get('restored', False)}")
+    files = result.get("files", [])
+    print("Files:")
+    if files:
+        for file_path in files:
+            print(f"- {file_path}")
+    else:
+        print("- none")
+    errors = result.get("errors", [])
+    if errors:
+        print("Errors:")
+        for err in errors:
+            print(f"- {err}")
+    return 0 if result.get("restored", False) else 2
 
 
 def handle_check_sll(argv: Sequence[str]) -> int:
@@ -224,6 +302,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_report(args[1:])
     if command == "apply":
         return handle_apply(args[1:])
+    if command == "backups":
+        return handle_backups(args[1:])
+    if command == "restore":
+        return handle_restore(args[1:])
     return handle_task(args)
 
 

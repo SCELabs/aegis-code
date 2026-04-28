@@ -246,4 +246,5 @@ def format_apply_result(result: dict[str, Any]) -> str:
         lines.extend(f"- {e}" for e in errors)
     else:
         lines.append("- none")
+    lines.append("No git commands were run.")
     return "\n".join(lines)

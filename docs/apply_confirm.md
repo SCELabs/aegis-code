@@ -3,6 +3,7 @@
 Use explicit confirmation to apply a patch diff:
 
 - `aegis-code apply .aegis/runs/latest.diff --confirm`
+- `aegis-code apply .aegis/runs/latest.diff` (preview only, no edits)
 
 ## Safety model
 - Requires explicit `--confirm`.
@@ -19,4 +20,5 @@ Use explicit confirmation to apply a patch diff:
 
 ## Recovery
 - Restore files manually from `.aegis/backups/...` if needed.
-
+- List backups: `aegis-code backups`
+- Restore backup snapshot: `aegis-code restore BACKUP_ID`

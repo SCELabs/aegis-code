@@ -16,6 +16,7 @@
 
 ## Command examples
 - `aegis-code apply --check .aegis/runs/latest.diff`
+- `aegis-code apply .aegis/runs/latest.diff` (preview only, requires `--confirm` for apply)
 
 ## Safety guarantees
 - No file edits are performed.
@@ -35,3 +36,4 @@ Warnings do not apply or block anything by themselves. They are advisory for hum
 ## Future note
 - A real apply command may be added later behind explicit human confirmation.
 - `aegis-code apply PATH --confirm` is explicit and separate from `--check`.
+- Confirmed apply creates backups under `.aegis/backups/` and can be recovered with `aegis-code backups` and `aegis-code restore BACKUP_ID`.
