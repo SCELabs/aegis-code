@@ -99,7 +99,7 @@ def build_run_payload(
         retry_policy["stopped_reason"] = "dry_run"
         notes = [
             "Dry-run mode: no commands executed.",
-            "v0.3 is planning/reporting only and does not edit files.",
+            "v0.4 is planning/reporting only and does not edit files.",
         ]
         status = "dry_run_planned"
     else:
@@ -215,7 +215,7 @@ def build_run_payload(
 
             notes = [
                 "Executed safe baseline actions only.",
-                "v0.3 controlled loop runs test retries only; no file edits.",
+                "v0.4 controlled loop runs test retries only; no file edits.",
             ]
         else:
             aegis_client = client or client_from_env(config.aegis.base_url)
@@ -238,7 +238,7 @@ def build_run_payload(
             status = "completed_no_commands"
             notes = [
                 "No configured test command found.",
-                "v0.3 is planning/reporting only and does not edit files.",
+                "v0.4 is planning/reporting only and does not edit files.",
             ]
             retry_policy["stopped_reason"] = "no_test_command"
 

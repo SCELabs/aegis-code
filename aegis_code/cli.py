@@ -90,7 +90,7 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     payload = run_task(options=options, cwd=Path.cwd())
 
-    print("Aegis Code v0.3: controlled failure-aware execution loop.")
+    print("Aegis Code v0.4: controlled execution with proposal-only patch diffs.")
     print(f"Task: {payload['task']}")
     print(f"Mode: {payload['mode']}")
     print(f"Dry run: {payload['dry_run']}")
@@ -112,8 +112,14 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     print(f"Patch plan available: {has_patch_plan}")
     print(f"Patch diff attempted: {patch_diff.get('attempted', False)}")
+    if patch_diff.get("available", False):
+        print("Patch diff status: generated")
+    elif patch_diff.get("attempted", False):
+        print("Patch diff status: unavailable")
+    else:
+        print("Patch diff status: skipped")
     if patch_diff.get("path"):
-        print(f"Patch diff path: {patch_diff.get('path')}")
+        print(f"Patch diff written: {patch_diff.get('path')}")
     if patch_diff.get("error"):
         print(f"Patch diff error: {patch_diff.get('error')}")
     if not args.no_report:

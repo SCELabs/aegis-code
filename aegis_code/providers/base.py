@@ -54,6 +54,7 @@ def is_plausible_diff(text: str) -> bool:
     value = text.strip()
     if not value:
         return False
+    if "```" in value:
+        return False
     markers = ("diff --git", "--- ", "+++ ", "@@")
     return any(marker in value for marker in markers)
-

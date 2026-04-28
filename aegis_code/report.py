@@ -223,9 +223,9 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
             "## Next Steps",
             "",
-            "- v0.3 runs a controlled execution loop.",
+            "- v0.4 runs a controlled execution loop with optional proposal-only patch diffs.",
             "- No file edits or patch applications are performed.",
-            "- Use the report output to guide the next supervised action.",
+            "- Use the report output and diff proposal to guide the next supervised action.",
             "",
         ]
     )

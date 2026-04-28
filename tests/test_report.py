@@ -54,7 +54,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Structural Analysis" in content
     assert "## Proposed Fix Plan" in content
     assert "## Patch Diff Proposal" in content
-    assert "v0.3 runs a controlled execution loop." in content
+    assert "v0.4 runs a controlled execution loop with optional proposal-only patch diffs." in content
 
 
 def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
@@ -100,7 +100,7 @@ def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
             "model": "gpt-4.1-mini",
             "path": ".aegis/runs/latest.diff",
             "error": None,
-            "preview": "diff --git a/x.py b/x.py",
+            "preview": "diff --git a/x.py b/x.py\n" + ("+" * 2000),
         },
         "status": "completed_tests_failed",
         "notes": ["planning only"],
@@ -109,3 +109,4 @@ def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
     content = paths["md"].read_text(encoding="utf-8")
     assert "VERY_LONG_INTERNAL_OUTPUT" not in content
     assert "SENSITIVE_FILE_CONTENT_SHOULD_NOT_APPEAR" not in content
+    assert ("+" * 1200) not in content

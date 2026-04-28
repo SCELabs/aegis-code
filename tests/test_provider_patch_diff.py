@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aegis_code.models import AegisDecision
 from aegis_code.providers.openai_provider import generate_patch_diff_openai
+from aegis_code.report import render_markdown_report
 from aegis_code.runtime import TaskOptions, build_run_payload
 from tests.helpers import command_result_from_output, pytest_output_fail, pytest_output_pass
 
@@ -120,6 +121,10 @@ def test_propose_patch_triggers_attempt_and_writes_diff(monkeypatch, tmp_path: P
     assert patch_diff["available"] is True
     assert patch_diff["path"]
     assert Path(patch_diff["path"]).exists()
+    report = render_markdown_report(payload)
+    assert "## Patch Diff Proposal" in report
+    assert "Provider: `openai`" in report
+    assert "Path: `" in report
 
 
 def test_no_provider_call_when_tests_pass(monkeypatch, tmp_path: Path) -> None:
@@ -141,3 +146,71 @@ def test_no_provider_call_when_tests_pass(monkeypatch, tmp_path: Path) -> None:
         client=_Client(),
     )
     assert payload["patch_diff"]["attempted"] is False
+
+
+def test_failing_tests_no_propose_patch_no_attempt(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
+        ),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(task="x", propose_patch=False),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["attempted"] is False
+
+
+def test_failing_tests_propose_patch_missing_key_attempted_unavailable(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
+        ),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(task="x", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    patch_diff = payload["patch_diff"]
+    assert patch_diff["attempted"] is True
+    assert patch_diff["available"] is False
+    assert patch_diff["error"]
+    assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
+
+
+def test_invalid_provider_diff_no_file_written(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
+        ),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider output did not look like a unified diff.",
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="x", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    patch_diff = payload["patch_diff"]
+    assert patch_diff["attempted"] is True
+    assert patch_diff["available"] is False
+    assert "unified diff" in str(patch_diff["error"]).lower()
+    assert patch_diff["path"] is None
+    assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
