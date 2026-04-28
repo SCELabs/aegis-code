@@ -42,14 +42,17 @@ from aegis_code.tools.tests import run_configured_tests
 
 def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
     info = adapter or {}
-    return "\n".join(
-        [
-            "Runtime Adapter:",
-            f"- Mode: {info.get('mode', 'local')}",
-            f"- Aegis client available: {'true' if bool(info.get('aegis_client_available', False)) else 'false'}",
-            f"- Fallback: {info.get('fallback_reason', 'import_missing')}",
-        ]
-    )
+    lines = [
+        "Runtime Adapter:",
+        f"- Mode: {info.get('mode', 'local')}",
+        f"- Aegis client available: {'true' if bool(info.get('aegis_client_available', False)) else 'false'}",
+        f"- Fallback: {info.get('fallback_reason', 'import_missing')}",
+    ]
+    if info.get("error_type"):
+        lines.append(f"- Error type: {info.get('error_type')}")
+    if info.get("error_message"):
+        lines.append(f"- Error: {info.get('error_message')}")
+    return "\n".join(lines)
 
 
 def _build_init_parser() -> argparse.ArgumentParser:

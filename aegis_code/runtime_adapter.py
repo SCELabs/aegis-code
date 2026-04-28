@@ -1,33 +1,53 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aegis_code.aegis_client import AegisBackendClient
 from aegis_code.config import load_config
+from aegis_code.report import write_reports
 
 if TYPE_CHECKING:
     from aegis_code.runtime import TaskOptions
 
 
-def _normalize_client_result(raw: Any) -> dict[str, Any]:
+def _to_mapping(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
-        return {
-            "output": raw.get("output"),
-            "final_answer": raw.get("final_answer"),
-            "metrics": raw.get("metrics", {}),
-            "actions": raw.get("actions", []),
-            "trace": raw.get("trace", []),
-            "explanation": raw.get("explanation", ""),
-        }
-    return {
-        "output": None,
-        "final_answer": str(raw) if raw is not None else "",
-        "metrics": {},
-        "actions": [],
-        "trace": [],
-        "explanation": "",
-    }
+        return raw
+    if is_dataclass(raw):
+        return asdict(raw)
+    if hasattr(raw, "__dict__"):
+        return dict(raw.__dict__)
+    return {}
+
+
+def _normalize_aegis_result(raw: Any) -> dict[str, Any]:
+    data = _to_mapping(raw)
+    if data:
+        normalized: dict[str, Any] = {}
+        for key in (
+            "output",
+            "final_answer",
+            "metrics",
+            "actions",
+            "trace",
+            "explanation",
+            "guidance",
+            "note",
+            "execution",
+        ):
+            if key in data:
+                normalized[key] = data[key]
+        return normalized
+    if raw is None:
+        return {}
+    return {"explanation": str(raw)}
+
+
+def _short_error_message(exc: Exception, max_chars: int = 300) -> str:
+    text = str(exc).strip() or exc.__class__.__name__
+    return text if len(text) <= max_chars else (text[: max_chars - 3] + "...")
 
 
 def execute_task(
@@ -40,9 +60,13 @@ def execute_task(
 
     cfg = load_config(cwd)
     enhanced_enabled = bool(cfg.aegis.enhanced_runtime)
+    local_result = _run_task_local(options=task_options, cwd=cwd, client=client)
     aegis_available = False
     adapter_mode = "local"
     fallback_reason = "disabled"
+    response: Any = None
+    error_type: str | None = None
+    error_message: str | None = None
 
     try:
         from aegis import AegisClient  # type: ignore
@@ -53,34 +77,55 @@ def execute_task(
         aegis_available = False
         fallback_reason = "import_missing"
 
+    if not enhanced_enabled:
+        fallback_reason = "disabled"
+
     if enhanced_enabled and aegis_available:
         try:
-            aegis_client = AegisClient()
-            raw_result = aegis_client.auto().llm(
-                prompt=task_options.task,
-                context=task_options.project_context or {},
+            aegis_client = AegisClient(base_url=cfg.aegis.base_url)
+            response = aegis_client.auto().step(
+                step_name="aegis-code-runtime",
+                step_input={
+                    "task": task_options.task,
+                    "mode": task_options.mode,
+                    "dry_run": task_options.dry_run,
+                },
+                symptoms=local_result.get("symptoms", ["unstable_workflow"]) or ["unstable_workflow"],
+                severity="medium",
                 metadata={
-                    "budget": task_options.budget_state or {},
-                    "policy": task_options.runtime_policy or {},
+                    "project_context": task_options.project_context or {},
+                    "budget_state": task_options.budget_state or {},
+                    "runtime_policy": task_options.runtime_policy or {},
+                    "verification": local_result.get("verification"),
+                    "failures": local_result.get("failures"),
+                    "status": local_result.get("status"),
                 },
             )
-            result = _run_task_local(options=task_options, cwd=cwd, client=client)
-            result.update(_normalize_client_result(raw_result))
             adapter_mode = "aegis"
             fallback_reason = None
-        except Exception:
-            result = _run_task_local(options=task_options, cwd=cwd, client=client)
+        except Exception as exc:
+            response = None
             adapter_mode = "local"
             fallback_reason = "client_error"
-    else:
-        result = _run_task_local(options=task_options, cwd=cwd, client=client)
-        adapter_mode = "local"
-        fallback_reason = "disabled" if not enhanced_enabled else "import_missing"
+            error_type = exc.__class__.__name__
+            error_message = _short_error_message(exc)
 
+    result = dict(local_result)
+    if adapter_mode == "aegis" and response is not None:
+        aegis_result = _normalize_aegis_result(response)
+        result["aegis_result"] = aegis_result
+        for key in ("actions", "trace", "explanation", "metrics"):
+            value = aegis_result.get(key)
+            if value is not None:
+                result[key] = value
     result["adapter"] = {
         "mode": adapter_mode,
         "aegis_client_available": aegis_available,
         "enhanced_enabled": enhanced_enabled,
         "fallback_reason": fallback_reason,
+        "error_type": error_type,
+        "error_message": error_message,
     }
+    if not task_options.no_report:
+        write_reports(result, cwd=cwd)
     return result

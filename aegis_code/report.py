@@ -94,6 +94,16 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         f"- Mode: `{adapter.get('mode', 'local')}`",
         f"- Aegis client available: `{bool(adapter.get('aegis_client_available', False))}`",
         f"- Fallback reason: `{adapter.get('fallback_reason', 'import_missing')}`",
+        (
+            f"- Error type: `{adapter.get('error_type')}`"
+            if adapter.get("error_type")
+            else "- Error type: `none`"
+        ),
+        (
+            f"- Error: `{adapter.get('error_message')}`"
+            if adapter.get("error_message")
+            else "- Error: `none`"
+        ),
         "",
         "## Project Context",
         "",

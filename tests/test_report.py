@@ -54,6 +54,8 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
             "mode": "local",
             "aegis_client_available": False,
             "fallback_reason": "import_missing",
+            "error_type": None,
+            "error_message": None,
         },
         "status": "dry_run_planned",
         "notes": ["planning only"],
@@ -72,6 +74,8 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "Mode: `local`" in content
     assert "Aegis client available: `False`" in content
     assert "Fallback reason: `import_missing`" in content
+    assert "Error type: `none`" in content
+    assert "Error: `none`" in content
     assert "## Project Context" in content
     assert "Total chars: `123`" in content
     assert "## Retry Policy" in content

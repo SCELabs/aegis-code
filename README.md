@@ -143,8 +143,8 @@ This prepares Aegis Code for deeper client integration without adding new extern
 Budget runtime events now record selected mode and decision reason (`default`, `low_budget`, or `policy_adjustment`) in `.aegis/budget.json` for local observability.
 
 Runtime Control summaries in CLI/report output show selected mode, reason, budget remaining, and context availability.
-Runtime Adapter summaries in CLI/report output show execution path (`local`) and whether optional `aegis` client auto-detection succeeded.
-Set `aegis.enhanced_runtime: true` in `.aegis/aegis-code.yml` to enable optional Aegis client execution; default is `false` and local execution remains the safe default/fallback.
+Runtime Adapter summaries in CLI/report output show execution path (`local` or `aegis`) and optional client/fallback details.
+Set `aegis.enhanced_runtime: true` in `.aegis/aegis-code.yml` to enable optional Aegis Client control guidance (requires `aegis` client package installed); default is `false` and local execution remains the safe default/fallback.
 
 ## Overview
 
@@ -218,4 +218,6 @@ This is local-only, deterministic, and read-only.
 - SLL (`structural_language_lab`) is optional and local-install only.
 - Provider-backed patch diffs are optional and proposal-only.
 - Optional `aegis` client auto-detection is supported at runtime; when unavailable, Aegis Code automatically falls back to local runtime execution with no config changes required.
-- Enhanced runtime is feature-flagged via `aegis.enhanced_runtime` and falls back to local execution when disabled, import is missing, or client execution errors.
+- Enhanced runtime is feature-flagged via `aegis.enhanced_runtime` and uses `client.auto().step(...)` as a control-layer call.
+- Local verification/execution remains primary; Aegis guidance is attached as `aegis_result`.
+- Fallback stays local when disabled, import is missing, or client execution errors.

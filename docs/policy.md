@@ -52,11 +52,17 @@ This logging is local-only and deterministic.
 
 ## Enhanced runtime flag
 
-`aegis.enhanced_runtime` controls optional Aegis client execution in the runtime adapter.
+`aegis.enhanced_runtime` controls optional Aegis client control guidance in the runtime adapter.
 
 - default: `false` (local path)
-- `true` + client import available: adapter uses Aegis client execution path
+- `true` + client import available: adapter calls `client.auto().step(...)`
 - fallback stays local when client import is missing or client execution raises an error
+
+Enhanced runtime treats Aegis as a control layer:
+
+- local runtime result remains primary
+- Aegis response is attached as `aegis_result`
+- compatible guidance fields may be merged (`actions`, `trace`, `explanation`, `metrics`)
 
 Adapter metadata records:
 
@@ -64,3 +70,4 @@ Adapter metadata records:
 - `aegis_client_available`
 - `enhanced_enabled`
 - `fallback_reason` (`disabled`, `import_missing`, or `client_error`)
+- `error_type` / `error_message` when client errors occur

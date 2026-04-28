@@ -207,6 +207,8 @@ def test_task_prints_runtime_control_summary_when_runtime_runs(tmp_path: Path, m
                 "mode": "local",
                 "aegis_client_available": False,
                 "fallback_reason": "import_missing",
+                "error_type": None,
+                "error_message": None,
             },
         }
 
@@ -217,3 +219,40 @@ def test_task_prints_runtime_control_summary_when_runtime_runs(tmp_path: Path, m
     assert "Runtime Control:" in out
     assert "Runtime Adapter:" in out
     assert "Mode: local" in out
+
+
+def test_task_prints_runtime_adapter_error_fields(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": True,
+            "status": "dry_run_planned",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": False, "test_command": "n/a"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {
+                "mode": "local",
+                "aegis_client_available": True,
+                "fallback_reason": "client_error",
+                "error_type": "RuntimeError",
+                "error_message": "boom",
+            },
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--dry-run"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Error type: RuntimeError" in out
+    assert "Error: boom" in out
