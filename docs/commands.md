@@ -8,6 +8,10 @@
   Run the controlled workflow for a task.  
   Example: `aegis-code "triage current test failures" --budget 1.25`
 
+- `aegis-code create "<idea>"`  
+  Generate a planning-only project plan preview (no files written).  
+  Example: `aegis-code create "build a REST API for user management"`
+
 - `aegis-code report`  
   Print the latest markdown report.  
   Example: `aegis-code report`

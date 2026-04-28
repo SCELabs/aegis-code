@@ -8,6 +8,7 @@ from typing import Sequence
 
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
@@ -36,6 +37,12 @@ def _build_status_parser() -> argparse.ArgumentParser:
 
 def _build_maintain_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code maintain")
+
+
+def _build_create_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code create")
+    parser.add_argument("idea", help="Project idea to plan.")
+    return parser
 
 
 def _build_doctor_parser() -> argparse.ArgumentParser:
@@ -196,6 +203,14 @@ def handle_maintain(argv: Sequence[str]) -> int:
     parser.parse_args(list(argv))
     report = build_maintenance_report(cwd=Path.cwd())
     print(format_maintenance_report(report))
+    return 0
+
+
+def handle_create(argv: Sequence[str]) -> int:
+    parser = _build_create_parser()
+    args = parser.parse_args(list(argv))
+    plan = build_create_plan(args.idea, cwd=Path.cwd())
+    print(format_create_plan(plan))
     return 0
 
 
@@ -535,6 +550,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_status(args[1:])
     if command == "maintain":
         return handle_maintain(args[1:])
+    if command == "create":
+        return handle_create(args[1:])
     if command == "doctor":
         return handle_doctor(args[1:])
     if command == "apply":

@@ -30,6 +30,12 @@ Run a task:
 aegis-code "triage current test failures" --budget 1.25
 ```
 
+Create a planning-only project plan:
+
+```bash
+aegis-code create "build a REST API for user management"
+```
+
 Show latest report:
 
 ```bash
@@ -52,6 +58,7 @@ aegis-code maintain
 
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
+- `aegis-code create "<idea>"` - generate a planning-only project plan preview
 - `aegis-code report` - print latest markdown report
 - `aegis-code status` - compact latest-run summary
 - `aegis-code maintain` - read-only repo health and suggestions
