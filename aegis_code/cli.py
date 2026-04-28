@@ -7,6 +7,7 @@ from typing import Sequence
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
+from aegis_code.sll_adapter import check_sll_available
 
 
 def _build_init_parser() -> argparse.ArgumentParser:
@@ -17,6 +18,10 @@ def _build_init_parser() -> argparse.ArgumentParser:
 
 def _build_report_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code report")
+
+
+def _build_check_sll_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code --check-sll")
 
 
 def _build_task_parser() -> argparse.ArgumentParser:
@@ -72,6 +77,17 @@ def handle_report(argv: Sequence[str]) -> int:
     print(f"Latest report: {path}")
     print("")
     print(content)
+    return 0
+
+
+def handle_check_sll(argv: Sequence[str]) -> int:
+    parser = _build_check_sll_parser()
+    parser.parse_args(list(argv))
+    status = check_sll_available()
+    print(f"SLL available: {'true' if status.get('available', False) else 'false'}")
+    print(f"Import path: {status.get('import_path', 'structural_language_lab')}")
+    if status.get("error"):
+        print(f"Error: {status.get('error')}")
     return 0
 
 
@@ -139,6 +155,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args:
         _build_task_parser().print_help()
         return 1
+
+    if args[0] == "--check-sll":
+        return handle_check_sll(args[1:])
 
     command = args[0]
     if command == "init":

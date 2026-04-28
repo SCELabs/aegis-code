@@ -168,8 +168,23 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Fragmentation risk: `{sll_analysis.get('fragmentation_risk', 0.0)}`")
         lines.append(f"- Drift risk: `{sll_analysis.get('drift_risk', 0.0)}`")
         lines.append(f"- Stable random risk: `{sll_analysis.get('stable_random_risk', 0.0)}`")
+        mapped = [
+            item
+            for item in symptoms
+            if item
+            in {
+                "fragmented_output",
+                "degenerate_loop",
+                "unstable_workflow",
+                "ungrounded_output",
+            }
+        ]
+        if mapped:
+            lines.append(f"- Mapped symptoms: `{', '.join(mapped)}`")
     else:
-        lines.append("- Not available (`available=false`)")
+        lines.append("- Not available")
+        lines.append("- Optional dependency not installed/importable")
+        lines.append("- Run `aegis-code --check-sll` to verify local setup")
 
     lines.extend(
         [

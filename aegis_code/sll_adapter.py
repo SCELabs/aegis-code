@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import importlib
 from typing import Any
+
+
+SLL_IMPORT_PATH = "structural_language_lab"
 
 
 def _as_float(value: Any, default: float = 0.0) -> float:
@@ -14,16 +18,36 @@ def _unavailable() -> dict[str, Any]:
     return {"available": False}
 
 
+def _load_analyze_sequence() -> tuple[Any | None, str | None]:
+    try:
+        module = importlib.import_module(SLL_IMPORT_PATH)
+    except Exception as exc:
+        return None, str(exc)
+    analyze_sequence = getattr(module, "analyze_sequence", None)
+    if analyze_sequence is None:
+        return None, f"Cannot import name 'analyze_sequence' from '{SLL_IMPORT_PATH}'"
+    return analyze_sequence, None
+
+
+def check_sll_available() -> dict[str, Any]:
+    analyze_sequence, error = _load_analyze_sequence()
+    return {
+        "available": analyze_sequence is not None,
+        "import_path": SLL_IMPORT_PATH,
+        "error": error,
+    }
+
+
 def analyze_failures_sll(failure_text: str) -> dict[str, Any]:
     if not failure_text.strip():
         return _unavailable()
 
-    try:
-        from structural_language_lab import analyze_sequence
-    except Exception:
+    analyze_sequence, _error = _load_analyze_sequence()
+    if analyze_sequence is None:
         return _unavailable()
 
     try:
+        assert analyze_sequence is not None
         result = analyze_sequence(failure_text)
     except Exception:
         return _unavailable()

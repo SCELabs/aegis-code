@@ -40,3 +40,10 @@ def test_cli_accepts_propose_patch_flag(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("aegis_code.runtime.client_from_env", lambda _base_url: FakeAegisClient())
     exit_code = cli.main(["plan release notes", "--dry-run", "--propose-patch"])
     assert exit_code == 0
+
+
+def test_cli_check_sll_does_not_run_runtime(monkeypatch) -> None:
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no runtime")))
+    monkeypatch.setattr("aegis_code.cli.check_sll_available", lambda: {"available": False, "import_path": "structural_language_lab", "error": "x"})
+    exit_code = cli.main(["--check-sll"])
+    assert exit_code == 0
