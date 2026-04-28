@@ -16,6 +16,10 @@
   Show compact latest-run status and backup count.  
   Example: `aegis-code status`
 
+- `aegis-code maintain`  
+  Show read-only repo health summary and safe next actions.  
+  Example: `aegis-code maintain`
+
 - `aegis-code --check-sll`  
   Verify optional local SLL import.  
   Example: `aegis-code --check-sll`
@@ -39,4 +43,3 @@
 - `aegis-code restore BACKUP_ID`  
   Restore files from a backup snapshot.  
   Example: `aegis-code restore 20260428_143210`
-

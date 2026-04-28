@@ -8,6 +8,7 @@ from typing import Sequence
 
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.maintain import build_maintenance_report, format_maintenance_report
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
@@ -31,6 +32,10 @@ def _build_report_parser() -> argparse.ArgumentParser:
 
 def _build_status_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code status")
+
+
+def _build_maintain_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code maintain")
 
 
 def _build_doctor_parser() -> argparse.ArgumentParser:
@@ -148,13 +153,29 @@ def handle_status(argv: Sequence[str]) -> int:
     patch_diff = payload.get("patch_diff", {}) or {}
     patch_quality = payload.get("patch_quality")
     verification = payload.get("verification", {}) or {}
+    detected = detect_capabilities(Path.cwd())
+    ver_available = verification.get("available")
+    ver_command = verification.get("test_command")
+    ver_stack = verification.get("detected_stack")
+    has_verification = (
+        isinstance(verification, dict)
+        and ver_available is not None
+        and bool(str(ver_command or "").strip())
+        and bool(str(ver_stack or "").strip())
+    )
+    if not has_verification:
+        verification = {
+            "available": bool(detected.get("verification_available", False)),
+            "test_command": detected.get("test_command"),
+            "detected_stack": detected.get("detected_stack"),
+        }
 
     print("Status:")
     print(f"- Task: {payload.get('task', '')}")
     print(f"- Run status: {payload.get('status', '')}")
     print(f"- Failure count: {payload.get('failures', {}).get('failure_count', 0)}")
     print(
-        f"- Verification: available={verification.get('available', False)} command={verification.get('test_command', 'n/a')} stack={verification.get('detected_stack', 'n/a')}"
+        f"- Verification: available={verification.get('available', False)} command={verification.get('test_command') or 'n/a'} stack={verification.get('detected_stack') or 'n/a'}"
     )
     print(
         f"- SLL: available={sll.get('available', False)} regime={sll.get('regime', 'n/a') if sll.get('available', False) else 'n/a'}"
@@ -167,6 +188,14 @@ def handle_status(argv: Sequence[str]) -> int:
     else:
         print("- Patch quality confidence: n/a")
     print(f"- Backup count: {len(backups)}")
+    return 0
+
+
+def handle_maintain(argv: Sequence[str]) -> int:
+    parser = _build_maintain_parser()
+    parser.parse_args(list(argv))
+    report = build_maintenance_report(cwd=Path.cwd())
+    print(format_maintenance_report(report))
     return 0
 
 
@@ -504,6 +533,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_report(args[1:])
     if command == "status":
         return handle_status(args[1:])
+    if command == "maintain":
+        return handle_maintain(args[1:])
     if command == "doctor":
         return handle_doctor(args[1:])
     if command == "apply":

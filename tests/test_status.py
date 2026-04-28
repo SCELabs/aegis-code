@@ -51,13 +51,39 @@ def test_status_with_missing_optional_fields(tmp_path: Path, monkeypatch, capsys
     runs.mkdir(parents=True)
     payload = {"task": "x", "status": "completed", "failures": {"failure_count": 0}}
     (runs / "latest.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
 
     exit_code = cli.main(["status"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Verification: available=False command=n/a stack=n/a" in out
+    assert "Verification: available=True command=python -m pytest -q stack=python" in out
     assert "Patch quality confidence: n/a" in out
     assert "Backup count: 0" in out
+
+
+def test_status_uses_latest_verification_when_present(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True)
+    payload = {
+        "task": "x",
+        "status": "completed",
+        "failures": {"failure_count": 0},
+        "verification": {
+            "available": False,
+            "test_command": "custom test",
+            "detected_stack": "custom",
+        },
+    }
+    (runs / "latest.json").write_text(json.dumps(payload), encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+
+    exit_code = cli.main(["status"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Verification: available=False command=custom test stack=custom" in out
 
 
 def test_status_does_not_run_runtime(monkeypatch, tmp_path: Path, capsys) -> None:

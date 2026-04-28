@@ -42,12 +42,19 @@ Show compact workflow status:
 aegis-code status
 ```
 
+Show proactive read-only repo health:
+
+```bash
+aegis-code maintain
+```
+
 ## Command Index
 
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
 - `aegis-code report` - print latest markdown report
 - `aegis-code status` - compact latest-run summary
+- `aegis-code maintain` - read-only repo health and suggestions
 - `aegis-code --check-sll` - verify optional SLL local import
 - `aegis-code apply --check PATH` - inspect diff without modifying files
 - `aegis-code apply PATH` - preview apply and require explicit confirmation
