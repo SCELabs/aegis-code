@@ -1,8 +1,8 @@
-# aegis-code
+﻿# aegis-code
 
 `aegis-code` is a terminal-native, Aegis-guided coding workflow runner focused on safe, supervised operation.
 
-Current capabilities include failure-aware test triage, optional structural analysis, proposal-only patch diffs, deterministic patch-quality scoring, and explicit human-confirmed apply with backups.
+Current capabilities include failure-aware test triage, optional structural analysis, proposal-only patch diffs, deterministic patch-quality scoring, explicit human-confirmed apply with backups, and controlled project scaffold creation.
 
 ## Install (Dev)
 
@@ -36,6 +36,18 @@ Create a planning-only project plan:
 aegis-code create "build a REST API for user management"
 ```
 
+Preview scaffold target without writing files:
+
+```bash
+aegis-code create "build a REST API" --target ./my-project
+```
+
+Write scaffold files with explicit confirmation:
+
+```bash
+aegis-code create "build a REST API" --target ./my-project --confirm
+```
+
 Show latest report:
 
 ```bash
@@ -59,6 +71,8 @@ aegis-code maintain
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
 - `aegis-code create "<idea>"` - generate a planning-only project plan preview
+- `aegis-code create "<idea>" --target PATH` - preview scaffold file set (no writes)
+- `aegis-code create "<idea>" --target PATH --confirm` - write scaffold to empty target
 - `aegis-code report` - print latest markdown report
 - `aegis-code status` - compact latest-run summary
 - `aegis-code maintain` - read-only repo health and suggestions
@@ -77,6 +91,7 @@ aegis-code maintain
 - Confirmed apply creates backups under `.aegis/backups/...`.
 - Restore is available for rollback.
 - No git commands are run by `aegis-code`.
+- `create --target` refuses current repo root and non-empty targets.
 
 ## Optional Integrations
 

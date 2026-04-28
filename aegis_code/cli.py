@@ -9,6 +9,7 @@ from typing import Sequence
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.create_plan import build_create_plan, format_create_plan
+from aegis_code.create_scaffold import create_scaffold
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
@@ -42,6 +43,8 @@ def _build_maintain_parser() -> argparse.ArgumentParser:
 def _build_create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code create")
     parser.add_argument("idea", help="Project idea to plan.")
+    parser.add_argument("--target", default=None, help="Optional scaffold target directory (requires --confirm).")
+    parser.add_argument("--confirm", action="store_true", help="Confirm writing scaffold files to --target.")
     return parser
 
 
@@ -211,7 +214,26 @@ def handle_create(argv: Sequence[str]) -> int:
     args = parser.parse_args(list(argv))
     plan = build_create_plan(args.idea, cwd=Path.cwd())
     print(format_create_plan(plan))
-    return 0
+    if not args.target:
+        return 0
+
+    result = create_scaffold(
+        target=Path(args.target),
+        cwd=Path.cwd(),
+        stack_name=str(plan.get("stack", {}).get("name", "python-basic")),
+        idea=str(plan.get("idea", "")),
+        test_command=str(plan.get("test_command", "python -m pytest -q")),
+        confirm=bool(args.confirm),
+    )
+    print("")
+    print(f"Scaffold target: {result.get('target', args.target)}")
+    print(result.get("message", ""))
+    files = result.get("files", []) or result.get("written", [])
+    if files:
+        print("Files:")
+        for item in files:
+            print(f"- {item}")
+    return int(result.get("code", 2))
 
 
 def handle_doctor(argv: Sequence[str]) -> int:
