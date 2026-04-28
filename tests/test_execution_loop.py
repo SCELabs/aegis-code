@@ -30,3 +30,11 @@ def test_synthesize_symptoms_maps_failure_and_sll_and_dedupes() -> None:
         "ungrounded_output",
     ]
 
+
+def test_synthesize_symptoms_without_sll_is_safe() -> None:
+    symptoms = synthesize_symptoms(
+        failures={"failure_count": 1, "failed_tests": [{"test_name": "x", "file": "tests/test_x.py"}]},
+        sll_analysis={"available": False},
+        base_symptoms=["base"],
+    )
+    assert symptoms == ["base", "test_failure"]

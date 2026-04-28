@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
-from aegis_code.runtime import TaskOptions, build_run_payload
+from aegis_code.runtime import TaskOptions, build_run_payload, run_task
+from tests.helpers import (
+    command_result_from_output,
+    pytest_output_fail,
+    pytest_output_pass,
+    retry_sequence_fail_then_fail,
+    retry_sequence_fail_then_pass,
+)
 
 
 class _CapturingClient:
@@ -31,15 +38,8 @@ class _CapturingClient:
 def test_runtime_calls_aegis_after_observation(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
-        lambda _cmd, cwd=None: CommandResult(
-            name="test",
-            command="pytest -q",
-            status="failed",
-            exit_code=1,
-            stdout="",
-            stderr="boom",
-            output_preview="boom",
-            full_output="FAILED tests/test_x.py::test_x - AssertionError: boom",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
         ),
     )
     monkeypatch.setattr(
@@ -71,28 +71,7 @@ def test_runtime_calls_aegis_after_observation(monkeypatch, tmp_path: Path) -> N
 
 
 def test_retry_loop_success_after_retry(monkeypatch, tmp_path: Path) -> None:
-    results = [
-        CommandResult(
-            name="test",
-            command="pytest -q",
-            status="failed",
-            exit_code=1,
-            stdout="",
-            stderr="boom",
-            output_preview="boom",
-            full_output="FAILED tests/test_x.py::test_x - AssertionError: boom",
-        ),
-        CommandResult(
-            name="test",
-            command="pytest -q",
-            status="ok",
-            exit_code=0,
-            stdout="ok",
-            stderr="",
-            output_preview="ok",
-            full_output="1 passed in 0.01s",
-        ),
-    ]
+    results = retry_sequence_fail_then_pass()
 
     def _fake_run(_cmd: str, cwd=None) -> CommandResult:
         return results.pop(0)
@@ -114,20 +93,15 @@ def test_retry_loop_success_after_retry(monkeypatch, tmp_path: Path) -> None:
     assert len(payload["test_attempts"]) == 2
     assert payload["retry_policy"]["retry_attempted"] is True
     assert payload["retry_policy"]["retry_count"] == 1
+    assert payload["retry_policy"]["stopped_reason"] == "passed_after_retry"
+    assert "No patch required after retry success" in payload["patch_plan"]["strategy"]
 
 
 def test_retry_loop_no_retry_without_permission(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
-        lambda _cmd, cwd=None: CommandResult(
-            name="test",
-            command="pytest -q",
-            status="failed",
-            exit_code=1,
-            stdout="",
-            stderr="boom",
-            output_preview="boom",
-            full_output="FAILED tests/test_x.py::test_x - AssertionError: boom",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
         ),
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
@@ -144,3 +118,77 @@ def test_retry_loop_no_retry_without_permission(monkeypatch, tmp_path: Path) -> 
 
     assert len(payload["test_attempts"]) == 1
     assert payload["retry_policy"]["retry_attempted"] is False
+    assert payload["retry_policy"]["stopped_reason"] == "retry_not_allowed"
+    assert payload["status"] == "completed_tests_failed"
+
+
+def test_retry_loop_initial_pass_no_retry(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(
+        model_tier="mid",
+        context_mode="focused",
+        max_retries=2,
+        allow_escalation=True,
+        execution={},
+    )
+
+    payload = build_run_payload(options=TaskOptions(task="initial pass"), cwd=tmp_path, client=client)
+    assert payload["status"] == "completed_tests_passed"
+    assert len(payload["test_attempts"]) == 1
+    assert payload["retry_policy"]["retry_attempted"] is False
+    assert payload["retry_policy"]["stopped_reason"] == "initial_passed"
+    assert payload["patch_plan"]["proposed_changes"] == []
+    assert payload["patch_plan"]["confidence"] >= 0.9
+
+
+def test_retry_loop_fails_after_max_retries(monkeypatch, tmp_path: Path) -> None:
+    results = retry_sequence_fail_then_fail()
+
+    def _fake_run(_cmd: str, cwd=None) -> CommandResult:
+        return results.pop(0)
+
+    monkeypatch.setattr("aegis_code.runtime.run_configured_tests", _fake_run)
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(
+        model_tier="mid",
+        context_mode="focused",
+        max_retries=2,
+        allow_escalation=True,
+        execution={},
+    )
+
+    payload = build_run_payload(options=TaskOptions(task="always fail"), cwd=tmp_path, client=client)
+    assert payload["status"] == "completed_tests_failed_after_retry"
+    assert len(payload["test_attempts"]) == 3
+    assert payload["retry_policy"]["retry_count"] == 2
+    assert payload["retry_policy"]["stopped_reason"] == "max_retries_exhausted"
+    assert payload["patch_plan"]["proposed_changes"]
+
+
+def test_runtime_aegis_unavailable_still_reports(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
+        ),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(
+        model_tier="mid",
+        context_mode="focused",
+        max_retries=1,
+        allow_escalation=False,
+        execution={"status": "unavailable"},
+    )
+
+    payload = run_task(options=TaskOptions(task="aegis unavailable"), cwd=tmp_path, client=client)
+    assert payload["status"] == "completed_with_aegis_unavailable"
+    assert len(payload["test_attempts"]) == 1
+    assert (tmp_path / ".aegis" / "runs" / "latest.md").exists()

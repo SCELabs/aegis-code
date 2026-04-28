@@ -30,7 +30,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         "failures": {"failed_tests": [], "failure_count": 0},
         "failure_context": {"files": []},
         "sll_analysis": None,
-        "patch_plan": {"strategy": "none", "proposed_changes": []},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -44,3 +44,49 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Final Failure State" in content
     assert "## Structural Analysis" in content
     assert "## Proposed Fix Plan" in content
+    assert "v0.3 runs a controlled execution loop." in content
+
+
+def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
+    payload = {
+        "task": "example task",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {"budget": {"pressure": "low"}},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 3, "top_level_directories": ["src", "tests"]},
+        "commands_run": [
+            {
+                "name": "test",
+                "command": "pytest -q",
+                "status": "failed",
+                "exit_code": 1,
+                "full_output": "VERY_LONG_INTERNAL_OUTPUT",
+            }
+        ],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": ["unstable_workflow"],
+        "retry_policy": {
+            "max_retries": 1,
+            "allow_escalation": False,
+            "retry_attempted": False,
+            "retry_count": 0,
+            "stopped_reason": "dry_run",
+        },
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {
+            "files": [{"path": "tests/test_x.py", "content": "SENSITIVE_FILE_CONTENT_SHOULD_NOT_APPEAR"}]
+        },
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "status": "completed_tests_failed",
+        "notes": ["planning only"],
+    }
+    paths = write_reports(payload, cwd=tmp_path)
+    content = paths["md"].read_text(encoding="utf-8")
+    assert "VERY_LONG_INTERNAL_OUTPUT" not in content
+    assert "SENSITIVE_FILE_CONTENT_SHOULD_NOT_APPEAR" not in content

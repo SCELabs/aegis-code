@@ -48,3 +48,21 @@ def test_generate_patch_plan_includes_reason_and_confidence() -> None:
     assert "test_remaining_budget_math" in change["description"]
     assert "AssertionError" in change["reason"]
 
+
+def test_generate_patch_plan_references_failing_file_when_context_missing() -> None:
+    plan = generate_patch_plan(
+        task="fix tests",
+        failures=[
+            {
+                "test_name": "tests/test_alpha.py::test_alpha",
+                "file": "tests/test_alpha.py",
+                "error": "AssertionError: alpha",
+                "line": 4,
+            }
+        ],
+        context={"files": []},
+        aegis_decision={"context_mode": "focused"},
+        sll_analysis={"available": False},
+    )
+    assert len(plan["proposed_changes"]) == 1
+    assert plan["proposed_changes"][0]["file"] == "tests/test_alpha.py"

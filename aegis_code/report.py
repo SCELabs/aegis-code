@@ -194,9 +194,9 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
             "## Next Steps",
             "",
-            "- v0.2 is planning/reporting only.",
-            "- No file edits are performed in this version.",
-            "- Use report output to guide the next manual or supervised action.",
+            "- v0.3 runs a controlled execution loop.",
+            "- No file edits or patch applications are performed.",
+            "- Use the report output to guide the next supervised action.",
             "",
         ]
     )

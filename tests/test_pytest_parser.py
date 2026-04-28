@@ -1,23 +1,13 @@
 from __future__ import annotations
 
 from aegis_code.parsers.pytest_parser import parse_pytest_output
+from tests.helpers import pytest_output_fail, pytest_output_malformed
 
 
 def test_parse_pytest_output_extracts_failures() -> None:
-    output = """
-============================= test session starts =============================
-__________________________________ FAILURES ___________________________________
-_________________________ test_remaining_budget_math __________________________
-
-    def test_remaining_budget_math():
->       assert 1 == 2
-E       assert 1 == 2
-
-tests/test_budget.py:8: AssertionError
-=========================== short test summary info ===========================
-FAILED tests/test_budget.py::test_remaining_budget_math - AssertionError: assert 1 == 2
-============================== 1 failed in 0.05s ==============================
-""".strip()
+    output = pytest_output_fail().replace("tests/test_example.py", "tests/test_budget.py").replace(
+        "test_example_failure", "test_remaining_budget_math"
+    ).replace(":12:", ":8:")
 
     parsed = parse_pytest_output(output)
 
@@ -53,3 +43,34 @@ E   AssertionError: section missing
     assert failure["test_name"] == "tests/test_report.py::test_report_generation_writes_json_and_md"
     assert failure["file"] == "tests/test_report.py"
     assert "AssertionError" in failure["error"]
+    assert failure["line"] == 22
+
+
+def test_parse_pytest_output_short_summary_only() -> None:
+    output = """
+=========================== short test summary info ===========================
+FAILED tests/test_alpha.py::test_a - AssertionError: alpha
+FAILED tests/test_beta.py::test_b - ValueError: beta
+""".strip()
+    parsed = parse_pytest_output(output)
+    assert parsed["failure_count"] == 2
+    assert parsed["failed_tests"][0]["file"] == "tests/test_alpha.py"
+    assert parsed["failed_tests"][1]["file"] == "tests/test_beta.py"
+
+
+def test_parse_pytest_output_multiline_e_lines() -> None:
+    output = """
+FAILED tests/test_gamma.py::test_g
+E   AssertionError: first line
+E   second line
+""".strip()
+    parsed = parse_pytest_output(output)
+    assert parsed["failure_count"] == 1
+    assert "first line" in parsed["failed_tests"][0]["error"]
+
+
+def test_parse_pytest_output_malformed_is_safe() -> None:
+    parsed = parse_pytest_output(pytest_output_malformed())
+    assert isinstance(parsed, dict)
+    assert "failed_tests" in parsed
+    assert "failure_count" in parsed

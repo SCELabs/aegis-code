@@ -139,7 +139,7 @@ def build_run_payload(
                 "allow_escalation": bool(decision.allow_escalation),
                 "retry_attempted": False,
                 "retry_count": 0,
-                "stopped_reason": "initial_passed" if _is_tests_passed(initial_result.status, initial_result.exit_code) else "retry_not_permitted",
+                "stopped_reason": "initial_passed" if _is_tests_passed(initial_result.status, initial_result.exit_code) else "retry_not_allowed",
             }
 
             if should_retry_tests(
@@ -174,7 +174,7 @@ def build_run_payload(
                     retry_policy["retry_attempted"] = True
                     retry_policy["retry_count"] = retry_index
                     if _is_tests_passed(retry_result.status, retry_result.exit_code):
-                        retry_policy["stopped_reason"] = "tests_passed_after_retry"
+                        retry_policy["stopped_reason"] = "passed_after_retry"
                         break
                 else:
                     retry_policy["stopped_reason"] = "max_retries_exhausted"
