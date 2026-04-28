@@ -324,3 +324,69 @@ def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, t
     assert payload["runtime_policy"]["requested_mode"] == "balanced"
     assert payload["runtime_policy"]["selected_mode"] == "balanced"
     assert payload["runtime_policy"]["reason"] == "default"
+
+
+def test_aegis_guidance_overrides_model_tier(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=1, allow_escalation=True, execution={})
+    payload = build_run_payload(
+        options=TaskOptions(task="tier override", aegis_guidance={"model_tier": "cheap"}),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["selected_model_tier"] == "cheap"
+    assert payload["applied_aegis_guidance"]["model_tier_override"] == "cheap"
+
+
+def test_aegis_guidance_caps_max_retries(monkeypatch, tmp_path: Path) -> None:
+    results = retry_sequence_fail_then_fail()
+
+    def _fake_run(_cmd: str, cwd=None) -> CommandResult:
+        return results.pop(0)
+
+    monkeypatch.setattr("aegis_code.runtime.run_configured_tests", _fake_run)
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=2, allow_escalation=True, execution={})
+    payload = build_run_payload(
+        options=TaskOptions(task="retry cap", aegis_guidance={"max_retries": 1}),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["retry_policy"]["max_retries"] == 1
+    assert payload["retry_policy"]["retry_count"] == 1
+
+
+def test_aegis_guidance_disables_escalation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=2, allow_escalation=True, execution={})
+    payload = build_run_payload(
+        options=TaskOptions(task="no escalation", aegis_guidance={"allow_escalation": False}),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["retry_policy"]["allow_escalation"] is False
+    assert payload["retry_policy"]["retry_attempted"] is False
+
+
+def test_no_aegis_guidance_keeps_behavior(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=2, allow_escalation=True, execution={})
+    payload = build_run_payload(options=TaskOptions(task="unchanged"), cwd=tmp_path, client=client)
+    assert payload["selected_model_tier"] == "mid"
+    assert payload["retry_policy"]["max_retries"] == 2

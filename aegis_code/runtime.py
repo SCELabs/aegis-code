@@ -36,6 +36,7 @@ class TaskOptions:
     project_context: dict[str, Any] | None = None
     budget_state: dict[str, Any] | None = None
     runtime_policy: dict[str, Any] | None = None
+    aegis_guidance: dict[str, Any] | None = None
 
 
 def _is_tests_passed(status: str, exit_code: int | None) -> bool:
@@ -61,6 +62,12 @@ def build_run_payload(
     client: AegisBackendClient | None = None,
 ) -> dict[str, Any]:
     config = load_config(cwd)
+    guidance = options.aegis_guidance or {}
+    guidance_tier = str(guidance.get("model_tier", "") or "").strip().lower()
+    guidance_max_retries_raw = guidance.get("max_retries")
+    guidance_allow_escalation = guidance.get("allow_escalation")
+    guidance_context_mode = str(guidance.get("context_mode", "") or "").strip().lower() or None
+
     capabilities = detect_capabilities(cwd or Path.cwd())
     mode = options.mode or config.mode
     budget = BudgetState(total=options.budget if options.budget is not None else config.budget_per_task)
@@ -164,6 +171,15 @@ def build_run_payload(
                 },
             )
 
+            effective_max_retries = int(decision.max_retries)
+            if isinstance(guidance_max_retries_raw, int):
+                effective_max_retries = min(effective_max_retries, max(0, guidance_max_retries_raw))
+            effective_allow_escalation = bool(decision.allow_escalation)
+            if guidance_allow_escalation is False:
+                effective_allow_escalation = False
+            decision.max_retries = effective_max_retries
+            decision.allow_escalation = effective_allow_escalation
+
             retry_policy = {
                 "max_retries": int(decision.max_retries),
                 "allow_escalation": bool(decision.allow_escalation),
@@ -265,6 +281,13 @@ def build_run_payload(
             metadata={"task": options.task},
         )
 
+    if isinstance(guidance_max_retries_raw, int):
+        decision.max_retries = min(int(decision.max_retries), max(0, guidance_max_retries_raw))
+    if guidance_allow_escalation is False:
+        decision.allow_escalation = False
+
+    if guidance_tier in {"cheap", "mid", "premium"}:
+        decision.model_tier = guidance_tier
     selected_tier = normalize_tier(decision.model_tier)
     selected_model = resolve_model_for_tier(config, selected_tier)
 
@@ -399,6 +422,12 @@ def build_run_payload(
             "reason": (options.runtime_policy or {}).get("reason"),
             "budget_present": bool((options.runtime_policy or {}).get("budget_present", False)),
             "context_available": bool((options.runtime_policy or {}).get("context_available", False)),
+        },
+        "applied_aegis_guidance": {
+            "model_tier_override": guidance_tier if guidance_tier in {"cheap", "mid", "premium"} else None,
+            "max_retries_applied": int(decision.max_retries),
+            "escalation_allowed": bool(decision.allow_escalation),
+            "context_mode": guidance_context_mode or "balanced",
         },
     }
     return payload

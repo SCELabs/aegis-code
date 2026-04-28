@@ -57,6 +57,12 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
             "error_type": None,
             "error_message": None,
         },
+        "applied_aegis_guidance": {
+            "model_tier_override": "cheap",
+            "max_retries_applied": 1,
+            "escalation_allowed": False,
+            "context_mode": "minimal",
+        },
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -76,6 +82,11 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "Fallback reason: `import_missing`" in content
     assert "Error type: `none`" in content
     assert "Error: `none`" in content
+    assert "## Applied Aegis Guidance" in content
+    assert "Model tier override: `cheap`" in content
+    assert "Max retries applied: `1`" in content
+    assert "Escalation allowed: `False`" in content
+    assert "Context mode: `minimal`" in content
     assert "## Project Context" in content
     assert "Total chars: `123`" in content
     assert "## Retry Policy" in content

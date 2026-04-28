@@ -248,6 +248,45 @@ def test_execute_task_success_persists_adapter_metadata_to_reports(monkeypatch, 
     assert "Fallback reason: `None`" in latest_md
 
 
+def test_execute_task_context_mode_minimal_reduces_context(monkeypatch, tmp_path: Path) -> None:
+    seen_context = {"total_chars": None}
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        "aegis:\n  enhanced_runtime: true\n",
+        encoding="utf-8",
+    )
+
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = cwd, client, write_report
+        seen_context["total_chars"] = (options.project_context or {}).get("total_chars")
+        return _fake_local_payload(options)
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            return {"context_mode": "minimal"}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    monkeypatch.setattr("aegis_code.runtime._run_task_local", _fake_local)
+
+    execute_task(
+        TaskOptions(
+            task="x",
+            project_context={"available": True, "files": {"project_summary": "abcdef"}, "total_chars": 100},
+        ),
+        cwd=tmp_path,
+    )
+    assert seen_context["total_chars"] == 50
+
+
 def test_execute_task_fallback_persists_local_adapter_metadata_to_reports(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(

@@ -40,6 +40,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     test_attempts = payload.get("test_attempts", [])
     project_context = payload.get("project_context", {}) or {}
     adapter = payload.get("adapter", {}) or {}
+    applied_guidance = payload.get("applied_aegis_guidance", {}) or {}
 
     lines = [
         "# Aegis Code Run Report",
@@ -110,6 +111,13 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         f"- Available: `{project_context.get('available', False)}`",
         f"- Total chars: `{project_context.get('total_chars', 0)}`",
         f"- Included paths: `{', '.join(project_context.get('included_paths', [])) or 'none'}`",
+        "",
+        "## Applied Aegis Guidance",
+        "",
+        f"- Model tier override: `{applied_guidance.get('model_tier_override') or 'none'}`",
+        f"- Max retries applied: `{applied_guidance.get('max_retries_applied', 0)}`",
+        f"- Escalation allowed: `{bool(applied_guidance.get('escalation_allowed', False))}`",
+        f"- Context mode: `{applied_guidance.get('context_mode', 'balanced')}`",
         "",
         "## Commands Run",
         "",

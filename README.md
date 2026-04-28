@@ -139,6 +139,7 @@ Runtime calls now receive a structured local control payload:
 - `runtime_policy`
 
 This prepares Aegis Code for deeper client integration without adding new external calls.
+When enhanced runtime is enabled and Aegis guidance is available, runtime applies advisory controls for model tier, retry cap, escalation permission, and context mode.
 
 Budget runtime events now record selected mode and decision reason (`default`, `low_budget`, or `policy_adjustment`) in `.aegis/budget.json` for local observability.
 
