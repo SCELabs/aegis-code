@@ -120,8 +120,10 @@ def handle_task(argv: Sequence[str]) -> int:
     retry_policy = payload.get("retry_policy", {})
     has_patch_plan = bool(payload.get("patch_plan", {}).get("proposed_changes"))
     patch_diff = payload.get("patch_diff", {})
+    sll_analysis = payload.get("sll_analysis", {})
     print(f"Failure count: {failure_count}")
     print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
+    print(f"SLL available: {sll_analysis.get('available', False)}")
     print(
         "Retry attempted/count: "
         f"{retry_policy.get('retry_attempted', False)}/{retry_policy.get('retry_count', 0)}"

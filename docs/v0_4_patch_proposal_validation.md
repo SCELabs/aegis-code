@@ -22,7 +22,28 @@ def test_tmp_failure():
 - No project files are edited by `aegis-code`.
 - `aegis-code` does not create or delete the temporary failing test.
 
+## SLL-active validation
+1. Install SLL locally:
+- `pip install -e ../structural-language-lab`
+
+2. Verify:
+- `aegis-code --check-sll`
+
+3. Manually create temporary failure:
+- `tests/test_tmp_failure.py`
+
+4. Run:
+- `aegis-code "triage current test failures" --budget 1.25 --propose-patch`
+- `aegis-code report`
+
+Expected:
+- Structural Analysis shows regime and risks.
+- Synthesized Symptoms include `test_failure`.
+- Patch plan references failing test(s).
+- Patch Diff Proposal is attempted only when provider path is enabled and API key exists.
+- No patch is applied automatically.
+- User deletes the temporary test manually afterward.
+
 ## Cleanup
 - `rm tests/test_tmp_failure.py`
 - `python -m pytest -q`
-

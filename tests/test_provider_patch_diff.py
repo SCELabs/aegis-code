@@ -7,7 +7,7 @@ from pathlib import Path
 from aegis_code.models import AegisDecision
 from aegis_code.providers.openai_provider import generate_patch_diff_openai
 from aegis_code.report import render_markdown_report
-from aegis_code.runtime import TaskOptions, build_run_payload
+from aegis_code.runtime import TaskOptions, build_run_payload, run_task
 from tests.helpers import command_result_from_output, pytest_output_fail, pytest_output_pass
 
 
@@ -93,6 +93,11 @@ def test_invalid_diff_is_rejected(monkeypatch) -> None:
 
 
 def test_propose_patch_triggers_attempt_and_writes_diff(monkeypatch, tmp_path: Path) -> None:
+    source_file = tmp_path / "aegis_code" / "sample.py"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text("VALUE = 1\n", encoding="utf-8")
+    before = source_file.read_text(encoding="utf-8")
+
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
         lambda _cmd, cwd=None: command_result_from_output(
@@ -125,6 +130,8 @@ def test_propose_patch_triggers_attempt_and_writes_diff(monkeypatch, tmp_path: P
     assert "## Patch Diff Proposal" in report
     assert "Provider: `openai`" in report
     assert "Path: `" in report
+    assert source_file.read_text(encoding="utf-8") == before
+    assert Path(patch_diff["path"]).read_text(encoding="utf-8").startswith("diff --git")
 
 
 def test_no_provider_call_when_tests_pass(monkeypatch, tmp_path: Path) -> None:
@@ -214,3 +221,48 @@ def test_invalid_provider_diff_no_file_written(monkeypatch, tmp_path: Path) -> N
     assert "unified diff" in str(patch_diff["error"]).lower()
     assert patch_diff["path"] is None
     assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
+
+
+def test_failure_with_sll_and_patch_diff_report_state(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
+        ),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.analyze_failures_sll",
+        lambda _text: {
+            "available": True,
+            "regime": "fragmentation",
+            "fragmentation_risk": 0.9,
+            "collapse_risk": 0.0,
+            "drift_risk": 0.7,
+            "stable_random_risk": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        },
+    )
+
+    payload = run_task(options=TaskOptions(task="x", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["failures"]["failure_count"] > 0
+    assert "test_failure" in payload["symptoms"]
+    assert payload["sll_analysis"]["available"] is True
+    assert payload["patch_plan"]["proposed_changes"]
+    assert payload["patch_diff"]["attempted"] is True
+
+    report_path = tmp_path / ".aegis" / "runs" / "latest.md"
+    report = report_path.read_text(encoding="utf-8")
+    assert "## Final Failure State" in report
+    assert "## Structural Analysis" in report
+    assert "Regime: `fragmentation`" in report
+    assert "## Proposed Fix Plan" in report
+    assert "## Patch Diff Proposal" in report

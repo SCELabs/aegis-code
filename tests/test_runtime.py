@@ -72,6 +72,38 @@ def test_runtime_calls_aegis_after_observation(monkeypatch, tmp_path: Path) -> N
         assert key in payload["patch_diff"]
 
 
+def test_runtime_sll_active_failure_path_maps_expected_symptoms_and_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(
+            pytest_output_fail(), status="failed", exit_code=1
+        ),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.analyze_failures_sll",
+        lambda _text: {
+            "available": True,
+            "regime": "fragmentation",
+            "fragmentation_risk": 0.9,
+            "collapse_risk": 0.0,
+            "drift_risk": 0.7,
+            "stable_random_risk": 0.0,
+        },
+    )
+    client = _CapturingClient()
+    payload = build_run_payload(options=TaskOptions(task="sll active"), cwd=tmp_path, client=client)
+
+    assert payload["failures"]["failure_count"] > 0
+    assert client.last_metadata["failure_count"] == 1
+    assert client.last_metadata["command_status"] == "failed"
+    assert client.last_metadata["initial_test_exit_code"] == 1
+    assert client.last_metadata["sll_available"] is True
+    assert client.last_metadata["sll_regime"] == "fragmentation"
+    assert client.last_symptoms == ["unstable_workflow", "test_failure", "fragmented_output"]
+
+
 def test_retry_loop_success_after_retry(monkeypatch, tmp_path: Path) -> None:
     results = retry_sequence_fail_then_pass()
 
