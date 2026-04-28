@@ -43,6 +43,7 @@ def default_config_yaml(test_command: str = "pytest -q") -> str:
         "  lint: \"\"\n"
         "aegis:\n"
         "  base_url: \"https://aegis-backend-production-4b47.up.railway.app\"\n"
+        "  enhanced_runtime: false\n"
         "providers:\n"
         "  enabled: false\n"
         "  provider: \"openai\"\n"

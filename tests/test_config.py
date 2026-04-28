@@ -22,3 +22,16 @@ def test_load_config_uses_defaults_when_missing(tmp_path: Path) -> None:
     assert cfg.commands.test == "pytest -q"
     assert cfg.providers.enabled is False
     assert cfg.patches.generate_diff is False
+    assert cfg.aegis.enhanced_runtime is False
+
+
+def test_load_config_reads_enhanced_runtime_flag(tmp_path: Path) -> None:
+    ensure_project_files(cwd=tmp_path, force=True)
+    cfg_path = project_paths(tmp_path)["config_path"]
+    cfg_path.write_text(
+        "aegis:\n  base_url: \"https://example.test\"\n  enhanced_runtime: true\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.aegis.base_url == "https://example.test"
+    assert cfg.aegis.enhanced_runtime is True

@@ -39,6 +39,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     symptoms = payload.get("symptoms", [])
     test_attempts = payload.get("test_attempts", [])
     project_context = payload.get("project_context", {}) or {}
+    adapter = payload.get("adapter", {}) or {}
 
     lines = [
         "# Aegis Code Run Report",
@@ -87,6 +88,12 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             else "- Budget: not set"
         ),
         f"- Context available: `{bool((payload.get('project_context', {}) or {}).get('available', False))}`",
+        "",
+        "## Runtime Adapter",
+        "",
+        f"- Mode: `{adapter.get('mode', 'local')}`",
+        f"- Aegis client available: `{bool(adapter.get('aegis_client_available', False))}`",
+        f"- Fallback reason: `{adapter.get('fallback_reason', 'import_missing')}`",
         "",
         "## Project Context",
         "",

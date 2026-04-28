@@ -203,6 +203,11 @@ def test_task_prints_runtime_control_summary_when_runtime_runs(tmp_path: Path, m
             "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
             "budget_state": {"available": False, "remaining_estimate": None},
             "project_context": {"available": False},
+            "adapter": {
+                "mode": "local",
+                "aegis_client_available": False,
+                "fallback_reason": "import_missing",
+            },
         }
 
     monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
@@ -210,3 +215,5 @@ def test_task_prints_runtime_control_summary_when_runtime_runs(tmp_path: Path, m
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Runtime Control:" in out
+    assert "Runtime Adapter:" in out
+    assert "Mode: local" in out

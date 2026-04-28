@@ -50,6 +50,7 @@ def test_main_task_skips_runtime_when_budget_exceeded(tmp_path: Path, monkeypatc
     assert exit_code == 0
     assert "Budget limit reached. Skipping Aegis runtime." in out
     assert "Runtime Control:" not in out
+    assert "Runtime Adapter:" not in out
 
 
 def test_main_task_calls_runtime_when_budget_allows(tmp_path: Path, monkeypatch, capsys) -> None:

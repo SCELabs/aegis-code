@@ -40,6 +40,18 @@ from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
 
 
+def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
+    info = adapter or {}
+    return "\n".join(
+        [
+            "Runtime Adapter:",
+            f"- Mode: {info.get('mode', 'local')}",
+            f"- Aegis client available: {'true' if bool(info.get('aegis_client_available', False)) else 'false'}",
+            f"- Fallback: {info.get('fallback_reason', 'import_missing')}",
+        ]
+    )
+
+
 def _build_init_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code init")
     parser.add_argument("--force", action="store_true", help="Overwrite default project files.")
@@ -329,7 +341,7 @@ def handle_create(argv: Sequence[str]) -> int:
     project_context = load_runtime_context(cwd=target_path)
     budget_state = get_budget_state(cwd=target_path)
     runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=target_path)
-    run_task(
+    payload = run_task(
         options=TaskOptions(
             task="fix failing tests after scaffold",
             mode=final_mode,
@@ -341,6 +353,7 @@ def handle_create(argv: Sequence[str]) -> int:
         cwd=target_path,
     )
     print(format_runtime_control_summary(runtime_policy, budget_state, project_context))
+    print(_format_adapter_summary(payload.get("adapter")))
     print("Aegis stabilization plan generated.")
     print("Report JSON: .aegis/runs/latest.json")
     print("Report MD: .aegis/runs/latest.md")
@@ -654,6 +667,7 @@ def handle_task(argv: Sequence[str]) -> int:
         print(f"Report JSON: {paths['latest_json']}")
         print(f"Report MD: {paths['latest_md']}")
     print(format_runtime_control_summary(payload.get("runtime_policy"), payload.get("budget_state"), payload.get("project_context")))
+    print(_format_adapter_summary(payload.get("adapter")))
     return 0
 
 
@@ -686,8 +700,9 @@ def handle_fix(argv: Sequence[str]) -> int:
     options.project_context = load_runtime_context(cwd=cwd)
     options.budget_state = get_budget_state(cwd=cwd)
     options.runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=cwd)
-    run_task(options=options, cwd=cwd)
+    payload = run_task(options=options, cwd=cwd)
     print(format_runtime_control_summary(options.runtime_policy, options.budget_state, options.project_context))
+    print(_format_adapter_summary(payload.get("adapter")))
 
     latest = project_paths()["latest_json"]
     if not latest.exists():

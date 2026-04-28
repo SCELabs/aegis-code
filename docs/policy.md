@@ -49,3 +49,18 @@ When runtime is invoked and budget tracking is active, budget events include:
 - `timestamp`
 
 This logging is local-only and deterministic.
+
+## Enhanced runtime flag
+
+`aegis.enhanced_runtime` controls optional Aegis client execution in the runtime adapter.
+
+- default: `false` (local path)
+- `true` + client import available: adapter uses Aegis client execution path
+- fallback stays local when client import is missing or client execution raises an error
+
+Adapter metadata records:
+
+- `mode` (`local` or `aegis`)
+- `aegis_client_available`
+- `enhanced_enabled`
+- `fallback_reason` (`disabled`, `import_missing`, or `client_error`)

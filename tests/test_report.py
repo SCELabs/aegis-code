@@ -50,6 +50,11 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
             "budget_present": True,
             "context_available": True,
         },
+        "adapter": {
+            "mode": "local",
+            "aegis_client_available": False,
+            "fallback_reason": "import_missing",
+        },
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -63,6 +68,10 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "Selected mode: `balanced`" in content
     assert "Reason: `default`" in content
     assert "Budget remaining: `$0.80`" in content
+    assert "## Runtime Adapter" in content
+    assert "Mode: `local`" in content
+    assert "Aegis client available: `False`" in content
+    assert "Fallback reason: `import_missing`" in content
     assert "## Project Context" in content
     assert "Total chars: `123`" in content
     assert "## Retry Policy" in content
