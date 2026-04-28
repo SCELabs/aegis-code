@@ -34,6 +34,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     patch_plan = payload.get("patch_plan", {})
     patch_diff = payload.get("patch_diff", {})
     patch_quality = payload.get("patch_quality")
+    verification = payload.get("verification", {})
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
     test_attempts = payload.get("test_attempts", [])
@@ -67,9 +68,20 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         f"- File count: `{repo_scan.get('file_count', 0)}`",
         f"- Top-level directories: `{', '.join(repo_scan.get('top_level_directories', []))}`",
         "",
+        "## Verification",
+        "",
+        f"- Available: `{verification.get('available', False)}`",
+        f"- Detected stack: `{verification.get('detected_stack', 'unknown')}`",
+        f"- Test command: `{verification.get('test_command', 'none')}`",
+        f"- Confidence: `{verification.get('confidence', 'low')}`",
+        f"- Reason: `{verification.get('reason', 'n/a')}`",
+        "",
         "## Commands Run",
         "",
     ]
+    if not verification.get("available", False):
+        lines.append("- No verification command was available, so no fix can be verified.")
+        lines.append("")
 
     if commands_run:
         for cmd in commands_run:
@@ -256,8 +268,8 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
             "## Next Steps",
             "",
-            "- v0.5 runs a controlled execution loop with optional proposal-only patch diffs and deterministic patch-quality scoring.",
-            "- No file edits or patch applications are performed.",
+            "- Aegis Code runs a controlled execution loop with optional proposal-only patch diffs and deterministic patch-quality scoring.",
+            "- No file edits or patch applications occur without explicit confirmation.",
             "- Use the report output, diff proposal, and patch-quality score to guide the next supervised action.",
             "",
         ]

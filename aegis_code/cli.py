@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Sequence
 
 from aegis_code.config import load_config
+from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
@@ -29,6 +31,10 @@ def _build_report_parser() -> argparse.ArgumentParser:
 
 def _build_status_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code status")
+
+
+def _build_doctor_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code doctor")
 
 
 def _build_backups_parser() -> argparse.ArgumentParser:
@@ -89,7 +95,15 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def handle_init(argv: Sequence[str]) -> int:
     parser = _build_init_parser()
     args = parser.parse_args(list(argv))
-    created = ensure_project_files(force=args.force)
+    cfg_path = project_paths()["config_path"]
+    detected = detect_capabilities(Path.cwd())
+    detected_test_command = (
+        str(detected.get("test_command", "") or "")
+        if bool(detected.get("verification_available", False))
+        else ""
+    )
+    should_write_config = args.force or not cfg_path.exists()
+    created = ensure_project_files(force=args.force, test_command=detected_test_command if should_write_config else None)
     paths = project_paths()
     print(f"Initialized: {paths['aegis_dir']}")
     print(f"Config: {paths['config_path']} ({'created' if created['config_created'] else 'kept'})")
@@ -97,7 +111,12 @@ def handle_init(argv: Sequence[str]) -> int:
         "Project model: "
         f"{paths['project_model_path']} ({'created' if created['project_model_created'] else 'kept'})"
     )
-    print("v0.1 note: planning/reporting only. No file editing is performed.")
+    if should_write_config:
+        if detected_test_command:
+            print(f"Detected test command: {detected_test_command}")
+        else:
+            print("Detected no verification command. commands.test left empty.")
+    print("No autonomous file editing is performed.")
     return 0
 
 
@@ -128,11 +147,15 @@ def handle_status(argv: Sequence[str]) -> int:
     sll = payload.get("sll_analysis", {}) or {}
     patch_diff = payload.get("patch_diff", {}) or {}
     patch_quality = payload.get("patch_quality")
+    verification = payload.get("verification", {}) or {}
 
     print("Status:")
     print(f"- Task: {payload.get('task', '')}")
     print(f"- Run status: {payload.get('status', '')}")
     print(f"- Failure count: {payload.get('failures', {}).get('failure_count', 0)}")
+    print(
+        f"- Verification: available={verification.get('available', False)} command={verification.get('test_command', 'n/a')} stack={verification.get('detected_stack', 'n/a')}"
+    )
     print(
         f"- SLL: available={sll.get('available', False)} regime={sll.get('regime', 'n/a') if sll.get('available', False) else 'n/a'}"
     )
@@ -144,6 +167,48 @@ def handle_status(argv: Sequence[str]) -> int:
     else:
         print("- Patch quality confidence: n/a")
     print(f"- Backup count: {len(backups)}")
+    return 0
+
+
+def handle_doctor(argv: Sequence[str]) -> int:
+    parser = _build_doctor_parser()
+    parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    cfg = load_config(cwd)
+    caps = detect_capabilities(cwd)
+    sll = check_sll_available()
+    paths = project_paths(cwd)
+    latest = paths["latest_json"]
+    backups = list_backups(cwd=cwd).get("backups", [])
+
+    aegis_key_configured = bool(os.environ.get("AEGIS_API_KEY", "").strip())
+    provider_env = str(cfg.providers.api_key_env or "OPENAI_API_KEY")
+    provider_key_configured = bool(os.environ.get(provider_env, "").strip())
+    if not cfg.providers.enabled:
+        provider_state = "disabled"
+    elif provider_key_configured:
+        provider_state = "configured"
+    else:
+        provider_state = "missing"
+
+    print("Aegis Code Doctor")
+    print("")
+    print("Repo:")
+    print(f"- Stack: {caps.get('detected_stack') or 'unknown'}")
+    print(f"- Language: {caps.get('language') or 'unknown'}")
+    print(f"- Verification: {'available' if caps.get('verification_available', False) else 'unavailable'}")
+    print(f"- Test command: {caps.get('test_command') or 'none'}")
+    print(f"- Confidence: {caps.get('confidence', 'low')}")
+    print(f"- Reason: {caps.get('reason', '')}")
+    print("")
+    print("Integrations:")
+    print(f"- Aegis API key: {'configured' if aegis_key_configured else 'missing'}")
+    print(f"- SLL: {'available' if sll.get('available', False) else 'unavailable'}")
+    print(f"- Patch provider: {provider_state}")
+    print("")
+    print("State:")
+    print(f"- Latest run: {'found' if latest.exists() else 'missing'}")
+    print(f"- Backups: {len(backups)}")
     return 0
 
 
@@ -268,9 +333,7 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     payload = run_task(options=options, cwd=Path.cwd())
 
-    print(
-        "Aegis Code v0.5 runs a controlled execution loop with proposal-only patch diffs and deterministic diff quality scoring."
-    )
+    print("Aegis Code: controlled execution with proposal-only patch diffs and patch-quality scoring.")
     print(f"Task: {payload['task']}")
     print(f"Mode: {payload['mode']}")
     print(f"Dry run: {payload['dry_run']}")
@@ -287,6 +350,11 @@ def handle_task(argv: Sequence[str]) -> int:
     patch_quality = payload.get("patch_quality")
     sll_analysis = payload.get("sll_analysis", {})
     print(f"Failure count: {failure_count}")
+    verification = payload.get("verification", {}) or {}
+    print(
+        "Verification: "
+        f"available={verification.get('available', False)} command={verification.get('test_command', 'n/a')}"
+    )
     print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
     print(f"SLL available: {sll_analysis.get('available', False)}")
     print(
@@ -330,6 +398,10 @@ def handle_task(argv: Sequence[str]) -> int:
 def handle_fix(argv: Sequence[str]) -> int:
     parser = _build_fix_parser()
     args = parser.parse_args(list(argv))
+    cfg = load_config(Path.cwd())
+    if not cfg.commands.test.strip():
+        print("No test command detected. Aegis Code can inspect and plan, but cannot verify a fix yet.")
+        return 2
 
     options = TaskOptions(
         task="triage current test failures",
@@ -381,11 +453,7 @@ def handle_fix(argv: Sequence[str]) -> int:
     if not apply_result.get("applied", False):
         return 2
 
-    cfg = load_config(Path.cwd())
     command = cfg.commands.test.strip()
-    if not command:
-        print("Patch applied. No configured test command to verify.")
-        return 0
     result = run_configured_tests(command, cwd=Path.cwd())
     if result.status == "ok" and result.exit_code == 0:
         print("Post-apply tests passed.")
@@ -415,6 +483,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_report(args[1:])
     if command == "status":
         return handle_status(args[1:])
+    if command == "doctor":
+        return handle_doctor(args[1:])
     if command == "apply":
         return handle_apply(args[1:])
     if command == "backups":

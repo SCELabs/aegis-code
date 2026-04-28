@@ -140,3 +140,38 @@ def test_fix_diff_missing_message(tmp_path: Path, monkeypatch, capsys) -> None:
     assert exit_code != 0
     assert "No patch proposal available. Use report to inspect failures." in out
 
+
+def test_fix_no_test_command_exits_with_unverified_message(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        "\n".join(
+            [
+                "mode: balanced",
+                "budget_per_task: 1.0",
+                "models:",
+                "  cheap: openai:gpt-4.1-nano",
+                "  mid: openai:gpt-4.1-mini",
+                "  premium: openai:gpt-4.1",
+                "commands:",
+                '  test: ""',
+                '  lint: ""',
+                "aegis:",
+                '  base_url: "http://example.test"',
+                "providers:",
+                "  enabled: false",
+                '  provider: "openai"',
+                '  api_key_env: "OPENAI_API_KEY"',
+                "patches:",
+                "  generate_diff: false",
+                "  max_context_chars: 12000",
+                '  output_file: ".aegis/runs/latest.diff"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no runtime")))
+    exit_code = cli.main(["fix"])
+    out = capsys.readouterr().out
+    assert exit_code != 0
+    assert "No test command detected. Aegis Code can inspect and plan, but cannot verify a fix yet." in out

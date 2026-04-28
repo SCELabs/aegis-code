@@ -7,6 +7,7 @@ from typing import Any
 from aegis_code.aegis_client import AegisBackendClient, client_from_env
 from aegis_code.budget import BudgetState
 from aegis_code.config import load_config
+from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
@@ -57,6 +58,7 @@ def build_run_payload(
     client: AegisBackendClient | None = None,
 ) -> dict[str, Any]:
     config = load_config(cwd)
+    capabilities = detect_capabilities(cwd or Path.cwd())
     mode = options.mode or config.mode
     budget = BudgetState(total=options.budget if options.budget is not None else config.budget_per_task)
 
@@ -82,6 +84,13 @@ def build_run_payload(
         "retry_attempted": False,
         "retry_count": 0,
         "stopped_reason": "not_evaluated",
+    }
+    verification: dict[str, Any] = {
+        "available": bool(config.commands.test.strip()),
+        "test_command": config.commands.test.strip() or None,
+        "detected_stack": capabilities.get("detected_stack"),
+        "confidence": capabilities.get("confidence", "low"),
+        "reason": capabilities.get("reason", "no verification command configured"),
     }
 
     if options.dry_run:
@@ -240,7 +249,7 @@ def build_run_payload(
             status = "completed_no_commands"
             notes = [
                 "No configured test command found.",
-                "v0.4 is planning/reporting only and does not edit files.",
+                "No verification command was available, so no fix can be verified.",
             ]
             retry_policy["stopped_reason"] = "no_test_command"
 
@@ -300,6 +309,7 @@ def build_run_payload(
     if (
         should_attempt_provider_diff
         and provider_enabled
+        and verification.get("available", False)
         and final_failure_count > 0
         and (has_context_files or has_proposed_changes)
     ):
@@ -365,6 +375,7 @@ def build_run_payload(
         "patch_plan": patch_plan,
         "patch_diff": patch_diff,
         "patch_quality": patch_quality,
+        "verification": verification,
         "status": status,
         "notes": notes,
         "execution_budget_pressure": execution_budget,

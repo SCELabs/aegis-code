@@ -20,10 +20,24 @@ class FakeAegisClient:
 
 def test_cli_init_creates_project_files(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
     exit_code = cli.main(["init"])
     assert exit_code == 0
     assert (tmp_path / ".aegis" / "aegis-code.yml").exists()
     assert (tmp_path / ".aegis" / "project_model.md").exists()
+    config_text = (tmp_path / ".aegis" / "aegis-code.yml").read_text(encoding="utf-8")
+    assert 'test: "python -m pytest -q"' in config_text
+
+
+def test_cli_init_does_not_overwrite_existing_config_without_force(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".aegis").mkdir()
+    cfg = tmp_path / ".aegis" / "aegis-code.yml"
+    cfg.write_text("mode: balanced\nbudget_per_task: 1.0\ncommands:\n  test: \"custom test\"\n", encoding="utf-8")
+    exit_code = cli.main(["init"])
+    assert exit_code == 0
+    assert "custom test" in cfg.read_text(encoding="utf-8")
 
 
 def test_cli_dry_run_writes_report(tmp_path: Path, monkeypatch) -> None:

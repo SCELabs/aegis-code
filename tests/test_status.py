@@ -22,6 +22,7 @@ def test_status_with_full_fields(tmp_path: Path, monkeypatch, capsys) -> None:
         "task": "triage failures",
         "status": "completed_tests_failed",
         "failures": {"failure_count": 2, "failed_tests": []},
+        "verification": {"available": True, "test_command": "python -m pytest -q", "detected_stack": "python"},
         "sll_analysis": {"available": True, "regime": "fragmentation"},
         "patch_diff": {"attempted": True, "available": True, "path": ".aegis/runs/latest.diff"},
         "patch_quality": {"confidence": 0.8},
@@ -37,6 +38,7 @@ def test_status_with_full_fields(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "triage failures" in out
     assert "completed_tests_failed" in out
     assert "Failure count: 2" in out
+    assert "Verification: available=True command=python -m pytest -q stack=python" in out
     assert "available=True regime=fragmentation" in out
     assert "attempted=True available=True" in out
     assert "Patch quality confidence: 0.8" in out
@@ -53,6 +55,7 @@ def test_status_with_missing_optional_fields(tmp_path: Path, monkeypatch, capsys
     exit_code = cli.main(["status"])
     out = capsys.readouterr().out
     assert exit_code == 0
+    assert "Verification: available=False command=n/a stack=n/a" in out
     assert "Patch quality confidence: n/a" in out
     assert "Backup count: 0" in out
 
@@ -70,4 +73,3 @@ def test_status_does_not_run_runtime(monkeypatch, tmp_path: Path, capsys) -> Non
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Status:" in out
-

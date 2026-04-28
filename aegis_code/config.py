@@ -30,7 +30,7 @@ def default_config() -> AppConfig:
     return AppConfig()
 
 
-def default_config_yaml() -> str:
+def default_config_yaml(test_command: str = "pytest -q") -> str:
     return (
         "mode: balanced\n"
         "budget_per_task: 1.0\n"
@@ -39,7 +39,7 @@ def default_config_yaml() -> str:
         "  mid: openai:gpt-4.1-mini\n"
         "  premium: openai:gpt-4.1\n"
         "commands:\n"
-        "  test: \"pytest -q\"\n"
+        f"  test: \"{test_command}\"\n"
         "  lint: \"\"\n"
         "aegis:\n"
         "  base_url: \"https://aegis-backend-production-4b47.up.railway.app\"\n"
@@ -69,13 +69,21 @@ def project_paths(cwd: Path | None = None) -> dict[str, Path]:
     }
 
 
-def ensure_project_files(cwd: Path | None = None, force: bool = False) -> dict[str, Any]:
+def ensure_project_files(
+    cwd: Path | None = None,
+    force: bool = False,
+    test_command: str | None = None,
+) -> dict[str, Any]:
     paths = project_paths(cwd)
     paths["aegis_dir"].mkdir(parents=True, exist_ok=True)
     created: dict[str, bool] = {"config_created": False, "project_model_created": False}
 
     if force or not paths["config_path"].exists():
-        paths["config_path"].write_text(default_config_yaml(), encoding="utf-8")
+        selected_test_command = test_command if test_command is not None else "pytest -q"
+        paths["config_path"].write_text(
+            default_config_yaml(test_command=selected_test_command),
+            encoding="utf-8",
+        )
         created["config_created"] = True
 
     if force or not paths["project_model_path"].exists():

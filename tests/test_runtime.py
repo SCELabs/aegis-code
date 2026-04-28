@@ -226,3 +226,42 @@ def test_runtime_aegis_unavailable_still_reports(monkeypatch, tmp_path: Path) ->
     assert payload["status"] == "completed_with_aegis_unavailable"
     assert len(payload["test_attempts"]) == 1
     assert (tmp_path / ".aegis" / "runs" / "latest.md").exists()
+
+
+def test_runtime_no_test_command_marks_unverified_and_skips_patch_diff(tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        "\n".join(
+            [
+                "mode: balanced",
+                "budget_per_task: 1.0",
+                "models:",
+                "  cheap: openai:gpt-4.1-nano",
+                "  mid: openai:gpt-4.1-mini",
+                "  premium: openai:gpt-4.1",
+                "commands:",
+                '  test: ""',
+                '  lint: ""',
+                "aegis:",
+                '  base_url: "http://example.test"',
+                "providers:",
+                "  enabled: false",
+                '  provider: "openai"',
+                '  api_key_env: "OPENAI_API_KEY"',
+                "patches:",
+                "  generate_diff: false",
+                "  max_context_chars: 12000",
+                '  output_file: ".aegis/runs/latest.diff"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    client = _CapturingClient()
+    payload = build_run_payload(options=TaskOptions(task="no command", propose_patch=True), cwd=tmp_path, client=client)
+    assert payload["status"] == "completed_no_commands"
+    assert payload["verification"]["available"] is False
+    assert payload["verification"]["test_command"] is None
+    assert payload["test_attempts"] == []
+    assert payload["failures"]["failure_count"] == 0
+    assert payload["patch_diff"]["attempted"] is False
+    assert payload["patch_quality"] is None
