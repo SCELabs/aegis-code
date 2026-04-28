@@ -5,13 +5,16 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from aegis_code.config import load_config
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
+from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.sll_adapter import check_sll_available
+from aegis_code.tools.tests import run_configured_tests
 
 
 def _build_init_parser() -> argparse.ArgumentParser:
@@ -48,6 +51,12 @@ def _build_apply_parser() -> argparse.ArgumentParser:
 
 def _build_check_sll_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code --check-sll")
+
+
+def _build_fix_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code fix")
+    parser.add_argument("--confirm", action="store_true", help="Confirm apply for proposed patch.")
+    return parser
 
 
 def _build_task_parser() -> argparse.ArgumentParser:
@@ -318,6 +327,73 @@ def handle_task(argv: Sequence[str]) -> int:
     return 0
 
 
+def handle_fix(argv: Sequence[str]) -> int:
+    parser = _build_fix_parser()
+    args = parser.parse_args(list(argv))
+
+    options = TaskOptions(
+        task="triage current test failures",
+        propose_patch=True,
+        no_report=False,
+    )
+    run_task(options=options, cwd=Path.cwd())
+
+    latest = project_paths()["latest_json"]
+    if not latest.exists():
+        print("No patch proposal available. Use report to inspect failures.")
+        return 2
+    payload = json.loads(latest.read_text(encoding="utf-8"))
+    failures = payload.get("failures", {})
+    failure_count = int(failures.get("failure_count", 0) or 0)
+    if failure_count == 0:
+        print("Tests passed. No action required.")
+        return 0
+
+    patch_diff = payload.get("patch_diff", {})
+    diff_path = patch_diff.get("path")
+    if not patch_diff.get("available", False) or not diff_path:
+        print("No patch proposal available. Use report to inspect failures.")
+        return 2
+
+    diff_file = Path(str(diff_path))
+    if not diff_file.exists():
+        print("No patch proposal available. Use report to inspect failures.")
+        return 2
+    inspected = inspect_diff(diff_file.read_text(encoding="utf-8"), cwd=Path.cwd())
+    summary = inspected.get("summary", {})
+    patch_quality = payload.get("patch_quality")
+
+    print("Patch proposal:")
+    print(f"- Files: {summary.get('file_count', 0)}")
+    print(f"- Changes: +{summary.get('additions', 0)} / -{summary.get('deletions', 0)}")
+    if patch_quality:
+        print(f"- Quality: {patch_quality.get('confidence', 0.0)}")
+    else:
+        print("- Quality: n/a")
+
+    if not args.confirm:
+        print(f"Preview available. Use aegis-code apply {diff_path} to inspect.")
+        print("Use --confirm to apply this patch.")
+        return 1
+
+    apply_result = apply_patch_file(diff_file, cwd=Path.cwd())
+    print(format_apply_result(apply_result))
+    if not apply_result.get("applied", False):
+        return 2
+
+    cfg = load_config(Path.cwd())
+    command = cfg.commands.test.strip()
+    if not command:
+        print("Patch applied. No configured test command to verify.")
+        return 0
+    result = run_configured_tests(command, cwd=Path.cwd())
+    if result.status == "ok" and result.exit_code == 0:
+        print("Post-apply tests passed.")
+        return 0
+    print("Post-apply tests are still failing.")
+    return 2
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv) if argv is not None else None
     if args is None:
@@ -345,6 +421,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_backups(args[1:])
     if command == "restore":
         return handle_restore(args[1:])
+    if command == "fix":
+        return handle_fix(args[1:])
     return handle_task(args)
 
 
