@@ -164,13 +164,14 @@ def test_cli_create_confirm_validate_success(monkeypatch, tmp_path: Path, capsys
 def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: Path, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "proj"
-    called: dict[str, Path | None] = {"cwd": None}
+    called: dict[str, object] = {"cwd": None, "context": None}
 
     def _fail_result(*_a, **_k) -> CommandResult:
         return CommandResult(name="test", command="python -m pytest -q", status="error", exit_code=1)
 
     def _record_run_task(*, options, cwd):
         called["cwd"] = cwd
+        called["context"] = options.project_context
         return {"status": "completed_tests_failed"}
 
     monkeypatch.setattr("aegis_code.cli.run_configured_tests", _fail_result)
@@ -182,3 +183,4 @@ def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: P
     assert "Report JSON: .aegis/runs/latest.json" in out
     assert "Report MD: .aegis/runs/latest.md" in out
     assert called["cwd"] == target
+    assert isinstance(called["context"], dict)

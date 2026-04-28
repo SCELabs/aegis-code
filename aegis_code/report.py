@@ -38,6 +38,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
     test_attempts = payload.get("test_attempts", [])
+    project_context = payload.get("project_context", {}) or {}
 
     lines = [
         "# Aegis Code Run Report",
@@ -75,6 +76,12 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         f"- Test command: `{verification.get('test_command', 'none')}`",
         f"- Confidence: `{verification.get('confidence', 'low')}`",
         f"- Reason: `{verification.get('reason', 'n/a')}`",
+        "",
+        "## Project Context",
+        "",
+        f"- Available: `{project_context.get('available', False)}`",
+        f"- Total chars: `{project_context.get('total_chars', 0)}`",
+        f"- Included paths: `{', '.join(project_context.get('included_paths', [])) or 'none'}`",
         "",
         "## Commands Run",
         "",

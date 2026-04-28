@@ -235,3 +235,32 @@ def test_fix_confirm_apply_failure_reports_next_step(tmp_path: Path, monkeypatch
     assert exit_code != 0
     assert "Apply result:" in out
     assert "Next: run `aegis-code apply --check .aegis/runs/latest.diff` and `aegis-code report`." in out
+
+
+def test_fix_passes_project_context_to_runtime(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = {"context": None}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["context"] = options.project_context
+        _write_latest_json(
+            tmp_path,
+            {
+                "failures": {"failure_count": 0},
+                "patch_diff": {"available": False, "path": None},
+                "patch_quality": None,
+            },
+        )
+        return {}
+
+    monkeypatch.setattr(
+        "aegis_code.cli.load_runtime_context",
+        lambda **_: {"available": True, "files": {}, "included_paths": [".aegis/context/project_summary.md"], "total_chars": 99},
+    )
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["fix"])
+    _ = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["context"] is not None
+    assert captured["context"]["available"] is True

@@ -6,8 +6,16 @@ import os
 from pathlib import Path
 from typing import Sequence
 
+from aegis_code.budget import can_spend, clear_budget, load_budget, record_event, set_budget
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.context_state import (
+    format_context_refresh,
+    format_context_show,
+    load_runtime_context,
+    refresh_context,
+    show_context,
+)
 from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.create_scaffold import create_scaffold
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
@@ -15,6 +23,7 @@ from aegis_code.patches.apply_check import check_patch_file, format_apply_check_
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
+from aegis_code.policy import build_policy_status, format_policy_status
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
@@ -54,6 +63,31 @@ def _build_create_parser() -> argparse.ArgumentParser:
 
 def _build_doctor_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code doctor")
+
+
+def _build_context_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code context")
+    subparsers = parser.add_subparsers(dest="context_command")
+    subparsers.add_parser("refresh", prog="aegis-code context refresh")
+    subparsers.add_parser("show", prog="aegis-code context show")
+    return parser
+
+
+def _build_budget_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code budget")
+    subparsers = parser.add_subparsers(dest="budget_command")
+    set_parser = subparsers.add_parser("set", prog="aegis-code budget set")
+    set_parser.add_argument("amount", type=float, help="Budget limit estimate in USD.")
+    subparsers.add_parser("status", prog="aegis-code budget status")
+    subparsers.add_parser("clear", prog="aegis-code budget clear")
+    return parser
+
+
+def _build_policy_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code policy")
+    subparsers = parser.add_subparsers(dest="policy_command")
+    subparsers.add_parser("status", prog="aegis-code policy status")
+    return parser
 
 
 def _build_backups_parser() -> argparse.ArgumentParser:
@@ -266,10 +300,14 @@ def handle_create(argv: Sequence[str]) -> int:
         return 0
 
     print("Validation: tests failed. Running Aegis stabilization...")
+    if not _allow_runtime_or_print(target_path):
+        return 0
+    project_context = load_runtime_context(cwd=target_path)
     run_task(
         options=TaskOptions(
             task="fix failing tests after scaffold",
             propose_patch=True,
+            project_context=project_context,
         ),
         cwd=target_path,
     )
@@ -319,6 +357,70 @@ def handle_doctor(argv: Sequence[str]) -> int:
     print(f"- Latest run: {'found' if latest.exists() else 'missing'}")
     print(f"- Backups: {len(backups)}")
     return 0
+
+
+def handle_context(argv: Sequence[str]) -> int:
+    parser = _build_context_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    if args.context_command == "refresh":
+        result = refresh_context(cwd=cwd)
+        print(format_context_refresh(result))
+        return 0
+    if args.context_command == "show":
+        result = show_context(cwd=cwd)
+        print(format_context_show(result))
+        return 0 if result.get("exists", False) else 1
+    parser.print_help()
+    return 1
+
+
+def _allow_runtime_or_print(cwd: Path, operation: str = "run_task", estimated_cost: float = 0.01) -> bool:
+    budget = load_budget(cwd)
+    if not budget:
+        return True
+    if not can_spend(operation, estimated_cost, cwd):
+        print("Budget limit reached. Skipping Aegis runtime.")
+        return False
+    record_event(operation, estimated_cost, cwd)
+    return True
+
+
+def handle_budget(argv: Sequence[str]) -> int:
+    parser = _build_budget_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    if args.budget_command == "set":
+        data = set_budget(float(args.amount), cwd=cwd)
+        print(f"Budget set: limit={data['limit']} spent_estimate={data['spent_estimate']} currency={data['currency']}")
+        return 0
+    if args.budget_command == "status":
+        data = load_budget(cwd=cwd)
+        if not data:
+            print("Budget: not set")
+            return 0
+        print(
+            f"Budget: limit={data.get('limit', 0.0)} spent_estimate={data.get('spent_estimate', 0.0)} "
+            f"currency={data.get('currency', 'USD')}"
+        )
+        return 0
+    if args.budget_command == "clear":
+        clear_budget(cwd=cwd)
+        print("Budget cleared.")
+        return 0
+    parser.print_help()
+    return 1
+
+
+def handle_policy(argv: Sequence[str]) -> int:
+    parser = _build_policy_parser()
+    args = parser.parse_args(list(argv))
+    if args.policy_command == "status":
+        status = build_policy_status(cwd=Path.cwd())
+        print(format_policy_status(status))
+        return 0
+    parser.print_help()
+    return 1
 
 
 def handle_apply(argv: Sequence[str]) -> int:
@@ -430,6 +532,10 @@ def handle_check_sll(argv: Sequence[str]) -> int:
 def handle_task(argv: Sequence[str]) -> int:
     parser = _build_task_parser()
     args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    if not _allow_runtime_or_print(cwd):
+        return 0
+    project_context = load_runtime_context(cwd=cwd)
     options = TaskOptions(
         task=args.task,
         budget=args.budget,
@@ -439,8 +545,9 @@ def handle_task(argv: Sequence[str]) -> int:
         propose_patch=args.propose_patch,
         session=args.session,
         no_report=args.no_report,
+        project_context=project_context,
     )
-    payload = run_task(options=options, cwd=Path.cwd())
+    payload = run_task(options=options, cwd=cwd)
 
     print("Aegis Code: controlled execution with proposal-only patch diffs and patch-quality scoring.")
     print(f"Task: {payload['task']}")
@@ -507,7 +614,8 @@ def handle_task(argv: Sequence[str]) -> int:
 def handle_fix(argv: Sequence[str]) -> int:
     parser = _build_fix_parser()
     args = parser.parse_args(list(argv))
-    cfg = load_config(Path.cwd())
+    cwd = Path.cwd()
+    cfg = load_config(cwd)
     verification_command = cfg.commands.test.strip()
     if not verification_command:
         print("Fix summary:")
@@ -521,8 +629,12 @@ def handle_fix(argv: Sequence[str]) -> int:
         task="triage current test failures",
         propose_patch=True,
         no_report=False,
+        project_context={},
     )
-    run_task(options=options, cwd=Path.cwd())
+    if not _allow_runtime_or_print(cwd):
+        return 0
+    options.project_context = load_runtime_context(cwd=cwd)
+    run_task(options=options, cwd=cwd)
 
     latest = project_paths()["latest_json"]
     if not latest.exists():
@@ -619,6 +731,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_create(args[1:])
     if command == "doctor":
         return handle_doctor(args[1:])
+    if command == "context":
+        return handle_context(args[1:])
+    if command == "budget":
+        return handle_budget(args[1:])
+    if command == "policy":
+        return handle_policy(args[1:])
     if command == "apply":
         return handle_apply(args[1:])
     if command == "backups":

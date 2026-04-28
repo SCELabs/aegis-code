@@ -33,6 +33,7 @@ class TaskOptions:
     propose_patch: bool = False
     session: str | None = None
     no_report: bool = False
+    project_context: dict[str, Any] | None = None
 
 
 def _is_tests_passed(status: str, exit_code: int | None) -> bool:
@@ -379,6 +380,11 @@ def build_run_payload(
         "status": status,
         "notes": notes,
         "execution_budget_pressure": execution_budget,
+        "project_context": {
+            "available": bool((options.project_context or {}).get("available", False)),
+            "included_paths": list((options.project_context or {}).get("included_paths", [])),
+            "total_chars": int((options.project_context or {}).get("total_chars", 0) or 0),
+        },
     }
     return payload
 

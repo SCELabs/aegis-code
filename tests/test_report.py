@@ -41,6 +41,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
             "preview": "",
         },
         "patch_quality": None,
+        "project_context": {"available": True, "included_paths": [".aegis/context/project_summary.md"], "total_chars": 123},
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -50,6 +51,8 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     content = paths["md"].read_text(encoding="utf-8")
     assert "Aegis Code Run Report" in content
     assert "## Test Attempts" in content
+    assert "## Project Context" in content
+    assert "Total chars: `123`" in content
     assert "## Retry Policy" in content
     assert "## Final Failure State" in content
     assert "## Structural Analysis" in content

@@ -265,3 +265,28 @@ def test_runtime_no_test_command_marks_unverified_and_skips_patch_diff(tmp_path:
     assert payload["failures"]["failure_count"] == 0
     assert payload["patch_diff"]["attempted"] is False
     assert payload["patch_quality"] is None
+
+
+def test_runtime_payload_includes_project_context_metadata(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="context metadata",
+            project_context={
+                "available": True,
+                "included_paths": [".aegis/context/project_summary.md"],
+                "total_chars": 88,
+                "files": {"project_summary": "ignored"},
+            },
+        ),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["project_context"]["available"] is True
+    assert payload["project_context"]["included_paths"] == [".aegis/context/project_summary.md"]
+    assert payload["project_context"]["total_chars"] == 88

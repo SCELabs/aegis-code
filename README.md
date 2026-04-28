@@ -30,6 +30,26 @@ Run a task:
 aegis-code "triage current test failures" --budget 1.25
 ```
 
+Inspect read-only runtime policy status:
+
+```bash
+aegis-code policy status
+```
+
+Refresh deterministic project-local context:
+
+```bash
+aegis-code context refresh
+aegis-code context show
+```
+
+Set a local runtime budget guardrail:
+
+```bash
+aegis-code budget set 1.00
+aegis-code budget status
+```
+
 List available stack profiles:
 
 ```bash
@@ -85,16 +105,49 @@ No external Copier/Cookiecutter template dependency is used yet.
 
 `--validate` is optional and only runs after `--target` + `--confirm`; it runs tests for the scaffold and, on failure, runs Aegis stabilization planning/proposal flow.
 
+## Runtime Policy
+
+`aegis-code policy status` is read-only and local-only.
+
+It shows current project runtime policy signals:
+
+- mode and configured model tiers
+- provider config flags (without secret values)
+- budget state and remaining estimate
+- context availability and capped runtime context metadata
+- verification command and runtime guard summary
+
+This pass does not change runtime routing or model selection.
+
+## Project Context
+
+`aegis-code context refresh` and `aegis-code context show` manage deterministic local context under `.aegis/context/`.
+
+- local only and deterministic
+- no network/provider/backend calls
+- selective reads from `README.md`, `pyproject.toml`, `package.json`, and bounded `docs/**/*.md`
+- runtime commands load compact project context when available
+- runtime inclusion order: `project_summary`, `constraints`, `architecture`
+- runtime context is capped (default 6000 chars) with truncation marker when needed
+- reports include context metadata (`available`, `included_paths`, `total_chars`)
+- intended as high-signal project-local context for runtime control and project awareness
+
 ## Command Index
 
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
+- `aegis-code policy status` - show read-only local runtime policy summary
+- `aegis-code context refresh` - build deterministic project-local context files
+- `aegis-code context show` - show context status, paths, and compact previews
 - `aegis-code create --list-stacks` - list available internal stack profiles and versions
 - `aegis-code create "<idea>"` - generate a planning-only project plan preview
 - `aegis-code create "<idea>" --stack STACK_ID` - force a stack profile
 - `aegis-code create "<idea>" --target PATH` - preview scaffold file set (no writes)
 - `aegis-code create "<idea>" --target PATH --confirm` - write scaffold to empty target
 - `aegis-code create "<idea>" --target PATH --confirm --validate` - scaffold, verify, and run stabilization proposal on failures
+- `aegis-code budget set AMOUNT` - set local runtime budget estimate limit
+- `aegis-code budget status` - show local runtime budget estimate usage
+- `aegis-code budget clear` - clear local runtime budget file
 - `aegis-code report` - print latest markdown report
 - `aegis-code status` - compact latest-run summary
 - `aegis-code maintain` - read-only repo health and suggestions
@@ -114,6 +167,9 @@ No external Copier/Cookiecutter template dependency is used yet.
 - Restore is available for rollback.
 - No git commands are run by `aegis-code`.
 - `create --target` refuses current repo root and non-empty targets.
+- Local budget guardrails apply to runtime/Aegis calls only.
+- Planning, listing, config, and other local-only operations are always free.
+- Context refresh/show are local deterministic operations only.
 
 ## Optional Integrations
 

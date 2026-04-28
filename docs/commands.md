@@ -8,6 +8,30 @@
   Run the controlled workflow for a task.  
   Example: `aegis-code "triage current test failures" --budget 1.25`
 
+- `aegis-code policy status`  
+  Show read-only local runtime policy summary (mode, model tiers, budget, context, verification).  
+  Example: `aegis-code policy status`
+
+- `aegis-code context refresh`  
+  Build deterministic project-local context files under `.aegis/context/`.  
+  Example: `aegis-code context refresh`
+
+- `aegis-code context show`  
+  Show context availability, generated file paths, and compact previews.  
+  Example: `aegis-code context show`
+
+- `aegis-code budget set AMOUNT`  
+  Set local runtime budget estimate limit in `.aegis/budget.json`.  
+  Example: `aegis-code budget set 1.00`
+
+- `aegis-code budget status`  
+  Show current local runtime budget estimate usage.  
+  Example: `aegis-code budget status`
+
+- `aegis-code budget clear`  
+  Clear local runtime budget file.  
+  Example: `aegis-code budget clear`
+
 - `aegis-code create --list-stacks`  
   List available internal stack profiles and versions; no plan/scaffold and no files written.  
   Example: `aegis-code create --list-stacks`

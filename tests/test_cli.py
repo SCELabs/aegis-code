@@ -77,3 +77,36 @@ def test_help_mentions_key_commands(capsys) -> None:
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "aegis-code" in out
+
+
+def test_task_passes_project_context_to_runtime(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured = {"context": None}
+
+    def _fake_context(**_: object):
+        return {"available": True, "files": {}, "included_paths": [".aegis/context/project_summary.md"], "total_chars": 42}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["context"] = options.project_context
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": True,
+            "status": "dry_run_planned",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": False, "test_command": "n/a"},
+        }
+
+    monkeypatch.setattr("aegis_code.cli.load_runtime_context", _fake_context)
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--dry-run"])
+    assert exit_code == 0
+    assert captured["context"] is not None
+    assert captured["context"]["available"] is True
