@@ -8,6 +8,10 @@
   Run the controlled workflow for a task.  
   Example: `aegis-code "triage current test failures" --budget 1.25`
 
+- `aegis-code overview`  
+  Show compact full project state summary (config, budget, context, runtime policy, latest run, backups).  
+  Example: `aegis-code overview`
+
 - `aegis-code policy status`  
   Show read-only local runtime policy summary (mode, model tiers, budget, context, verification).  
   Example: `aegis-code policy status`

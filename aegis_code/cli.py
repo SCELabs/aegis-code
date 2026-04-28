@@ -19,6 +19,7 @@ from aegis_code.context_state import (
 from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.create_scaffold import create_scaffold
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
+from aegis_code.overview import build_overview, format_overview
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
@@ -51,6 +52,10 @@ def _build_report_parser() -> argparse.ArgumentParser:
 
 def _build_status_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code status")
+
+
+def _build_overview_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code overview")
 
 
 def _build_maintain_parser() -> argparse.ArgumentParser:
@@ -243,6 +248,14 @@ def handle_status(argv: Sequence[str]) -> int:
     else:
         print("- Patch quality confidence: n/a")
     print(f"- Backup count: {len(backups)}")
+    return 0
+
+
+def handle_overview(argv: Sequence[str]) -> int:
+    parser = _build_overview_parser()
+    parser.parse_args(list(argv))
+    data = build_overview(cwd=Path.cwd())
+    print(format_overview(data))
     return 0
 
 
@@ -765,6 +778,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_report(args[1:])
     if command == "status":
         return handle_status(args[1:])
+    if command == "overview":
+        return handle_overview(args[1:])
     if command == "maintain":
         return handle_maintain(args[1:])
     if command == "create":

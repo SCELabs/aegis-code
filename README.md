@@ -30,6 +30,12 @@ Run a task:
 aegis-code "triage current test failures" --budget 1.25
 ```
 
+View one-shot project state summary:
+
+```bash
+aegis-code overview
+```
+
 Inspect read-only runtime policy status:
 
 ```bash
@@ -136,6 +142,22 @@ This prepares Aegis Code for deeper client integration without adding new extern
 
 Budget runtime events now record selected mode and decision reason (`default`, `low_budget`, or `policy_adjustment`) in `.aegis/budget.json` for local observability.
 
+Runtime Control summaries in CLI/report output show selected mode, reason, budget remaining, and context availability.
+
+## Overview
+
+`aegis-code overview` provides a compact full-project snapshot in one command:
+
+- detected stack
+- verification command
+- budget remaining/limit
+- context availability and size
+- selected runtime mode + reason
+- latest run presence
+- backup count
+
+This is local-only, deterministic, and read-only.
+
 ## Project Context
 
 `aegis-code context refresh` and `aegis-code context show` manage deterministic local context under `.aegis/context/`.
@@ -153,6 +175,7 @@ Budget runtime events now record selected mode and decision reason (`default`, `
 
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
+- `aegis-code overview` - show compact full-project state summary
 - `aegis-code policy status` - show read-only local runtime policy summary
 - `aegis-code context refresh` - build deterministic project-local context files
 - `aegis-code context show` - show context status, paths, and compact previews
