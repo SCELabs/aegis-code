@@ -62,6 +62,8 @@ class CommandResult:
     command: str
     status: str
     exit_code: int | None = None
+    stdout: str = ""
+    stderr: str = ""
     output_preview: str = ""
     full_output: str = ""
 
@@ -71,6 +73,8 @@ class CommandResult:
             "command": self.command,
             "status": self.status,
             "exit_code": self.exit_code,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
             "output_preview": self.output_preview,
             "full_output": self.full_output,
         }

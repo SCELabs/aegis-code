@@ -29,6 +29,27 @@ class TaskOptions:
     no_report: bool = False
 
 
+def _build_symptoms(sll_analysis: dict[str, Any]) -> list[str]:
+    symptoms: list[str] = ["unstable_workflow"]
+    if not sll_analysis.get("available", False):
+        return symptoms
+
+    if float(sll_analysis.get("fragmentation_risk", 0.0)) > 0.6:
+        symptoms.append("fragmented_output")
+    if float(sll_analysis.get("collapse_risk", 0.0)) > 0.6:
+        symptoms.append("degenerate_loop")
+    if float(sll_analysis.get("drift_risk", 0.0)) > 0.6:
+        symptoms.append("unstable_workflow")
+    if float(sll_analysis.get("stable_random_risk", 0.0)) > 0.6:
+        symptoms.append("ungrounded_output")
+
+    deduped: list[str] = []
+    for symptom in symptoms:
+        if symptom not in deduped:
+            deduped.append(symptom)
+    return deduped
+
+
 def build_run_payload(
     *,
     options: TaskOptions,
@@ -39,28 +60,16 @@ def build_run_payload(
     mode = options.mode or config.mode
     budget = BudgetState(total=options.budget if options.budget is not None else config.budget_per_task)
 
-    aegis_client = client or client_from_env(config.aegis.base_url)
-    decision = aegis_client.step_scope(
-        step_name="aegis_code_task",
-        step_input={"task": options.task},
-        symptoms=["unstable_workflow"],
-        severity="medium",
-        metadata={
-            "budget_total": budget.total,
-            "budget_remaining": budget.remaining,
-            **({"session_id": options.session} if options.session else {}),
-        },
-    )
-
-    selected_tier = normalize_tier(decision.model_tier)
-    selected_model = resolve_model_for_tier(config, selected_tier)
-
     repo_summary = scan_repo(cwd)
     commands_run: list[dict[str, Any]] = []
     failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
     failure_context: dict[str, Any] = {"files": []}
-    sll_analysis: dict[str, Any] | None = None
-    patch_plan: dict[str, Any] = {"strategy": "Failure analysis disabled.", "proposed_changes": []}
+    sll_analysis: dict[str, Any] = {"available": False}
+    patch_plan: dict[str, Any] = {
+        "strategy": "Failure analysis disabled.",
+        "confidence": 0.0,
+        "proposed_changes": [],
+    }
 
     if options.dry_run:
         notes = [
@@ -79,18 +88,6 @@ def build_run_payload(
                     failures.get("failed_tests", []), cwd or Path.cwd()
                 )
                 sll_analysis = analyze_failures_sll(cmd_result.full_output)
-                patch_plan = generate_patch_plan(
-                    options.task,
-                    failures.get("failed_tests", []),
-                    failure_context,
-                    asdict(decision),
-                    sll_analysis,
-                )
-            else:
-                patch_plan = {
-                    "strategy": "Failure analysis disabled via --no-analyze-failures.",
-                    "proposed_changes": [],
-                }
             status = "completed_with_safe_actions"
             notes = [
                 "Executed safe baseline actions only.",
@@ -104,8 +101,40 @@ def build_run_payload(
             ]
             patch_plan = {
                 "strategy": "No test command executed; no failure-aware patch plan generated.",
+                "confidence": 0.0,
                 "proposed_changes": [],
             }
+
+    symptoms = _build_symptoms(sll_analysis)
+    aegis_client = client or client_from_env(config.aegis.base_url)
+    decision = aegis_client.step_scope(
+        step_name="aegis_code_task",
+        step_input={"task": options.task},
+        symptoms=symptoms,
+        severity="medium",
+        metadata={
+            "budget_total": budget.total,
+            "budget_remaining": budget.remaining,
+            **({"session_id": options.session} if options.session else {}),
+        },
+    )
+    selected_tier = normalize_tier(decision.model_tier)
+    selected_model = resolve_model_for_tier(config, selected_tier)
+
+    if options.analyze_failures:
+        patch_plan = generate_patch_plan(
+            options.task,
+            failures.get("failed_tests", []),
+            failure_context,
+            asdict(decision),
+            sll_analysis,
+        )
+    else:
+        patch_plan = {
+            "strategy": "Failure analysis disabled via --no-analyze-failures.",
+            "confidence": 0.0,
+            "proposed_changes": [],
+        }
 
     execution_budget = {}
     if isinstance(decision.execution, dict):

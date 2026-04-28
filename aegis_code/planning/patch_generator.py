@@ -24,6 +24,7 @@ def generate_patch_plan(
     if not failures:
         return {
             "strategy": f"No failures detected for task '{task}'. No patch required.",
+            "confidence": 0.95,
             "proposed_changes": [],
         }
 
@@ -31,7 +32,7 @@ def generate_patch_plan(
     strategy = (
         f"Address {len(failures)} pytest failure(s) with {guidance} context and targeted edits only."
     )
-    if sll_analysis:
+    if sll_analysis and sll_analysis.get("available", False):
         strategy += f" SLL regime='{sll_analysis.get('regime', 'unknown')}'."
 
     context_files = context.get("files", []) if isinstance(context.get("files", []), list) else []
@@ -54,7 +55,22 @@ def generate_patch_plan(
                 "file": target,
                 "change_type": "modify",
                 "description": f"Update logic to resolve failing test '{failure.get('test_name', '')}'.",
+                "reason": f"Pytest reported: {failure.get('error', 'Unknown failure')}",
             }
         )
 
-    return {"strategy": strategy, "proposed_changes": proposed_changes}
+    confidence = 0.55 if proposed_changes else 0.35
+    if sll_analysis and sll_analysis.get("available", False):
+        max_risk = max(
+            float(sll_analysis.get("collapse_risk", 0.0)),
+            float(sll_analysis.get("fragmentation_risk", 0.0)),
+            float(sll_analysis.get("drift_risk", 0.0)),
+            float(sll_analysis.get("stable_random_risk", 0.0)),
+        )
+        confidence = max(0.2, min(0.9, confidence + (1.0 - max_risk) * 0.2))
+
+    return {
+        "strategy": strategy,
+        "confidence": round(confidence, 3),
+        "proposed_changes": proposed_changes,
+    }

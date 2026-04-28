@@ -36,12 +36,16 @@ def run_shell_command(
             timeout=timeout_seconds,
             check=False,
         )
-        output = (completed.stdout + "\n" + completed.stderr).strip()
+        stdout = completed.stdout or ""
+        stderr = completed.stderr or ""
+        output = (stdout + "\n" + stderr).strip()
         return CommandResult(
             name=name,
             command=command,
             status="ok" if completed.returncode == 0 else "failed",
             exit_code=completed.returncode,
+            stdout=stdout,
+            stderr=stderr,
             output_preview=output[:1200],
             full_output=output,
         )

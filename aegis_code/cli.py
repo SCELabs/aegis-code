@@ -93,6 +93,10 @@ def handle_task(argv: Sequence[str]) -> int:
         f"{payload.get('selected_model_tier', 'mid')} -> {payload.get('selected_model', 'unknown')}"
     )
     print(f"Status: {payload['status']}")
+    failure_count = payload.get("failures", {}).get("failure_count", 0)
+    has_patch_plan = bool(payload.get("patch_plan", {}).get("proposed_changes"))
+    print(f"Failure count: {failure_count}")
+    print(f"Patch plan available: {has_patch_plan}")
     if not args.no_report:
         paths = project_paths()
         print(f"Report JSON: {paths['latest_json']}")

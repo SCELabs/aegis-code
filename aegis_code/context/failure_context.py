@@ -35,6 +35,7 @@ def _find_candidate_source(test_file: Path, cwd: Path) -> Path | None:
     source_name = test_name[len("test_") :]
     mapped_parts = suffix_parts[:-1] + [source_name]
     candidates = [
+        cwd / "tests" / Path(*mapped_parts),
         cwd / "aegis_code" / Path(*mapped_parts),
         cwd / Path(*mapped_parts),
         cwd / "src" / Path(*mapped_parts),
@@ -42,6 +43,21 @@ def _find_candidate_source(test_file: Path, cwd: Path) -> Path | None:
     for candidate in candidates:
         if candidate.exists() and candidate.is_file():
             return candidate
+    return None
+
+
+def _resolve_existing_file(raw_path: str, cwd: Path) -> Path | None:
+    if not raw_path:
+        return None
+    candidate = Path(raw_path)
+    options = [candidate] if candidate.is_absolute() else [cwd / candidate, candidate]
+    for option in options:
+        try:
+            resolved = option.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and resolved.is_file():
+            return resolved
     return None
 
 
@@ -54,10 +70,9 @@ def build_failure_context(failures: list[dict[str, Any]], cwd: Path) -> dict[str
         if not raw_path:
             continue
 
-        test_path = Path(raw_path)
-        if not test_path.is_absolute():
-            test_path = cwd / test_path
-        test_path = test_path.resolve()
+        test_path = _resolve_existing_file(raw_path, cwd)
+        if test_path is None:
+            test_path = (cwd / Path(raw_path)).resolve()
 
         if test_path.exists() and test_path.is_file() and test_path not in seen:
             seen.add(test_path)

@@ -6,6 +6,7 @@ from aegis_code.models import RepoScanSummary
 
 IGNORED_DIRS = {
     ".git",
+    ".pytest_cache",
     ".venv",
     "venv",
     "__pycache__",
@@ -16,13 +17,17 @@ IGNORED_DIRS = {
 }
 
 
+def _is_ignored_dir_name(name: str) -> bool:
+    return name in IGNORED_DIRS or name.endswith(".egg-info")
+
+
 def scan_repo(cwd: Path | None = None) -> RepoScanSummary:
     root = cwd or Path.cwd()
     file_count = 0
     top_level_dirs: list[str] = []
 
     for child in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-        if child.name in IGNORED_DIRS:
+        if _is_ignored_dir_name(child.name):
             continue
         if child.is_dir():
             top_level_dirs.append(child.name)
@@ -30,7 +35,7 @@ def scan_repo(cwd: Path | None = None) -> RepoScanSummary:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part in IGNORED_DIRS for part in path.parts):
+        if any(_is_ignored_dir_name(part) for part in path.parts):
             continue
         file_count += 1
 

@@ -85,7 +85,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Count: `{failures.get('failure_count', len(failed_tests))}`")
         for failure in failed_tests:
             lines.append(
-                f"- `{failure.get('test_name', 'unknown')}` | file={failure.get('file', '?')} | line={failure.get('line')} | error={failure.get('error', '')}"
+                f"- `{failure.get('test_name', 'unknown')}` ({failure.get('file', '?')}:{failure.get('line')})"
             )
     else:
         lines.append("- None")
@@ -102,8 +102,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     if context_files:
         lines.append(f"- Files captured: `{len(context_files)}`")
         for item in context_files:
-            content = str(item.get("content", ""))
-            lines.append(f"- `{item.get('path', '')}` ({len(content)} chars)")
+            lines.append(f"- `{item.get('path', '')}`")
     else:
         lines.append("- None")
 
@@ -115,16 +114,14 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         ]
     )
 
-    if sll_analysis:
-        lines.extend(
-            [
-                "```json",
-                json.dumps(sll_analysis, indent=2, sort_keys=True),
-                "```",
-            ]
-        )
+    if sll_analysis and sll_analysis.get("available", False):
+        lines.append(f"- Regime: `{sll_analysis.get('regime', 'unknown')}`")
+        lines.append(f"- Collapse risk: `{sll_analysis.get('collapse_risk', 0.0)}`")
+        lines.append(f"- Fragmentation risk: `{sll_analysis.get('fragmentation_risk', 0.0)}`")
+        lines.append(f"- Drift risk: `{sll_analysis.get('drift_risk', 0.0)}`")
+        lines.append(f"- Stable random risk: `{sll_analysis.get('stable_random_risk', 0.0)}`")
     else:
-        lines.append("- Not available")
+        lines.append("- Not available (`available=false`)")
 
     lines.extend(
         [
@@ -132,6 +129,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "## Proposed Fix Plan",
             "",
             f"- Strategy: {patch_plan.get('strategy', 'No patch strategy generated.')}",
+            f"- Confidence: `{patch_plan.get('confidence', 0.0)}`",
         ]
     )
 
@@ -139,7 +137,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     if proposed_changes:
         for change in proposed_changes:
             lines.append(
-                f"- `{change.get('file', '')}` | {change.get('change_type', 'modify')} | {change.get('description', '')}"
+                f"- `{change.get('file', '')}` | {change.get('change_type', 'modify')} | {change.get('description', '')} | reason={change.get('reason', '')}"
             )
     else:
         lines.append("- No proposed changes")
