@@ -63,6 +63,7 @@ class CommandResult:
     status: str
     exit_code: int | None = None
     output_preview: str = ""
+    full_output: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,4 +72,5 @@ class CommandResult:
             "status": self.status,
             "exit_code": self.exit_code,
             "output_preview": self.output_preview,
+            "full_output": self.full_output,
         }

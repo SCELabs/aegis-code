@@ -26,6 +26,10 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     guidance = payload.get("aegis_execution", {})
     selected_tier = payload.get("selected_model_tier", "mid")
     selected_model = payload.get("selected_model", "unknown")
+    failures = payload.get("failures", {})
+    failure_context = payload.get("failure_context", {})
+    sll_analysis = payload.get("sll_analysis")
+    patch_plan = payload.get("patch_plan", {})
 
     lines = [
         "# Aegis Code Run Report",
@@ -71,9 +75,81 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## Failures",
+            "",
+        ]
+    )
+
+    failed_tests = failures.get("failed_tests", [])
+    if failed_tests:
+        lines.append(f"- Count: `{failures.get('failure_count', len(failed_tests))}`")
+        for failure in failed_tests:
+            lines.append(
+                f"- `{failure.get('test_name', 'unknown')}` | file={failure.get('file', '?')} | line={failure.get('line')} | error={failure.get('error', '')}"
+            )
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        [
+            "",
+            "## Failure Context",
+            "",
+        ]
+    )
+
+    context_files = failure_context.get("files", [])
+    if context_files:
+        lines.append(f"- Files captured: `{len(context_files)}`")
+        for item in context_files:
+            content = str(item.get("content", ""))
+            lines.append(f"- `{item.get('path', '')}` ({len(content)} chars)")
+    else:
+        lines.append("- None")
+
+    lines.extend(
+        [
+            "",
+            "## Structural Analysis",
+            "",
+        ]
+    )
+
+    if sll_analysis:
+        lines.extend(
+            [
+                "```json",
+                json.dumps(sll_analysis, indent=2, sort_keys=True),
+                "```",
+            ]
+        )
+    else:
+        lines.append("- Not available")
+
+    lines.extend(
+        [
+            "",
+            "## Proposed Fix Plan",
+            "",
+            f"- Strategy: {patch_plan.get('strategy', 'No patch strategy generated.')}",
+        ]
+    )
+
+    proposed_changes = patch_plan.get("proposed_changes", [])
+    if proposed_changes:
+        for change in proposed_changes:
+            lines.append(
+                f"- `{change.get('file', '')}` | {change.get('change_type', 'modify')} | {change.get('description', '')}"
+            )
+    else:
+        lines.append("- No proposed changes")
+
+    lines.extend(
+        [
+            "",
             "## Next Steps",
             "",
-            "- v0.1 is planning/reporting only.",
+            "- v0.2 is planning/reporting only.",
             "- No file edits are performed in this version.",
             "- Use report output to guide the next manual or supervised action.",
             "",

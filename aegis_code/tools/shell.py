@@ -43,6 +43,7 @@ def run_shell_command(
             status="ok" if completed.returncode == 0 else "failed",
             exit_code=completed.returncode,
             output_preview=output[:1200],
+            full_output=output,
         )
     except subprocess.TimeoutExpired:
         return CommandResult(
@@ -50,6 +51,7 @@ def run_shell_command(
             command=command,
             status="timeout",
             output_preview=f"Command timed out after {timeout_seconds}s.",
+            full_output=f"Command timed out after {timeout_seconds}s.",
         )
     except Exception as exc:
         return CommandResult(
@@ -57,4 +59,5 @@ def run_shell_command(
             command=command,
             status="error",
             output_preview=str(exc),
+            full_output=str(exc),
         )

@@ -30,6 +30,12 @@ def _build_task_parser() -> argparse.ArgumentParser:
         help="Runtime mode hint.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Plan only; skip commands.")
+    parser.add_argument(
+        "--analyze-failures",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable failure-aware parsing/context/planning (default: enabled).",
+    )
     parser.add_argument("--session", default=None, help="Optional session id/name.")
     parser.add_argument("--no-report", action="store_true", help="Skip writing latest report files.")
     return parser
@@ -72,12 +78,13 @@ def handle_task(argv: Sequence[str]) -> int:
         budget=args.budget,
         mode=args.mode,
         dry_run=args.dry_run,
+        analyze_failures=args.analyze_failures,
         session=args.session,
         no_report=args.no_report,
     )
     payload = run_task(options=options, cwd=Path.cwd())
 
-    print("Aegis Code v0.1: planning/reporting only.")
+    print("Aegis Code v0.2: failure-aware planning/reporting.")
     print(f"Task: {payload['task']}")
     print(f"Mode: {payload['mode']}")
     print(f"Dry run: {payload['dry_run']}")

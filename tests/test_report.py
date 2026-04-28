@@ -16,10 +16,19 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         "selected_model": "openai:gpt-4.1-mini",
         "repo_scan": {"file_count": 3, "top_level_directories": ["src", "tests"]},
         "commands_run": [],
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": None,
+        "patch_plan": {"strategy": "none", "proposed_changes": []},
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
     paths = write_reports(payload, cwd=tmp_path)
     assert paths["json"].exists()
     assert paths["md"].exists()
-    assert "Aegis Code Run Report" in paths["md"].read_text(encoding="utf-8")
+    content = paths["md"].read_text(encoding="utf-8")
+    assert "Aegis Code Run Report" in content
+    assert "## Failures" in content
+    assert "## Failure Context" in content
+    assert "## Structural Analysis" in content
+    assert "## Proposed Fix Plan" in content
