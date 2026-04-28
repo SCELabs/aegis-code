@@ -8,6 +8,18 @@ from aegis_code.config import load_config
 from aegis_code.context_state import load_runtime_context
 
 
+def select_runtime_mode(config_mode: str, cwd: Path | None = None) -> str:
+    budget = load_budget(cwd or Path.cwd())
+    if not budget:
+        return config_mode
+    limit = float(budget.get("limit", 0.0) or 0.0)
+    spent = float(budget.get("spent_estimate", 0.0) or 0.0)
+    remaining = limit - spent
+    if remaining < 0.10:
+        return "cheapest"
+    return config_mode
+
+
 def build_policy_status(cwd: Path | None = None) -> dict[str, Any]:
     root = cwd or Path.cwd()
     cfg = load_config(root)

@@ -19,3 +19,13 @@ Notes:
 - This command does not switch models or change runtime routing.
 - No backend/provider calls are made.
 - No files are written.
+
+## Budget-aware mode selection (v1)
+
+Runtime invocations apply a deterministic pre-run mode selector:
+
+- no budget file: keep configured/requested mode
+- remaining budget `< 0.10`: force `cheapest`
+- otherwise: keep configured/requested mode
+
+This is an initial mode decision only; no mid-run switching is performed.

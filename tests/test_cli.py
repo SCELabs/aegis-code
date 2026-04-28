@@ -110,3 +110,38 @@ def test_task_passes_project_context_to_runtime(tmp_path: Path, monkeypatch) -> 
     assert exit_code == 0
     assert captured["context"] is not None
     assert captured["context"]["available"] is True
+
+
+def test_task_low_budget_forces_cheapest_mode(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "budget.json").write_text(
+        '{"limit": 0.05, "spent_estimate": 0.0, "currency": "USD", "events": []}',
+        encoding="utf-8",
+    )
+    captured = {"mode": None}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["mode"] = options.mode
+        return {
+            "task": "x",
+            "mode": options.mode,
+            "dry_run": True,
+            "status": "dry_run_planned",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": False, "test_command": "n/a"},
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--dry-run"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["mode"] == "cheapest"
+    assert "Selected runtime mode: cheapest" in out

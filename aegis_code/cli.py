@@ -23,7 +23,7 @@ from aegis_code.patches.apply_check import check_patch_file, format_apply_check_
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
-from aegis_code.policy import build_policy_status, format_policy_status
+from aegis_code.policy import build_policy_status, format_policy_status, select_runtime_mode
 from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
@@ -302,10 +302,13 @@ def handle_create(argv: Sequence[str]) -> int:
     print("Validation: tests failed. Running Aegis stabilization...")
     if not _allow_runtime_or_print(target_path):
         return 0
+    cfg = load_config(target_path)
+    final_mode = select_runtime_mode(cfg.mode, cwd=target_path)
     project_context = load_runtime_context(cwd=target_path)
     run_task(
         options=TaskOptions(
             task="fix failing tests after scaffold",
+            mode=final_mode,
             propose_patch=True,
             project_context=project_context,
         ),
@@ -535,11 +538,14 @@ def handle_task(argv: Sequence[str]) -> int:
     cwd = Path.cwd()
     if not _allow_runtime_or_print(cwd):
         return 0
+    cfg = load_config(cwd)
+    base_mode = args.mode or cfg.mode
+    final_mode = select_runtime_mode(base_mode, cwd=cwd)
     project_context = load_runtime_context(cwd=cwd)
     options = TaskOptions(
         task=args.task,
         budget=args.budget,
-        mode=args.mode,
+        mode=final_mode,
         dry_run=args.dry_run,
         analyze_failures=args.analyze_failures,
         propose_patch=args.propose_patch,
@@ -551,6 +557,7 @@ def handle_task(argv: Sequence[str]) -> int:
 
     print("Aegis Code: controlled execution with proposal-only patch diffs and patch-quality scoring.")
     print(f"Task: {payload['task']}")
+    print(f"Selected runtime mode: {final_mode}")
     print(f"Mode: {payload['mode']}")
     print(f"Dry run: {payload['dry_run']}")
     print(
@@ -627,6 +634,7 @@ def handle_fix(argv: Sequence[str]) -> int:
 
     options = TaskOptions(
         task="triage current test failures",
+        mode=select_runtime_mode(cfg.mode, cwd=cwd),
         propose_patch=True,
         no_report=False,
         project_context={},

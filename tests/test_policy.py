@@ -4,6 +4,7 @@ from pathlib import Path
 
 from aegis_code import cli
 from aegis_code.budget import set_budget
+from aegis_code.policy import select_runtime_mode
 
 
 def test_policy_status_no_budget_no_context(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -70,3 +71,17 @@ def test_policy_missing_subcommand_exits_nonzero(tmp_path: Path, monkeypatch, ca
     out = capsys.readouterr().out
     assert exit_code != 0
     assert "aegis-code policy" in out
+
+
+def test_select_runtime_mode_no_budget_keeps_mode(tmp_path: Path) -> None:
+    assert select_runtime_mode("balanced", cwd=tmp_path) == "balanced"
+
+
+def test_select_runtime_mode_with_budget_enough_keeps_mode(tmp_path: Path) -> None:
+    set_budget(1.0, cwd=tmp_path)
+    assert select_runtime_mode("balanced", cwd=tmp_path) == "balanced"
+
+
+def test_select_runtime_mode_low_remaining_forces_cheapest(tmp_path: Path) -> None:
+    set_budget(0.05, cwd=tmp_path)
+    assert select_runtime_mode("balanced", cwd=tmp_path) == "cheapest"

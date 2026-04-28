@@ -119,6 +119,13 @@ It shows current project runtime policy signals:
 
 This pass does not change runtime routing or model selection.
 
+Budget-aware mode selection policy (v1):
+
+- no budget file: keep configured/requested mode
+- remaining budget `< 0.10`: force `cheapest` mode for that invocation
+- no mid-run mode switching
+- deterministic per invocation
+
 ## Project Context
 
 `aegis-code context refresh` and `aegis-code context show` manage deterministic local context under `.aegis/context/`.

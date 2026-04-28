@@ -264,3 +264,32 @@ def test_fix_passes_project_context_to_runtime(tmp_path: Path, monkeypatch, caps
     assert exit_code == 0
     assert captured["context"] is not None
     assert captured["context"]["available"] is True
+
+
+def test_fix_low_budget_forces_cheapest_mode(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "budget.json").write_text(
+        '{"limit": 0.05, "spent_estimate": 0.0, "currency": "USD", "events": []}',
+        encoding="utf-8",
+    )
+    captured = {"mode": None}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["mode"] = options.mode
+        _write_latest_json(
+            tmp_path,
+            {
+                "failures": {"failure_count": 0},
+                "patch_diff": {"available": False, "path": None},
+                "patch_quality": None,
+            },
+        )
+        return {}
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["fix"])
+    _ = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["mode"] == "cheapest"

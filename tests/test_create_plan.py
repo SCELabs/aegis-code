@@ -164,7 +164,7 @@ def test_cli_create_confirm_validate_success(monkeypatch, tmp_path: Path, capsys
 def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: Path, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     target = tmp_path / "proj"
-    called: dict[str, object] = {"cwd": None, "context": None}
+    called: dict[str, object] = {"cwd": None, "context": None, "mode": None}
 
     def _fail_result(*_a, **_k) -> CommandResult:
         return CommandResult(name="test", command="python -m pytest -q", status="error", exit_code=1)
@@ -172,10 +172,12 @@ def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: P
     def _record_run_task(*, options, cwd):
         called["cwd"] = cwd
         called["context"] = options.project_context
+        called["mode"] = options.mode
         return {"status": "completed_tests_failed"}
 
     monkeypatch.setattr("aegis_code.cli.run_configured_tests", _fail_result)
     monkeypatch.setattr("aegis_code.cli.run_task", _record_run_task)
+    monkeypatch.setattr("aegis_code.cli.select_runtime_mode", lambda *_a, **_k: "cheapest")
     exit_code = cli.main(["create", "inventory tracker", "--target", str(target), "--confirm", "--validate"])
     out = capsys.readouterr().out
     assert exit_code == 0
@@ -184,3 +186,4 @@ def test_cli_create_confirm_validate_failure_runs_aegis(monkeypatch, tmp_path: P
     assert "Report MD: .aegis/runs/latest.md" in out
     assert called["cwd"] == target
     assert isinstance(called["context"], dict)
+    assert called["mode"] == "cheapest"
