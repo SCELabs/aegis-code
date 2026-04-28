@@ -47,3 +47,12 @@ def test_cli_check_sll_does_not_run_runtime(monkeypatch) -> None:
     monkeypatch.setattr("aegis_code.cli.check_sll_available", lambda: {"available": False, "import_path": "structural_language_lab", "error": "x"})
     exit_code = cli.main(["--check-sll"])
     assert exit_code == 0
+
+
+def test_cli_omits_patch_quality_when_not_present(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("aegis_code.runtime.client_from_env", lambda _base_url: FakeAegisClient())
+    exit_code = cli.main(["plan release notes", "--dry-run", "--no-report"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Patch quality:" not in out

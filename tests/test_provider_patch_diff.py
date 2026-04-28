@@ -128,6 +128,7 @@ def test_propose_patch_triggers_attempt_and_writes_diff(monkeypatch, tmp_path: P
     assert Path(patch_diff["path"]).exists()
     assert payload["patch_quality"] is not None
     assert payload["patch_quality"]["grounded"] is True
+    assert payload["patch_quality"]["confidence"] > 0.0
     report = render_markdown_report(payload)
     assert "## Patch Diff Proposal" in report
     assert "## Patch Quality" in report
@@ -172,6 +173,7 @@ def test_failing_tests_no_propose_patch_no_attempt(monkeypatch, tmp_path: Path) 
         client=_Client(),
     )
     assert payload["patch_diff"]["attempted"] is False
+    assert payload["patch_quality"] is None
 
 
 def test_failing_tests_propose_patch_missing_key_attempted_unavailable(monkeypatch, tmp_path: Path) -> None:
@@ -251,7 +253,7 @@ def test_failure_with_sll_and_patch_diff_report_state(monkeypatch, tmp_path: Pat
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
             "error": None,
         },
     )
@@ -259,9 +261,12 @@ def test_failure_with_sll_and_patch_diff_report_state(monkeypatch, tmp_path: Pat
     payload = run_task(options=TaskOptions(task="x", propose_patch=True), cwd=tmp_path, client=_Client())
     assert payload["failures"]["failure_count"] > 0
     assert "test_failure" in payload["symptoms"]
+    assert "fragmented_output" in payload["symptoms"]
     assert payload["sll_analysis"]["available"] is True
     assert payload["patch_plan"]["proposed_changes"]
     assert payload["patch_diff"]["attempted"] is True
+    assert payload["patch_quality"] is not None
+    assert payload["patch_quality"]["relevant_files"] is True
 
     report_path = tmp_path / ".aegis" / "runs" / "latest.md"
     report = report_path.read_text(encoding="utf-8")

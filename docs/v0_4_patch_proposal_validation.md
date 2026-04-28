@@ -31,10 +31,19 @@ def test_tmp_failure():
 2. Verify:
 - `aegis-code --check-sll`
 
-3. Manually create temporary failure:
+3. Ensure Aegis key is loaded:
+- `export AEGIS_API_KEY="..."`
+- PowerShell: `$env:AEGIS_API_KEY="..."`
+
+4. For provider-backed diff, ensure provider key is loaded:
+- `export OPENAI_API_KEY="..."`
+- PowerShell: `$env:OPENAI_API_KEY="..."`
+- Use `--propose-patch` (or config `patches.generate_diff: true`) to enable proposal path.
+
+5. Manually create temporary failure:
 - `tests/test_tmp_failure.py`
 
-4. Run:
+6. Run:
 - `aegis-code "triage current test failures" --budget 1.25 --propose-patch`
 - `aegis-code report`
 
@@ -43,6 +52,8 @@ Expected:
 - Synthesized Symptoms include `test_failure`.
 - Patch plan references failing test(s).
 - Patch Diff Proposal is attempted only when provider path is enabled and API key exists.
+- Patch Quality appears only when diff generation succeeds.
+- `latest.diff` is written only when a valid unified diff is generated.
 - No patch is applied automatically.
 - User deletes the temporary test manually afterward.
 

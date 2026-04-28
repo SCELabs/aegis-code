@@ -55,6 +55,7 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Structural Analysis" in content
     assert "## Proposed Fix Plan" in content
     assert "## Patch Diff Proposal" in content
+    assert "## Patch Quality" not in content
     assert "v0.5 runs a controlled execution loop with optional proposal-only patch diffs and deterministic patch-quality scoring." in content
     assert "Run `aegis-code --check-sll` to verify local setup" in content
 
