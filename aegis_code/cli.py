@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -21,6 +21,7 @@ from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.create_scaffold import create_scaffold
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
 from aegis_code.overview import build_overview, format_overview
+from aegis_code.provider_presets import PRESETS, apply_preset
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
@@ -33,7 +34,7 @@ from aegis_code.policy import (
     get_mode_reason,
     select_runtime_mode,
 )
-from aegis_code.config import ensure_project_files, project_paths
+from aegis_code.config import ensure_project_files, project_paths, update_model_tier
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scaffolds import list_stacks
@@ -131,6 +132,19 @@ def _build_policy_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code policy")
     subparsers = parser.add_subparsers(dest="policy_command")
     subparsers.add_parser("status", prog="aegis-code policy status")
+    return parser
+
+
+def _build_provider_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code provider")
+    subparsers = parser.add_subparsers(dest="provider_command")
+    subparsers.add_parser("status", prog="aegis-code provider status")
+    model_parser = subparsers.add_parser("model", prog="aegis-code provider model")
+    model_parser.add_argument("tier")
+    model_parser.add_argument("value")
+    subparsers.add_parser("list", prog="aegis-code provider list")
+    preset_parser = subparsers.add_parser("preset", prog="aegis-code provider preset")
+    preset_parser.add_argument("name")
     return parser
 
 
@@ -536,6 +550,51 @@ def handle_policy(argv: Sequence[str]) -> int:
     if args.policy_command == "status":
         status = build_policy_status(cwd=Path.cwd())
         print(format_policy_status(status))
+        return 0
+    parser.print_help()
+    return 1
+
+
+def handle_provider(argv: Sequence[str]) -> int:
+    parser = _build_provider_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    if args.provider_command == "status":
+        cfg = load_config(cwd)
+        print("Provider configuration:")
+        print(f"- cheap: {cfg.models.cheap}")
+        print(f"- mid: {cfg.models.mid}")
+        print(f"- premium: {cfg.models.premium}")
+        return 0
+    if args.provider_command == "model":
+        tier = str(args.tier)
+        value = str(args.value)
+        if tier not in {"cheap", "mid", "premium"}:
+            print("Error: invalid tier")
+            return 2
+        if ":" not in value:
+            print("Error: invalid model format")
+            return 2
+        result = update_model_tier(tier=tier, value=value, cwd=cwd)
+        print("Model updated:")
+        print(f"- {result.get('tier', tier)} -> {result.get('value', value)}")
+        return 0
+    if args.provider_command == "list":
+        print("Available presets:")
+        for name in PRESETS:
+            print(f"- {name}")
+        return 0
+    if args.provider_command == "preset":
+        preset_name = str(args.name)
+        result = apply_preset(preset_name, cwd=cwd)
+        if not result.get("applied", False):
+            print("Error: unknown preset")
+            return 2
+        models = PRESETS[preset_name]
+        print(f"Preset applied: {preset_name}")
+        print(f"- cheap -> {models['cheap']}")
+        print(f"- mid -> {models['mid']}")
+        print(f"- premium -> {models['premium']}")
         return 0
     parser.print_help()
     return 1
@@ -1038,6 +1097,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_budget(args[1:])
     if command == "policy":
         return handle_policy(args[1:])
+    if command == "provider":
+        return handle_provider(args[1:])
     if command == "keys":
         return handle_keys(args[1:])
     if command == "workspace":
@@ -1055,3 +1116,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

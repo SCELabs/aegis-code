@@ -144,3 +144,19 @@ def load_config(cwd: Path | None = None) -> AppConfig:
     if resolved:
         os.environ[key_name] = resolved
     return cfg
+
+
+def update_model_tier(tier: str, value: str, cwd: Path) -> dict[str, str]:
+    paths = project_paths(cwd)
+    ensure_project_files(cwd=cwd, force=False)
+    config_path = paths["config_path"]
+    raw_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw_data, dict):
+        raw_data = {}
+    models = raw_data.get("models")
+    if not isinstance(models, dict):
+        models = {}
+    models[str(tier)] = str(value)
+    raw_data["models"] = models
+    config_path.write_text(yaml.safe_dump(raw_data, sort_keys=False), encoding="utf-8")
+    return {"tier": str(tier), "value": str(value)}
