@@ -20,6 +20,7 @@ from aegis_code.context_state import (
 from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.create_scaffold import create_scaffold
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
+from aegis_code.next_actions import build_next_actions, format_next_actions
 from aegis_code.onboard import run_onboard
 from aegis_code.overview import build_overview, format_overview
 from aegis_code.provider_presets import PRESETS, apply_preset
@@ -44,6 +45,7 @@ from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
 from aegis_code.workspace import (
     add_project,
+    compare_workspace_runs,
     get_detailed_status,
     get_status,
     get_workspace_overview,
@@ -113,7 +115,7 @@ def _build_doctor_parser() -> argparse.ArgumentParser:
 
 def _build_onboard_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code onboard")
-    parser.add_argument("--email", required=True)
+    parser.add_argument("--email", required=False)
     return parser
 
 
@@ -181,6 +183,7 @@ def _build_workspace_parser() -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", prog="aegis-code workspace status")
     status_parser.add_argument("--detailed", action="store_true")
     subparsers.add_parser("overview", prog="aegis-code workspace overview")
+    subparsers.add_parser("compare", prog="aegis-code workspace compare")
     subparsers.add_parser("refresh-context", prog="aegis-code workspace refresh-context")
     run_parser = subparsers.add_parser("run", prog="aegis-code workspace run")
     run_parser.add_argument("task")
@@ -215,6 +218,10 @@ def _build_fix_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code fix")
     parser.add_argument("--confirm", action="store_true", help="Confirm apply for proposed patch.")
     return parser
+
+
+def _build_next_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code next")
 
 
 def _build_task_parser() -> argparse.ArgumentParser:
@@ -495,7 +502,11 @@ def handle_doctor(argv: Sequence[str]) -> int:
 def handle_onboard(argv: Sequence[str]) -> int:
     parser = _build_onboard_parser()
     args = parser.parse_args(list(argv))
-    result = run_onboard(email=str(args.email), cwd=Path.cwd())
+    email = str(args.email) if args.email is not None else input("Email: ").strip()
+    if not email:
+        print("Email is required.")
+        return 2
+    result = run_onboard(email=email, cwd=Path.cwd())
     if result.get("success", False):
         print("Aegis onboarding complete.")
         print("API key saved locally.")
@@ -730,6 +741,21 @@ def handle_workspace(argv: Sequence[str]) -> int:
         print(f"- Budgets set: {overview.get('budget', 0)}")
         print(f"- Context ready: {overview.get('context', 0)}")
         print(f"- Latest runs: {overview.get('latest_run', 0)}")
+        return 0
+    if args.workspace_command == "compare":
+        result = compare_workspace_runs(cwd=cwd)
+        if not result.get("exists", False):
+            print("No workspace found. Run `aegis-code workspace init`.")
+            return 1
+        print("Workspace Compare:")
+        print(f"- Projects: {result.get('projects', 0)}")
+        print(f"- With runs: {result.get('total_runs', 0)}")
+        print(f"- Missing runs: {result.get('missing_runs', 0)}")
+        print(f"- Skipped (missing path): {result.get('skipped_missing', 0)}")
+        print(f"- Passed: {result.get('passed', 0)}")
+        print(f"- Failed: {result.get('failed', 0)}")
+        print(f"- Aegis mode: {result.get('aegis_mode', 0)}")
+        print(f"- Local mode: {result.get('local_mode', 0)}")
         return 0
     if args.workspace_command == "refresh-context":
         result = refresh_workspace_context(cwd=cwd)
@@ -1082,6 +1108,14 @@ def handle_fix(argv: Sequence[str]) -> int:
     return 2
 
 
+def handle_next(argv: Sequence[str]) -> int:
+    parser = _build_next_parser()
+    parser.parse_args(list(argv))
+    payload = build_next_actions(cwd=Path.cwd())
+    print(format_next_actions(payload))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv) if argv is not None else None
     if args is None:
@@ -1135,6 +1169,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_restore(args[1:])
     if command == "fix":
         return handle_fix(args[1:])
+    if command == "next":
+        return handle_next(args[1:])
     return handle_task(args)
 
 

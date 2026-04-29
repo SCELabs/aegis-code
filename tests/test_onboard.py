@@ -124,3 +124,33 @@ def test_onboard_422_validation_error(tmp_path: Path, monkeypatch, capsys) -> No
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "Onboarding failed: validation_error status=422" in out
+
+
+def test_onboard_prompt_for_email(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    body = json.dumps(
+        {
+            "account_id": "acct_1",
+            "api_key": "secret_key_value",
+            "plan": "free",
+            "limits": {},
+        }
+    )
+    monkeypatch.setattr("builtins.input", lambda _prompt: "user@example.com")
+    monkeypatch.setattr("aegis_code.onboard.urlopen", lambda *_args, **_kwargs: _FakeResponse(body))
+    exit_code = cli.main(["onboard"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Aegis onboarding complete." in out
+    assert "API key saved locally." in out
+    assert "secret_key_value" not in out
+    assert load_secrets(tmp_path).get("AEGIS_API_KEY") == "secret_key_value"
+
+
+def test_onboard_prompt_empty_email(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "")
+    exit_code = cli.main(["onboard"])
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert "Email is required." in out

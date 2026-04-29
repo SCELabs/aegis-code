@@ -2,6 +2,7 @@
 
 Project:
 aegis-code init
+aegis-code next
 aegis-code overview
 aegis-code status
 aegis-code report

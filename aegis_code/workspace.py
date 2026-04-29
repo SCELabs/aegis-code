@@ -334,3 +334,72 @@ def run_workspace_task(task: str, cwd: Path) -> dict:
         "skipped_budget": skipped_budget,
         "projects": results,
     }
+
+
+def compare_workspace_runs(cwd: Path) -> dict:
+    data = load_workspace(cwd)
+    if data is None:
+        return {"exists": False}
+
+    projects = data.get("projects", [])
+    project_count = 0
+    total_runs = 0
+    missing_runs = 0
+    skipped_missing = 0
+    passed = 0
+    failed = 0
+    aegis_mode = 0
+    local_mode = 0
+
+    for item in projects:
+        if not isinstance(item, dict):
+            continue
+        project_count += 1
+        path = str(item.get("path", ""))
+        project_path = Path(path) if path else None
+        if project_path is None or not project_path.exists():
+            skipped_missing += 1
+            continue
+
+        latest_run = project_path / ".aegis" / "runs" / "latest.json"
+        if not latest_run.exists():
+            missing_runs += 1
+            continue
+
+        try:
+            payload = json.loads(latest_run.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        total_runs += 1
+        status = str(payload.get("status", "") or "")
+        if "completed_tests_passed" in status or "completed" in status:
+            passed += 1
+        else:
+            failed += 1
+
+        runtime_adapter = payload.get("runtime_adapter")
+        if not isinstance(runtime_adapter, dict):
+            runtime_adapter = payload.get("adapter", {})
+        if not isinstance(runtime_adapter, dict):
+            runtime_adapter = {}
+        adapter_mode = str(runtime_adapter.get("mode", "local") or "local")
+        _used_fallback = bool(runtime_adapter.get("used_fallback", False))
+        if adapter_mode == "aegis":
+            aegis_mode += 1
+        else:
+            local_mode += 1
+
+    return {
+        "exists": True,
+        "projects": project_count,
+        "total_runs": total_runs,
+        "missing_runs": missing_runs,
+        "skipped_missing": skipped_missing,
+        "passed": passed,
+        "failed": failed,
+        "aegis_mode": aegis_mode,
+        "local_mode": local_mode,
+    }

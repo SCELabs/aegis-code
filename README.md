@@ -36,6 +36,12 @@ View one-shot project state summary:
 aegis-code overview
 ```
 
+Get local next-step suggestions:
+
+```bash
+aegis-code next
+```
+
 Inspect read-only runtime policy status:
 
 ```bash
