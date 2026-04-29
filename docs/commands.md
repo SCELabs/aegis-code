@@ -14,6 +14,7 @@
 
 - `aegis-code compare`  
   Compare the last two run artifacts and show compact runtime behavior changes.  
+  Includes runtime mode and runtime reason changes (for example `default` -> `low_budget`).  
   Uses `.aegis/runs/history/*.json` snapshots when available.  
   Example: `aegis-code compare`
 

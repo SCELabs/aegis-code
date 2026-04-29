@@ -187,7 +187,7 @@ This is local-only, deterministic, and read-only.
 - `aegis-code init` - create `.aegis` config/project model files
 - `aegis-code "<task>"` - run controlled failure-aware workflow
 - `aegis-code overview` - show compact full-project state summary
-- `aegis-code compare` - compare last two runs and show runtime behavior changes
+- `aegis-code compare` - compare last two runs and show runtime behavior changes (including mode/reason shifts like `default` -> `low_budget`)
 - `aegis-code policy status` - show read-only local runtime policy summary
 - `aegis-code context refresh` - build deterministic project-local context files
 - `aegis-code context show` - show context status, paths, and compact previews

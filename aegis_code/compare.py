@@ -49,6 +49,10 @@ def build_comparison(prev: dict[str, Any], current: dict[str, Any]) -> dict[str,
             _pick(prev, "runtime_policy.selected_mode", "n/a"),
             _pick(current, "runtime_policy.selected_mode", "n/a"),
         ),
+        "runtime_control.reason": (
+            _pick(prev, "runtime_policy.reason", "n/a"),
+            _pick(current, "runtime_policy.reason", "n/a"),
+        ),
         "model_tier": (
             _pick(prev, "selected_model_tier", "n/a"),
             _pick(current, "selected_model_tier", "n/a"),
@@ -85,6 +89,7 @@ def format_comparison(data: dict[str, Any]) -> str:
     lines.append("Changed fields:")
     for key in (
         "runtime_control.selected_mode",
+        "runtime_control.reason",
         "model_tier",
         "max_retries",
         "escalation",
