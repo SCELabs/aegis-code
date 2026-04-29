@@ -390,3 +390,51 @@ def test_no_aegis_guidance_keeps_behavior(monkeypatch, tmp_path: Path) -> None:
     payload = build_run_payload(options=TaskOptions(task="unchanged"), cwd=tmp_path, client=client)
     assert payload["selected_model_tier"] == "mid"
     assert payload["retry_policy"]["max_retries"] == 2
+
+
+def test_cheapest_mode_forces_cheap_model_tier(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=1, allow_escalation=False, execution={})
+    payload = build_run_payload(
+        options=TaskOptions(task="cheap mode", mode="cheapest"),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["selected_model_tier"] == "cheap"
+
+
+def test_balanced_mode_keeps_mid_model_tier(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=1, allow_escalation=False, execution={})
+    payload = build_run_payload(
+        options=TaskOptions(task="balanced mode", mode="balanced"),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["selected_model_tier"] == "mid"
+
+
+def test_aegis_guidance_override_wins_over_cheapest_mode(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    client.decision = AegisDecision(model_tier="mid", context_mode="focused", max_retries=1, allow_escalation=False, execution={})
+    payload = build_run_payload(
+        options=TaskOptions(task="guidance priority", mode="cheapest", aegis_guidance={"model_tier": "premium"}),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["selected_model_tier"] == "premium"

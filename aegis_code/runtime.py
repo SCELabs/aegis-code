@@ -288,6 +288,8 @@ def build_run_payload(
 
     if guidance_tier in {"cheap", "mid", "premium"}:
         decision.model_tier = guidance_tier
+    elif str(mode).strip().lower() == "cheapest":
+        decision.model_tier = "cheap"
     selected_tier = normalize_tier(decision.model_tier)
     selected_model = resolve_model_for_tier(config, selected_tier)
 
