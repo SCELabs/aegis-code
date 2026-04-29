@@ -35,6 +35,27 @@ def _extract_diff_targets(diff: str) -> set[str]:
     return {target for target in targets if target and target != "."}
 
 
+def _extract_new_file_targets(diff: str) -> set[str]:
+    targets: set[str] = set()
+    old_path: str | None = None
+    for raw in diff.splitlines():
+        line = raw.strip()
+        file_match = _FILE_LINE_RE.match(line)
+        if not file_match:
+            continue
+        marker = line[:3]
+        path = file_match.group("path")
+        if marker == "---":
+            old_path = path
+            continue
+        if marker == "+++":
+            new_path = path
+            if old_path == "/dev/null" and new_path != "/dev/null":
+                targets.add(_norm(new_path))
+            old_path = None
+    return {target for target in targets if target and target != "."}
+
+
 def _mapped_source_files(
     failure_files: set[str],
     context_files: set[str],
@@ -70,6 +91,7 @@ def evaluate_diff(
         }
 
     targets = _extract_diff_targets(text)
+    new_file_targets = _extract_new_file_targets(text)
     has_diff_markers = any(marker in text for marker in ("diff --git", "--- ", "+++ ", "@@"))
     if not has_diff_markers:
         issues.append("invalid_format")
@@ -89,7 +111,7 @@ def evaluate_diff(
     if not targets:
         issues.append("no_file_targets")
         grounded = False
-    elif known_files and not targets.issubset(known_files):
+    elif known_files and not (targets - known_files).issubset(new_file_targets):
         issues.append("no_file_targets")
         grounded = False
     else:
@@ -115,4 +137,3 @@ def evaluate_diff(
         "confidence": confidence,
         "issues": issues,
     }
-

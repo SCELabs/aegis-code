@@ -42,6 +42,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     patch_plan = payload.get("patch_plan", {})
     patch_diff = payload.get("patch_diff", {})
     patch_quality = payload.get("patch_quality")
+    task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
     verification = payload.get("verification", {})
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
@@ -98,11 +99,13 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         ),
         f"- Context available: `{bool((payload.get('project_context', {}) or {}).get('available', False))}`",
         "",
-        "## Runtime Adapter",
+        "## Aegis Control",
         "",
-        f"- Mode: `{adapter.get('mode', 'local')}`",
-        f"- Aegis client available: `{bool(adapter.get('aegis_client_available', False))}`",
-        f"- Fallback reason: `{adapter.get('fallback_reason', 'import_missing')}`",
+        f"- Status: `{adapter.get('control_status', 'disabled')}`",
+        f"- Reason: `{adapter.get('control_reason', adapter.get('fallback_reason', 'n/a'))}`",
+        f"- Client available: `{bool(adapter.get('aegis_client_available', False))}`",
+        f"- Execution: `{adapter.get('execution', 'local')}`",
+        f"- Mutation: `{'confirm-only' if str(adapter.get('mutation', 'confirm_only')) == 'confirm_only' else adapter.get('mutation', 'confirm_only')}`",
         (
             f"- Error type: `{adapter.get('error_type')}`"
             if adapter.get("error_type")
@@ -313,6 +316,18 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             lines.append(f"- Issues: `{', '.join(str(item) for item in issues)}`")
         else:
             lines.append("- Issues: none")
+
+    if task_driven_patch_proposal:
+        lines.extend(
+            [
+                "",
+                "## Task-Driven Patch Proposal",
+                "",
+                f"- Task: `{payload.get('task', '')}`",
+                "- Note: no test failures detected.",
+                f"- Strategy: {patch_plan.get('strategy', 'n/a')}",
+            ]
+        )
 
     lines.extend(
         [

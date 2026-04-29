@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -83,15 +84,58 @@ def resolve_stack_profile(stack_id: str) -> dict[str, Any]:
 
 def select_stack_profile(idea: str) -> tuple[dict[str, Any], str]:
     lowered = str(idea or "").lower()
-    best = _PROFILES["python-basic"]
-    best_score = -1
-    for stack_id in available_stack_ids():
-        profile = _PROFILES[stack_id]
-        keywords = profile.get("keywords", [])
-        score = sum(1 for keyword in keywords if keyword in lowered)
-        if score > best_score:
-            best = profile
-            best_score = score
+    tokenized = f" {re.sub(r'[^a-z0-9]+', ' ', lowered)} "
+
+    def _has_signal(signal: str) -> bool:
+        normalized = signal.strip().lower()
+        if " " in normalized:
+            return normalized in lowered
+        return f" {normalized} " in tokenized
+    cli_signals = (
+        "cli",
+        "command",
+        "terminal",
+        "shell",
+        "script",
+        "tool",
+        "command-line",
+        "argparse",
+        "click",
+        "typer",
+    )
+    react_signals = (
+        "react",
+        "dashboard",
+        "frontend",
+        "ui",
+        "web app",
+        "vite",
+        "component",
+        "browser",
+    )
+    api_signals = ("api", "rest", "backend", "fastapi", "endpoint")
+
+    if any(_has_signal(signal) for signal in api_signals):
+        best = _PROFILES["python-fastapi"]
+        best_score = 1
+    elif any(_has_signal(signal) for signal in react_signals):
+        best = _PROFILES["node-react"]
+        best_score = 1
+    elif any(_has_signal(signal) for signal in cli_signals):
+        best = _PROFILES["python-cli"]
+        best_score = 1
+    else:
+        best = _PROFILES["python-basic"]
+        best_score = 0
+
+    if best_score == 0:
+        for stack_id in available_stack_ids():
+            profile = _PROFILES[stack_id]
+            keywords = profile.get("keywords", [])
+            score = sum(1 for keyword in keywords if keyword in lowered)
+            if score > best_score:
+                best = profile
+                best_score = score
     if best["id"] == "python-basic":
         return best, "Defaulting to a simple Python baseline."
     return best, f"Keyword scoring selected {best['id']}."

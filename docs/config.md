@@ -14,7 +14,9 @@ Contains:
 - provider config
 - patch config
 
-Note: `aegis.enhanced_runtime` controls whether Aegis guidance is applied when an `AEGIS_API_KEY` is available.
+Note: `aegis.control_enabled` controls Aegis control-layer guidance.
+Allowed values: `auto`, `true`, `false`.
+`auto` (default) enables control when `AEGIS_API_KEY` is available.
 
 Project model:
 .aegis/project_model.md

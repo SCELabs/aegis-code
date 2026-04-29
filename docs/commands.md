@@ -1,6 +1,6 @@
 # Command Reference
 
-Mode note: see README.md section "Local vs Aegis-Enhanced Mode" for runtime behavior differences.
+Mode note: see README.md section "Local vs Aegis Control" for runtime behavior differences.
 
 Project:
 aegis-code init
@@ -65,3 +65,5 @@ aegis-code apply <path>
 aegis-code apply <path> --confirm
 aegis-code backups
 aegis-code restore <backup-id>
+Patch apply supports modifying existing files and creating new files; delete/rename/binary diffs remain unsupported.
+Mutation still requires --confirm, with local project-scoped backups and rollback.

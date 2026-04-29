@@ -53,6 +53,10 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         "adapter": {
             "mode": "local",
             "aegis_client_available": False,
+            "control_status": "fallback",
+            "control_reason": "import_missing",
+            "execution": "local",
+            "mutation": "confirm_only",
             "fallback_reason": "import_missing",
             "error_type": None,
             "error_message": None,
@@ -76,10 +80,12 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "Selected mode: `balanced`" in content
     assert "Reason: `default`" in content
     assert "Budget remaining: `$0.80`" in content
-    assert "## Runtime Adapter" in content
-    assert "Mode: `local`" in content
-    assert "Aegis client available: `False`" in content
-    assert "Fallback reason: `import_missing`" in content
+    assert "## Aegis Control" in content
+    assert "Status: `fallback`" in content
+    assert "Client available: `False`" in content
+    assert "Reason: `import_missing`" in content
+    assert "Execution: `local`" in content
+    assert "Mutation: `confirm-only`" in content
     assert "Error type: `none`" in content
     assert "Error: `none`" in content
     assert "## Applied Aegis Guidance" in content

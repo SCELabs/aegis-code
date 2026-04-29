@@ -223,7 +223,7 @@ def test_runtime_aegis_unavailable_still_reports(monkeypatch, tmp_path: Path) ->
     )
 
     payload = run_task(options=TaskOptions(task="aegis unavailable"), cwd=tmp_path, client=client)
-    assert payload["status"] == "completed_with_aegis_unavailable"
+    assert payload["status"] == "completed_tests_failed"
     assert len(payload["test_attempts"]) == 1
     assert (tmp_path / ".aegis" / "runs" / "latest.md").exists()
 
@@ -265,6 +265,26 @@ def test_runtime_no_test_command_marks_unverified_and_skips_patch_diff(tmp_path:
     assert payload["failures"]["failure_count"] == 0
     assert payload["patch_diff"]["attempted"] is False
     assert payload["patch_quality"] is None
+
+
+def test_runtime_local_default_passing_status(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = run_task(options=TaskOptions(task="local pass"), cwd=tmp_path, client=_CapturingClient())
+    assert payload["status"] == "completed_tests_passed"
+
+
+def test_runtime_local_default_failing_status(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = run_task(options=TaskOptions(task="local fail"), cwd=tmp_path, client=_CapturingClient())
+    assert payload["status"] == "completed_tests_failed"
 
 
 def test_runtime_payload_includes_project_context_metadata(monkeypatch, tmp_path: Path) -> None:

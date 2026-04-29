@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, resolve_base_url
 from aegis_code.config import load_config
 from aegis_code.report import write_reports
+from aegis_code.secrets import resolve_key
 from aegis_code.usage import update_usage
 
 if TYPE_CHECKING:
@@ -68,6 +69,7 @@ def _build_aegis_impact(
         "action_count": action_count,
         "override_applied": override_applied,
         "fallback_used": fallback_used,
+        "reason": fallback_reason if not used else "guidance_applied",
     }
 
 
@@ -107,10 +109,24 @@ def execute_task(
 
     cfg = load_config(cwd)
     apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=cfg.aegis.base_url)
-    enhanced_enabled = bool(cfg.aegis.enhanced_runtime)
+    control_setting = cfg.aegis.control_enabled
+    key_available = bool(resolve_key("AEGIS_API_KEY", (cwd or Path.cwd()).resolve()))
+    if isinstance(control_setting, bool):
+        control_requested = control_setting
+    else:
+        value = str(control_setting).strip().lower()
+        if value == "auto":
+            control_requested = key_available
+        elif value in {"true", "1", "yes", "on"}:
+            control_requested = True
+        elif value in {"false", "0", "no", "off"}:
+            control_requested = False
+        else:
+            control_requested = key_available
+
     aegis_available = False
     adapter_mode = "local"
-    fallback_reason = "disabled"
+    fallback_reason = "disabled_by_config"
     response: Any = None
     error_type: str | None = None
     error_message: str | None = None
@@ -125,10 +141,13 @@ def execute_task(
         aegis_available = False
         fallback_reason = "import_missing"
 
-    if not enhanced_enabled:
-        fallback_reason = "disabled"
+    if not control_requested:
+        if isinstance(control_setting, str) and str(control_setting).strip().lower() == "auto" and not key_available:
+            fallback_reason = "no_api_key"
+        else:
+            fallback_reason = "disabled_by_config"
 
-    if enhanced_enabled and aegis_available:
+    if control_requested and aegis_available:
         try:
             aegis_client = AegisClient(base_url=resolve_base_url((cwd or Path.cwd()).resolve()))
             response = aegis_client.auto().step(
@@ -164,6 +183,8 @@ def execute_task(
             fallback_reason = "client_error"
             error_type = exc.__class__.__name__
             error_message = _short_error_message(exc)
+    elif control_requested and not aegis_available:
+        fallback_reason = "import_missing"
 
     local_options = task_options
     if guidance:
@@ -200,10 +221,16 @@ def execute_task(
             value = aegis_result.get(key)
             if value is not None:
                 result[key] = value
+    control_status = "enabled" if adapter_mode == "aegis" else ("fallback" if control_requested else "disabled")
+    control_reason = "guidance_applied" if adapter_mode == "aegis" else fallback_reason
     result["adapter"] = {
         "mode": adapter_mode,
         "aegis_client_available": aegis_available,
-        "enhanced_enabled": enhanced_enabled,
+        "control_requested": bool(control_requested),
+        "control_status": control_status,
+        "control_reason": control_reason,
+        "execution": "local",
+        "mutation": "confirm_only",
         "fallback_reason": fallback_reason,
         "error_type": error_type,
         "error_message": error_message,

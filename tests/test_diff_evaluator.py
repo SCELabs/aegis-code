@@ -42,6 +42,19 @@ def test_evaluate_diff_unknown_file_marks_no_targets() -> None:
     assert "no_file_targets" in result["issues"]
 
 
+def test_evaluate_diff_safe_new_file_is_not_rejected_as_unknown_target() -> None:
+    diff = (
+        "diff --git a/aegis_code/new_module.py b/aegis_code/new_module.py\n"
+        "--- /dev/null\n"
+        "+++ b/aegis_code/new_module.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x = 1\n"
+    )
+    result = evaluate_diff(diff, _failures(), _context())
+    assert result["grounded"] is True
+    assert "no_file_targets" not in result["issues"]
+
+
 def test_evaluate_diff_unrelated_file() -> None:
     context = {"files": [{"path": "docs/readme.md", "content": "x"}]}
     diff = "diff --git a/docs/readme.md b/docs/readme.md\n--- a/docs/readme.md\n+++ b/docs/readme.md\n@@ -1 +1 @@\n-a\n+b\n"
@@ -63,4 +76,3 @@ def test_evaluate_diff_mixed_case_is_deterministic() -> None:
     result_a = evaluate_diff(diff, _failures(), _context())
     result_b = evaluate_diff(diff, _failures(), _context())
     assert result_a == result_b
-

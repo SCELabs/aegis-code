@@ -139,7 +139,12 @@ def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
     changed_lines = total_additions + total_deletions
     if changed_lines > 1000:
         warnings.append("very_large_diff")
-    if "binary files differ" in text.lower() or "git binary patch" in text.lower():
+    lower_text = text.lower()
+    if (
+        "binary files differ" in lower_text
+        or "git binary patch" in lower_text
+        or ("binary files" in lower_text and " differ" in lower_text)
+    ):
         warnings.append("binary_diff_detected")
     if any(item["hunk_count"] == 0 and (item["additions"] + item["deletions"] > 0) for item in files):
         warnings.append("malformed_hunks")

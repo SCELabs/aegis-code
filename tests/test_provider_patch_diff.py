@@ -159,6 +159,81 @@ def test_no_provider_call_when_tests_pass(monkeypatch, tmp_path: Path) -> None:
     assert payload["patch_diff"]["attempted"] is False
 
 
+def test_task_driven_patch_plan_when_tests_pass(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(task="implement notes cli", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["failures"]["failure_count"] == 0
+    assert payload["task_driven_patch_proposal"] is True
+    assert payload["patch_plan"]["proposed_changes"]
+
+
+def test_task_driven_patch_diff_attempt(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="implement notes cli", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["attempted"] is True
+
+
+def test_no_patch_without_flag(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(task="implement notes cli", propose_patch=False),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["task_driven_patch_proposal"] is False
+    assert payload["patch_plan"]["proposed_changes"] == []
+    assert payload["patch_diff"]["attempted"] is False
+
+
+def test_provider_unavailable_task_patch(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(task="implement notes cli", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["attempted"] is True
+    assert payload["patch_diff"]["available"] is False
+    assert payload["patch_diff"]["error"]
+    report = render_markdown_report(payload)
+    assert "## Task-Driven Patch Proposal" in report
+
+
 def test_failing_tests_no_propose_patch_no_attempt(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",

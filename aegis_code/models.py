@@ -20,7 +20,7 @@ class CommandsConfig:
 @dataclass(slots=True)
 class AegisConfig:
     base_url: str = "https://aegis-backend-production-4b47.up.railway.app"
-    enhanced_runtime: bool = False
+    control_enabled: str | bool = "auto"
 
 
 @dataclass(slots=True)

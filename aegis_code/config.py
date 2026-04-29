@@ -45,7 +45,7 @@ def default_config_yaml(test_command: str = "pytest -q") -> str:
         "  lint: \"\"\n"
         "aegis:\n"
         "  base_url: \"https://aegis-backend-production-4b47.up.railway.app\"\n"
-        "  enhanced_runtime: false\n"
+        "  control_enabled: auto\n"
         "providers:\n"
         "  enabled: false\n"
         "  provider: \"openai\"\n"
@@ -129,6 +129,12 @@ def load_config(cwd: Path | None = None) -> AppConfig:
     if not isinstance(raw_data, dict):
         return default_config()
     merged = _merged_config_dict(raw_data)
+    raw_aegis = raw_data.get("aegis", {})
+    merged_aegis = merged.get("aegis", {})
+    if isinstance(raw_aegis, dict) and isinstance(merged_aegis, dict):
+        if "control_enabled" not in raw_aegis and "enhanced_runtime" in raw_aegis:
+            merged_aegis["control_enabled"] = bool(raw_aegis.get("enhanced_runtime"))
+        merged["aegis"] = merged_aegis
 
     cfg = AppConfig(
         mode=str(merged["mode"]),

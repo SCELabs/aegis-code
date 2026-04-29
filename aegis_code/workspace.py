@@ -377,8 +377,7 @@ def compare_workspace_runs(cwd: Path) -> dict:
             payload = {}
 
         total_runs += 1
-        status = str(payload.get("status", "") or "")
-        if "completed_tests_passed" in status or "completed" in status:
+        if _is_run_passed(payload):
             passed += 1
         else:
             failed += 1
@@ -406,3 +405,56 @@ def compare_workspace_runs(cwd: Path) -> dict:
         "aegis_mode": aegis_mode,
         "local_mode": local_mode,
     }
+
+
+def _is_run_passed(payload: dict) -> bool:
+    final_failures = payload.get("final_failures")
+    if isinstance(final_failures, dict) and "failure_count" in final_failures:
+        try:
+            return int(final_failures.get("failure_count", 0) or 0) == 0
+        except Exception:
+            return False
+
+    failures = payload.get("failures")
+    if isinstance(failures, dict) and "failure_count" in failures:
+        try:
+            return int(failures.get("failure_count", 0) or 0) == 0
+        except Exception:
+            return False
+
+    test_attempts = payload.get("test_attempts")
+    if isinstance(test_attempts, list) and test_attempts:
+        latest_attempt = test_attempts[-1]
+        if isinstance(latest_attempt, dict):
+            exit_code = latest_attempt.get("exit_code")
+            status = str(latest_attempt.get("status", "") or "").lower()
+            if isinstance(exit_code, int):
+                return exit_code == 0
+            if status in {"ok", "passed", "success"}:
+                return True
+            if status:
+                return False
+
+    commands_run = payload.get("commands_run")
+    if isinstance(commands_run, list):
+        test_like = [
+            item for item in commands_run
+            if isinstance(item, dict) and "test" in str(item.get("name", "")).lower()
+        ]
+        if test_like:
+            latest_test = test_like[-1]
+            exit_code = latest_test.get("exit_code")
+            status = str(latest_test.get("status", "") or "").lower()
+            if isinstance(exit_code, int):
+                return exit_code == 0
+            if status in {"ok", "passed", "success"}:
+                return True
+            if status:
+                return False
+
+    status = str(payload.get("status", "") or "").lower()
+    if status in {"completed_tests_passed", "completed_tests_passed_after_retry"}:
+        return True
+    if "completed_tests_failed" in status:
+        return False
+    return False

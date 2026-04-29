@@ -188,3 +188,189 @@ def test_cli_apply_confirm_prints_result(tmp_path: Path, monkeypatch, capsys) ->
     assert "Patch apply:" in out
     assert "Applied: True" in out
 
+
+def test_apply_confirm_creates_new_file_and_parent_dirs(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    diff = tmp_path / "newfile.diff"
+    target = tmp_path / "src" / "pkg" / "new_file.py"
+    diff.write_text(
+        "diff --git a/src/pkg/new_file.py b/src/pkg/new_file.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/pkg/new_file.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def created():\n"
+        "+    return 42\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", str(diff), "--confirm"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert target.exists()
+    assert "return 42" in target.read_text(encoding="utf-8")
+    assert "(created)" in out
+
+
+def test_apply_without_confirm_does_not_create_new_file(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    diff = tmp_path / "newfile.diff"
+    target = tmp_path / "new_module.py"
+    diff.write_text(
+        "diff --git a/new_module.py b/new_module.py\n"
+        "--- /dev/null\n"
+        "+++ b/new_module.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x = 1\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", str(diff)])
+    _out = capsys.readouterr().out
+    assert exit_code != 0
+    assert not target.exists()
+
+
+def test_apply_new_file_refuses_existing_target(tmp_path: Path) -> None:
+    target = tmp_path / "new_module.py"
+    _write_file(target, "x = 0\n")
+    diff = tmp_path / "newfile.diff"
+    diff.write_text(
+        "diff --git a/new_module.py b/new_module.py\n"
+        "--- /dev/null\n"
+        "+++ b/new_module.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x = 1\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "target_already_exists" in result["errors"]
+
+
+def test_apply_new_file_refuses_absolute_path(tmp_path: Path) -> None:
+    diff = tmp_path / "abs.diff"
+    diff.write_text(
+        "diff --git a//tmp/evil.py b//tmp/evil.py\n"
+        "--- /dev/null\n"
+        "+++ /tmp/evil.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "unsafe_paths" in result["errors"]
+
+
+def test_apply_new_file_refuses_parent_traversal(tmp_path: Path) -> None:
+    diff = tmp_path / "traversal.diff"
+    diff.write_text(
+        "diff --git a/../evil.py b/../evil.py\n"
+        "--- /dev/null\n"
+        "+++ b/../evil.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "unsafe_paths" in result["errors"]
+
+
+def test_apply_new_file_refuses_internal_path(tmp_path: Path) -> None:
+    diff = tmp_path / "internal.diff"
+    diff.write_text(
+        "diff --git a/.aegis/evil.py b/.aegis/evil.py\n"
+        "--- /dev/null\n"
+        "+++ b/.aegis/evil.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "unsafe_paths" in result["errors"]
+
+
+def test_apply_delete_diff_remains_unsupported(tmp_path: Path) -> None:
+    target = tmp_path / "obsolete.py"
+    _write_file(target, "x=1\n")
+    diff = tmp_path / "delete.diff"
+    diff.write_text(
+        "diff --git a/obsolete.py b/obsolete.py\n"
+        "--- a/obsolete.py\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-x=1\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "unsupported_delete_file" in result["errors"]
+
+
+def test_apply_rename_diff_remains_unsupported(tmp_path: Path) -> None:
+    target = tmp_path / "old_name.py"
+    _write_file(target, "x=1\n")
+    diff = tmp_path / "rename.diff"
+    diff.write_text(
+        "diff --git a/old_name.py b/new_name.py\n"
+        "--- a/old_name.py\n"
+        "+++ b/new_name.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "unsupported_rename" in result["errors"]
+
+
+def test_apply_mixed_patch_rollback_restores_existing_and_deletes_new(tmp_path: Path, monkeypatch) -> None:
+    existing = tmp_path / "a.py"
+    _write_file(existing, "x=1\n")
+    new_file = tmp_path / "nested" / "new_file.py"
+    diff = tmp_path / "mixed.diff"
+    diff.write_text(
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n"
+        "diff --git a/nested/new_file.py b/nested/new_file.py\n"
+        "--- /dev/null\n"
+        "+++ b/nested/new_file.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+created = True\n",
+        encoding="utf-8",
+    )
+    original_write_text = Path.write_text
+
+    def _flaky_write(self: Path, data: str, *args, **kwargs):
+        if self.resolve() == new_file.resolve():
+            raise OSError("simulated write failure")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _flaky_write)
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert existing.read_text(encoding="utf-8") == "x=1\n"
+    assert not new_file.exists()
+
+
+def test_apply_result_mentions_no_git_commands(tmp_path: Path) -> None:
+    target = tmp_path / "a.py"
+    _write_file(target, "x=1\n")
+    diff = tmp_path / "latest.diff"
+    diff.write_text(
+        "diff --git a/a.py b/a.py\n"
+        "--- a/a.py\n"
+        "+++ b/a.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    text = format_apply_result(result)
+    assert "No git commands were run." in text

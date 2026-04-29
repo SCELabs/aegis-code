@@ -28,8 +28,9 @@ def _fake_local_payload(options: TaskOptions, cwd: Path | None = None) -> dict[s
     }
 
 
-def test_execute_task_uses_local_when_enhanced_disabled(monkeypatch, tmp_path: Path) -> None:
+def test_execute_task_uses_local_when_no_aegis_key_in_auto_mode(monkeypatch, tmp_path: Path) -> None:
     called = {"local": False}
+    monkeypatch.delenv("AEGIS_API_KEY", raising=False)
 
     def _fake_local(*, options, cwd=None, client=None, write_report=True):
         _ = write_report
@@ -41,15 +42,16 @@ def test_execute_task_uses_local_when_enhanced_disabled(monkeypatch, tmp_path: P
     result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
     assert called["local"] is True
     assert result["adapter"]["mode"] == "local"
-    assert result["adapter"]["enhanced_enabled"] is False
-    assert result["adapter"]["fallback_reason"] == "disabled"
+    assert result["adapter"]["control_requested"] is False
+    assert result["adapter"]["control_status"] == "disabled"
+    assert result["adapter"]["control_reason"] == "no_api_key"
 
 
-def test_execute_task_falls_back_when_enhanced_enabled_but_import_missing(monkeypatch, tmp_path: Path) -> None:
+def test_execute_task_falls_back_when_control_requested_but_import_missing(monkeypatch, tmp_path: Path) -> None:
     called = {"local": False}
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -64,15 +66,119 @@ def test_execute_task_falls_back_when_enhanced_enabled_but_import_missing(monkey
     assert called["local"] is True
     assert result["adapter"]["mode"] == "local"
     assert result["adapter"]["aegis_client_available"] is False
-    assert result["adapter"]["enhanced_enabled"] is True
+    assert result["adapter"]["control_requested"] is True
     assert result["adapter"]["fallback_reason"] == "import_missing"
+
+
+def test_execute_task_auto_enables_control_when_key_present(monkeypatch, tmp_path: Path) -> None:
+    called = {"step": False}
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "secrets.local.json").write_text('{"AEGIS_API_KEY":"x"}', encoding="utf-8")
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            called["step"] = True
+            return {"actions": ["guided"]}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
+    assert called["step"] is True
+    assert result["adapter"]["control_requested"] is True
+    assert result["adapter"]["control_status"] == "enabled"
+
+
+def test_execute_task_control_disabled_even_with_key(monkeypatch, tmp_path: Path) -> None:
+    called = {"step": False}
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("aegis:\n  control_enabled: false\n", encoding="utf-8")
+    (tmp_path / ".aegis" / "secrets.local.json").write_text('{"AEGIS_API_KEY":"x"}', encoding="utf-8")
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            called["step"] = True
+            return {}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
+    assert called["step"] is False
+    assert result["adapter"]["control_requested"] is False
+    assert result["adapter"]["control_reason"] == "disabled_by_config"
+
+
+def test_execute_task_legacy_enhanced_runtime_false_disables_control(monkeypatch, tmp_path: Path) -> None:
+    called = {"step": False}
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("aegis:\n  enhanced_runtime: false\n", encoding="utf-8")
+    (tmp_path / ".aegis" / "secrets.local.json").write_text('{"AEGIS_API_KEY":"x"}', encoding="utf-8")
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            called["step"] = True
+            return {}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
+    assert called["step"] is False
+    assert result["adapter"]["control_requested"] is False
+
+
+def test_execute_task_legacy_enhanced_runtime_true_enables_control(monkeypatch, tmp_path: Path) -> None:
+    called = {"step": False}
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("aegis:\n  enhanced_runtime: true\n", encoding="utf-8")
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            called["step"] = True
+            return {"actions": ["guided"]}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
+    assert called["step"] is True
+    assert result["adapter"]["control_requested"] is True
 
 
 def test_execute_task_uses_aegis_step_when_enabled_and_available(monkeypatch, tmp_path: Path) -> None:
     called = {"local": False, "step": False}
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -121,7 +227,7 @@ def test_execute_task_uses_aegis_step_when_enabled_and_available(monkeypatch, tm
     assert called["step"] is True
     assert result["adapter"]["mode"] == "aegis"
     assert result["adapter"]["aegis_client_available"] is True
-    assert result["adapter"]["enhanced_enabled"] is True
+    assert result["adapter"]["control_requested"] is True
     assert result["adapter"]["fallback_reason"] is None
     assert "aegis_result" in result
     assert result["actions"] == ["aegis-action"]
@@ -134,7 +240,7 @@ def test_execute_task_uses_aegis_step_when_enabled_and_available(monkeypatch, tm
 def test_execute_task_partial_step_result_keeps_local_structure(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -170,7 +276,7 @@ def test_execute_task_falls_back_on_client_error_with_error_fields(monkeypatch, 
     called = {"local": False}
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -207,7 +313,7 @@ def test_execute_task_falls_back_on_client_error_with_error_fields(monkeypatch, 
 def test_execute_task_success_persists_adapter_metadata_to_reports(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -242,17 +348,17 @@ def test_execute_task_success_persists_adapter_metadata_to_reports(monkeypatch, 
     assert latest_json["adapter"]["aegis_client_available"] is True
     assert latest_json["adapter"]["fallback_reason"] is None
     assert latest_json["adapter"]["fallback_reason"] != "import_missing"
-    assert "## Runtime Adapter" in latest_md
-    assert "Mode: `aegis`" in latest_md
-    assert "Aegis client available: `True`" in latest_md
-    assert "Fallback reason: `None`" in latest_md
+    assert "## Aegis Control" in latest_md
+    assert "Status: `enabled`" in latest_md
+    assert "Client available: `True`" in latest_md
+    assert "Reason: `guidance_applied`" in latest_md
 
 
 def test_execute_task_context_mode_minimal_reduces_context(monkeypatch, tmp_path: Path) -> None:
     seen_context = {"total_chars": None}
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -290,7 +396,7 @@ def test_execute_task_context_mode_minimal_reduces_context(monkeypatch, tmp_path
 def test_execute_task_fallback_persists_local_adapter_metadata_to_reports(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis" / "aegis-code.yml").write_text(
-        "aegis:\n  enhanced_runtime: true\n",
+        "aegis:\n  control_enabled: true\n",
         encoding="utf-8",
     )
 
@@ -312,6 +418,6 @@ def test_execute_task_fallback_persists_local_adapter_metadata_to_reports(monkey
     assert latest_json["adapter"]["mode"] == "local"
     assert latest_json["adapter"]["aegis_client_available"] is False
     assert latest_json["adapter"]["fallback_reason"] == "import_missing"
-    assert "Mode: `local`" in latest_md
-    assert "Aegis client available: `False`" in latest_md
-    assert "Fallback reason: `import_missing`" in latest_md
+    assert "Status: `fallback`" in latest_md
+    assert "Client available: `False`" in latest_md
+    assert "Reason: `import_missing`" in latest_md

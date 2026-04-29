@@ -21,11 +21,31 @@ def test_create_plan_cli_stack() -> None:
     assert plan["test_command"] == "python -m pytest -q"
 
 
+def test_create_plan_cli_notes_stack() -> None:
+    plan = build_create_plan("build a small CLI for notes")
+    assert plan["stack"]["name"] == "python-cli"
+
+
+def test_create_plan_terminal_tool_stack() -> None:
+    plan = build_create_plan("terminal notes tool")
+    assert plan["stack"]["name"] == "python-cli"
+
+
 def test_create_plan_react_stack() -> None:
     plan = build_create_plan("react dashboard ui")
     assert plan["stack"]["name"] == "node-react"
     assert plan["test_command"] == "npm test"
     assert "vite" in plan["dependencies"]
+
+
+def test_create_plan_react_dashboard_stack() -> None:
+    plan = build_create_plan("react notes dashboard")
+    assert plan["stack"]["name"] == "node-react"
+
+
+def test_create_plan_rest_api_notes_stack() -> None:
+    plan = build_create_plan("build a REST API for notes")
+    assert plan["stack"]["name"] == "python-fastapi"
 
 
 def test_create_plan_fallback_stack() -> None:

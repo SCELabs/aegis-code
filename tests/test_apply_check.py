@@ -34,6 +34,81 @@ def test_check_patch_file_empty_diff_is_invalid(tmp_path: Path) -> None:
     assert "empty_diff" in result["errors"]
 
 
+def test_check_patch_file_valid_new_file_diff(tmp_path: Path) -> None:
+    diff_file = tmp_path / "newfile.diff"
+    diff_file.write_text(
+        "diff --git a/new_module.py b/new_module.py\n"
+        "--- /dev/null\n"
+        "+++ b/new_module.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def created():\n"
+        "+    return 1\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is True
+    assert result["summary"]["file_count"] == 1
+    assert result["apply_blocked"] is False
+
+
+def test_check_patch_file_blocks_internal_path(tmp_path: Path) -> None:
+    diff_file = tmp_path / "unsafe.diff"
+    diff_file.write_text(
+        "diff --git a/.aegis/evil.txt b/.aegis/evil.txt\n"
+        "--- /dev/null\n"
+        "+++ b/.aegis/evil.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+x\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is True
+    assert result["apply_blocked"] is True
+    assert "unsafe_paths" in result["apply_block_reasons"]
+
+
+def test_check_patch_file_blocks_absolute_path(tmp_path: Path) -> None:
+    diff_file = tmp_path / "unsafe-abs.diff"
+    diff_file.write_text(
+        "diff --git a//tmp/evil.py b//tmp/evil.py\n"
+        "--- /dev/null\n"
+        "+++ /tmp/evil.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["apply_blocked"] is True
+    assert "unsafe_paths" in result["apply_block_reasons"]
+
+
+def test_check_patch_file_blocks_parent_traversal(tmp_path: Path) -> None:
+    diff_file = tmp_path / "unsafe-traversal.diff"
+    diff_file.write_text(
+        "diff --git a/../evil.py b/../evil.py\n"
+        "--- /dev/null\n"
+        "+++ b/../evil.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["apply_blocked"] is True
+    assert "unsafe_paths" in result["apply_block_reasons"]
+
+
+def test_check_patch_file_blocks_binary_diff(tmp_path: Path) -> None:
+    diff_file = tmp_path / "binary.diff"
+    diff_file.write_text(
+        "diff --git a/file.bin b/file.bin\n"
+        "Binary files a/file.bin and b/file.bin differ\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["apply_blocked"] is True
+    assert "binary_diff_unsupported" in result["apply_block_reasons"]
+
+
 def test_format_apply_check_result_contains_summary_fields() -> None:
     formatted = format_apply_check_result(
         {
@@ -77,6 +152,24 @@ def test_cli_apply_check_prints_and_does_not_modify_file(tmp_path: Path, monkeyp
     assert "Patch check:" in out
     assert "Applied: False" in out
     assert target.read_text(encoding="utf-8") == before
+
+
+def test_cli_apply_check_marks_unsafe_paths_as_blocked(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    diff_file = tmp_path / "unsafe.diff"
+    diff_file.write_text(
+        "diff --git a/.aegis/evil.txt b/.aegis/evil.txt\n"
+        "--- /dev/null\n"
+        "+++ b/.aegis/evil.txt\n"
+        "@@ -0,0 +1 @@\n"
+        "+x\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check", str(diff_file)])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: True" in out
+    assert "unsafe_paths" in out
 
 
 def test_cli_apply_without_check_is_not_implemented(tmp_path: Path, monkeypatch, capsys) -> None:

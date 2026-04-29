@@ -24,7 +24,7 @@ See `.env.example` for a starter template.
 aegis-code init
 ```
 
-Run `aegis-code onboard` to enable enhanced runtime guidance.
+Run `aegis-code onboard` to enable Aegis control guidance.
 
 Guided first-run setup:
 
@@ -62,7 +62,7 @@ Inspect read-only runtime policy status:
 aegis-code policy status
 ```
 
-## Local vs Aegis-Enhanced Mode
+## Local vs Aegis Control
 
 Aegis Code can run in two modes:
 
@@ -79,9 +79,9 @@ Provides:
 - workspace orchestration
 - reporting and observability
 
-### Aegis-Enhanced Mode
+### Aegis Control
 
-Enabled when an Aegis API key is configured.
+Auto-enabled when an `AEGIS_API_KEY` is configured, unless disabled in config.
 
 Adds:
 
@@ -218,8 +218,9 @@ When enhanced runtime is enabled and Aegis guidance is available, runtime applie
 Budget runtime events now record selected mode and decision reason (`default`, `low_budget`, or `policy_adjustment`) in `.aegis/budget.json` for local observability.
 
 Runtime Control summaries in CLI/report output show selected mode, reason, budget remaining, and context availability.
-Runtime Adapter summaries in CLI/report output show execution path (`local` or `aegis`) and optional client/fallback details.
-Set `aegis.enhanced_runtime: true` in `.aegis/aegis-code.yml` to enable optional Aegis Client control guidance (requires `aegis` client package installed); default is `false` and local execution remains the safe default/fallback.
+Aegis Control summaries in CLI/report output show control status/reason while execution remains local and mutation remains confirm-only.
+Set `aegis.control_enabled` to `auto` (default), `true`, or `false` in `.aegis/aegis-code.yml`.
+`auto` enables Aegis control when `AEGIS_API_KEY` is available; execution remains local and mutation remains confirm-only.
 
 ## Overview
 
@@ -262,6 +263,8 @@ This is local-only, deterministic, and read-only.
 - `--confirm` required for file mutation.
 - Confirmed apply creates backups under `.aegis/backups/...`.
 - Restore is available for rollback.
+- Patch apply supports modifying existing files and creating new files from unified diffs.
+- Delete/rename/binary diff apply is not supported.
 - No git commands are run by `aegis-code`.
 - `create --target` refuses current repo root and non-empty targets.
 - Local budget guardrails apply to runtime/Aegis calls only.
@@ -273,7 +276,7 @@ This is local-only, deterministic, and read-only.
 - SLL (`structural_language_lab`) is optional and local-install only.
 - Provider-backed patch diffs are optional and proposal-only.
 - Optional `aegis` client auto-detection is supported at runtime; when unavailable, Aegis Code automatically falls back to local runtime execution with no config changes required.
-- Enhanced runtime is feature-flagged via `aegis.enhanced_runtime` and uses `client.auto().step(...)` as a control-layer call.
+- Aegis control is configured via `aegis.control_enabled` (`auto`/`true`/`false`) and uses `client.auto().step(...)` as a control-layer call.
 - Local verification/execution remains primary; Aegis guidance is attached as `aegis_result`.
 - Fallback stays local when disabled, import is missing, or client execution errors.
 - JSON run history snapshots are stored in `.aegis/runs/history`, and `aegis-code compare` uses the last two snapshots when available.

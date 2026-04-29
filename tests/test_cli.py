@@ -217,8 +217,8 @@ def test_task_prints_runtime_control_summary_when_runtime_runs(tmp_path: Path, m
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Runtime Control:" in out
-    assert "Runtime Adapter:" in out
-    assert "Mode: local" in out
+    assert "Aegis Control:" in out
+    assert "Execution: local" in out
 
 
 def test_task_prints_runtime_adapter_error_fields(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -256,3 +256,42 @@ def test_task_prints_runtime_adapter_error_fields(tmp_path: Path, monkeypatch, c
     assert exit_code == 0
     assert "Error type: RuntimeError" in out
     assert "Error: boom" in out
+
+
+def test_task_prints_task_driven_patch_note(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "implement notes cli",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_passed",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": [{}]},
+            "patch_diff": {"attempted": True, "available": False, "error": "Provider unavailable"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {
+                "mode": "local",
+                "aegis_client_available": False,
+                "fallback_reason": "disabled",
+                "error_type": None,
+                "error_message": None,
+            },
+            "task_driven_patch_proposal": True,
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["implement notes cli", "--propose-patch"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Patch proposal generated from task intent (no test failures)." in out

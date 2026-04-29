@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,7 +107,8 @@ def _apply_hunks(source: str, hunks: list[dict[str, Any]]) -> tuple[str | None, 
     out: list[str] = []
     src_idx = 0
     for hunk in hunks:
-        target_idx = hunk["old_start"] - 1
+        old_start = int(hunk["old_start"])
+        target_idx = 0 if old_start == 0 else old_start - 1
         if target_idx < src_idx or target_idx > len(src_lines):
             return None, "context_mismatch"
         out.extend(src_lines[src_idx:target_idx])
@@ -124,7 +126,9 @@ def _apply_hunks(source: str, hunks: list[dict[str, Any]]) -> tuple[str | None, 
             elif kind == "+":
                 out.append(text)
     out.extend(src_lines[src_idx:])
-    return "\n".join(out) + ("\n" if source.endswith("\n") else ""), None
+    if not out:
+        return "", None
+    return "\n".join(out) + ("\n" if source.endswith("\n") or not source else ""), None
 
 
 def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
@@ -155,6 +159,9 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
     if any(str(w).startswith(severe_prefixes) for w in result["warnings"]):
         result["errors"] = ["unsafe_paths"]
         return result
+    if "binary_diff_detected" in result["warnings"]:
+        result["errors"] = ["binary_diff_unsupported"]
+        return result
 
     diff_text = path.read_text(encoding="utf-8")
     files, parse_errors = _parse_diff(diff_text)
@@ -166,22 +173,32 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
     for file_patch in files:
         old_path = file_patch.get("old_path")
         new_path = file_patch.get("new_path")
-        if old_path is None or new_path is None:
+        is_new_file = old_path is None and new_path is not None
+        is_delete_file = old_path is not None and new_path is None
+        if is_delete_file:
+            result["errors"] = ["unsupported_delete_file"]
+            return result
+        if old_path is None and new_path is None:
             result["errors"] = ["unsupported_new_or_delete_file"]
             return result
-        if old_path != new_path:
+        if not is_new_file and old_path != new_path:
             result["errors"] = ["unsupported_rename"]
             return result
 
-        target = root / old_path
-        if not target.exists():
-            result["errors"] = ["missing_target_file"]
-            return result
+        target_rel = new_path if is_new_file else old_path
+        assert isinstance(target_rel, str)
+        target = root / target_rel
         if not _ensure_within_root(target, root):
             result["errors"] = ["path_outside_cwd"]
             return result
+        if is_new_file and target.exists():
+            result["errors"] = ["target_already_exists"]
+            return result
+        if not is_new_file and not target.exists():
+            result["errors"] = ["missing_target_file"]
+            return result
 
-        source = target.read_text(encoding="utf-8")
+        source = "" if is_new_file else target.read_text(encoding="utf-8")
         updated, apply_error = _apply_hunks(source, file_patch.get("hunks", []))
         if apply_error:
             result["errors"] = [apply_error]
@@ -190,36 +207,73 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
         plan.append(
             {
                 "path": target,
-                "relative_path": old_path,
+                "relative_path": target_rel,
                 "new_content": updated,
                 "additions": int(file_patch.get("additions", 0)),
                 "deletions": int(file_patch.get("deletions", 0)),
+                "is_new_file": is_new_file,
             }
         )
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     backup_root = root / ".aegis" / "backups" / timestamp
     written: list[dict[str, Any]] = []
+    created_files: list[Path] = []
+    created_dirs: list[Path] = []
     try:
         for item in plan:
             target = item["path"]
             rel = Path(str(item["relative_path"]))
-            backup_path = backup_root / rel
-            backup_path.parent.mkdir(parents=True, exist_ok=True)
-            backup_path.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+            is_new_file = bool(item.get("is_new_file", False))
+            backup_path: Path | None = None
+            if not is_new_file:
+                backup_path = backup_root / rel
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                backup_path.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+            parent = target.parent
+            if not parent.exists():
+                parent.mkdir(parents=True, exist_ok=True)
+                created_dirs.append(parent)
             target.write_text(item["new_content"], encoding="utf-8")
+            if is_new_file:
+                created_files.append(target)
             changed = {
                 "path": str(rel).replace("\\", "/"),
-                "backup_path": str(backup_path),
+                "backup_path": str(backup_path) if backup_path is not None else None,
                 "additions": item["additions"],
                 "deletions": item["deletions"],
+                "created": is_new_file,
             }
-            written.append({"target": target, "backup_path": backup_path, "entry": changed})
+            written.append({"target": target, "backup_path": backup_path, "entry": changed, "created": is_new_file})
     except Exception as exc:
-        for entry in written:
-            entry["target"].write_text(entry["backup_path"].read_text(encoding="utf-8"), encoding="utf-8")
+        for entry in reversed(written):
+            if bool(entry.get("created", False)):
+                target = entry["target"]
+                if target.exists():
+                    target.unlink()
+                continue
+            backup_path = entry.get("backup_path")
+            if isinstance(backup_path, Path):
+                entry["target"].write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
+        for directory in sorted(set(created_dirs), key=lambda p: len(p.parts), reverse=True):
+            try:
+                if directory.exists() and not any(directory.iterdir()) and _ensure_within_root(directory, root):
+                    directory.rmdir()
+            except Exception:
+                pass
         result["errors"] = [f"apply_failed: {exc}"]
         return result
+
+    if created_files:
+        manifest_path = backup_root / "__created_files__.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(
+                {"created_files": [str(p.relative_to(root)).replace("\\", "/") for p in created_files]},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     result["applied"] = True
     result["files_changed"] = [entry["entry"] for entry in written]
@@ -233,7 +287,10 @@ def format_apply_result(result: dict[str, Any]) -> str:
         f"Files changed: {len(result.get('files_changed', []))}",
     ]
     for item in result.get("files_changed", []):
-        lines.append(f"- {item.get('path')} (backup: {item.get('backup_path')})")
+        if bool(item.get("created", False)):
+            lines.append(f"- {item.get('path')} (created)")
+        else:
+            lines.append(f"- {item.get('path')} (backup: {item.get('backup_path')})")
     lines.append("Warnings:")
     warnings = result.get("warnings", [])
     if warnings:

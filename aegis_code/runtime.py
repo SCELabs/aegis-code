@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from aegis_code.planning.patch_generator import generate_patch_plan
 from aegis_code.providers import generate_patch_diff
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
+from aegis_code.secrets import resolve_key
 from aegis_code.sll_adapter import analyze_failures_sll
 from aegis_code.tools.tests import run_configured_tests
 
@@ -43,6 +45,25 @@ def _is_tests_passed(status: str, exit_code: int | None) -> bool:
     return status == "ok" and exit_code == 0
 
 
+def is_constructive_task(task: str) -> bool:
+    lowered = str(task or "").lower()
+    positive = (
+        "add",
+        "create",
+        "implement",
+        "build",
+        "write",
+        "generate",
+        "refactor",
+        "update",
+        "extend",
+    )
+    negative = ("run", "test", "analyze", "summarize", "explain")
+    if any(token in lowered for token in negative):
+        return False
+    return any(token in lowered for token in positive)
+
+
 def _patch_diff_default() -> dict[str, Any]:
     return {
         "attempted": False,
@@ -53,6 +74,166 @@ def _patch_diff_default() -> dict[str, Any]:
         "error": None,
         "preview": "",
     }
+
+
+def _is_ignored_path(path: Path) -> bool:
+    parts = set(path.parts)
+    ignored = {
+        ".aegis",
+        ".git",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "dist",
+        "build",
+    }
+    if parts & ignored:
+        return True
+    return any(part.endswith(".egg-info") for part in path.parts)
+
+
+def _read_context_file(path: Path, max_chars_per_file: int) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    if len(text) <= max_chars_per_file:
+        return text
+    return text[:max_chars_per_file].rstrip() + "\n[truncated]"
+
+
+def build_task_context(cwd: Path) -> dict:
+    root = cwd.resolve()
+    max_files = 10
+    max_chars_per_file = 6000
+    selected: list[Path] = []
+
+    entrypoints = [
+        root / "src" / "main.py",
+        root / "main.py",
+        root / "cli.py",
+        root / "app.py",
+    ]
+    for path in entrypoints:
+        if path.exists() and path.is_file():
+            selected.append(path)
+
+    for path in sorted((root / "tests").rglob("*.py")) if (root / "tests").exists() else []:
+        if len(selected) >= max_files:
+            break
+        if _is_ignored_path(path.relative_to(root)):
+            continue
+        if path not in selected:
+            selected.append(path)
+
+    source_candidates = sorted((root / "src").rglob("*.py")) if (root / "src").exists() else []
+    for path in source_candidates:
+        if len(selected) >= max_files:
+            break
+        rel = path.relative_to(root)
+        if _is_ignored_path(rel):
+            continue
+        if path in selected:
+            continue
+        try:
+            if path.stat().st_size > 8192:
+                continue
+        except Exception:
+            continue
+        selected.append(path)
+
+    if len(selected) < max_files:
+        for name in ("main.py", "cli.py", "app.py"):
+            path = root / name
+            if len(selected) >= max_files:
+                break
+            if path.exists() and path.is_file() and path not in selected:
+                selected.append(path)
+
+    files: list[dict[str, str]] = []
+    for path in selected[:max_files]:
+        rel = path.relative_to(root).as_posix()
+        content = _read_context_file(path, max_chars_per_file=max_chars_per_file)
+        if content.strip():
+            files.append({"path": rel, "content": content})
+
+    return {"files": files}
+
+
+def _control_requested(cfg: Any, cwd: Path) -> bool:
+    setting = cfg.aegis.control_enabled
+    key_available = bool(resolve_key("AEGIS_API_KEY", cwd))
+    if isinstance(setting, bool):
+        return setting
+    lowered = str(setting).strip().lower()
+    if lowered == "auto":
+        return key_available
+    if lowered in {"true", "1", "yes", "on"}:
+        return True
+    if lowered in {"false", "0", "no", "off"}:
+        return False
+    return key_available
+
+
+def _refine_task_context_with_aegis(task: str, local_context: dict, cwd: Path, cfg: Any) -> dict:
+    if not _control_requested(cfg, cwd):
+        return local_context
+    try:
+        from aegis import AegisClient  # type: ignore
+    except Exception:
+        return local_context
+
+    try:
+        client = AegisClient(base_url=str(cfg.aegis.base_url))
+        payload = client.auto().context(
+            objective=task,
+            messages=[
+                {"role": "system", "content": "You are refining context for a code modification task."},
+                {"role": "user", "content": json.dumps(local_context, ensure_ascii=True)},
+            ],
+            constraints=[
+                "Preserve relevant files",
+                "Remove noise",
+                "Prioritize entrypoints and integration points",
+            ],
+            symptoms=["context_noise"],
+            severity="medium",
+            metadata={"task_type": "patch_generation"},
+        )
+        if isinstance(payload, dict):
+            scope_data = payload.get("scope_data", {})
+            if isinstance(scope_data, dict):
+                cleaned = scope_data.get("cleaned_messages")
+                if isinstance(cleaned, list):
+                    for msg in cleaned:
+                        if isinstance(msg, dict):
+                            content = msg.get("content")
+                            if isinstance(content, str):
+                                try:
+                                    parsed = json.loads(content)
+                                except Exception:
+                                    continue
+                                if isinstance(parsed, dict) and isinstance(parsed.get("files"), list) and parsed.get("files"):
+                                    return parsed
+            cleaned_messages = payload.get("cleaned_messages")
+            if isinstance(cleaned_messages, list):
+                for msg in cleaned_messages:
+                    if isinstance(msg, dict):
+                        content = msg.get("content")
+                        if isinstance(content, str):
+                            try:
+                                parsed = json.loads(content)
+                            except Exception:
+                                continue
+                            if isinstance(parsed, dict) and isinstance(parsed.get("files"), list) and parsed.get("files"):
+                                return parsed
+    except Exception:
+        return local_context
+    return local_context
 
 
 def build_run_payload(
@@ -230,12 +411,7 @@ def build_run_payload(
                 test_attempts[-1]["status"],
                 test_attempts[-1]["exit_code"],
             )
-            if isinstance(decision.execution, dict) and decision.execution.get("status") in {
-                "unavailable",
-                "error",
-            }:
-                status = "completed_with_aegis_unavailable"
-            elif final_passed and retry_policy["retry_count"] > 0:
+            if final_passed and retry_policy["retry_count"] > 0:
                 status = "completed_tests_passed_after_retry"
             elif final_passed:
                 status = "completed_tests_passed"
@@ -330,8 +506,53 @@ def build_run_payload(
     failures = final_failures
 
     should_attempt_provider_diff = bool(options.propose_patch or config.patches.generate_diff)
-    provider_enabled = bool(config.providers.enabled or options.propose_patch)
     final_failure_count = int(final_failures.get("failure_count", 0) or 0)
+    task_driven_patch_proposal = bool(options.propose_patch and final_failure_count == 0 and is_constructive_task(options.task))
+    should_patch_flow = bool(final_failure_count > 0 or task_driven_patch_proposal)
+    if task_driven_patch_proposal:
+        local_task_context = build_task_context((cwd or Path.cwd()).resolve())
+        refined_task_context = _refine_task_context_with_aegis(
+            options.task,
+            local_task_context,
+            (cwd or Path.cwd()).resolve(),
+            config,
+        )
+        final_task_context = refined_task_context if isinstance(refined_task_context, dict) else local_task_context
+        files = final_task_context.get("files") if isinstance(final_task_context, dict) else None
+        if not isinstance(files, list) or not files:
+            final_task_context = local_task_context
+        failure_context = final_task_context
+
+        entrypoint_file = ""
+        for item in failure_context.get("files", []) if isinstance(failure_context, dict) else []:
+            if isinstance(item, dict):
+                path = str(item.get("path", ""))
+                if path in {"src/main.py", "main.py", "cli.py", "app.py"}:
+                    entrypoint_file = path
+                    break
+        patch_plan = {
+            "strategy": f"Implement requested task: {options.task}. Keep changes minimal and localized.",
+            "confidence": 0.5,
+            "proposed_changes": [
+                {
+                    "file": "",
+                    "change_type": "task_intent",
+                    "description": "Patch proposal generated from task intent (no test failures).",
+                    "reason": "constructive_task_intent",
+                }
+            ],
+        }
+        if entrypoint_file:
+            patch_plan["proposed_changes"].append(
+                {
+                    "file": entrypoint_file,
+                    "change_type": "modify",
+                    "description": "Integrate feature into CLI entrypoint.",
+                    "reason": "entrypoint_integration",
+                }
+            )
+
+    provider_enabled = bool(config.providers.enabled or options.propose_patch)
     has_context_files = bool(failure_context.get("files", []))
     has_proposed_changes = bool(patch_plan.get("proposed_changes", []))
 
@@ -339,7 +560,7 @@ def build_run_payload(
         should_attempt_provider_diff
         and provider_enabled
         and verification.get("available", False)
-        and final_failure_count > 0
+        and should_patch_flow
         and (has_context_files or has_proposed_changes)
     ):
         provider_result = generate_patch_diff(
@@ -371,6 +592,8 @@ def build_run_payload(
         if provider_result.get("available", False) and not path_value:
             patch_diff["available"] = False
             patch_diff["error"] = "Diff generation returned empty output."
+        if patch_diff["attempted"] and not patch_diff["available"] and not patch_diff.get("error"):
+            patch_diff["error"] = "Provider unavailable"
     elif should_attempt_provider_diff and not provider_enabled:
         patch_diff = {
             "attempted": True,
@@ -378,7 +601,17 @@ def build_run_payload(
             "provider": config.providers.provider,
             "model": selected_model,
             "path": None,
-            "error": "Provider usage is disabled in config.",
+            "error": "Provider unavailable",
+            "preview": "",
+        }
+    elif should_attempt_provider_diff and should_patch_flow and not verification.get("available", False):
+        patch_diff = {
+            "attempted": True,
+            "available": False,
+            "provider": config.providers.provider,
+            "model": selected_model,
+            "path": None,
+            "error": "Provider unavailable",
             "preview": "",
         }
 
@@ -432,6 +665,7 @@ def build_run_payload(
             "escalation_allowed": bool(decision.allow_escalation),
             "context_mode": guidance_context_mode or "balanced",
         },
+        "task_driven_patch_proposal": task_driven_patch_proposal,
     }
     return payload
 

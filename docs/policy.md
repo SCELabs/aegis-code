@@ -50,15 +50,17 @@ When runtime is invoked and budget tracking is active, budget events include:
 
 This logging is local-only and deterministic.
 
-## Enhanced runtime flag
+## Aegis control setting
 
-`aegis.enhanced_runtime` controls optional Aegis client control guidance in the runtime adapter.
+`aegis.control_enabled` controls optional Aegis client control guidance in the runtime adapter.
 
-- default: `false` (local path)
+- default: `auto`
+- `auto` enables control when `AEGIS_API_KEY` is available
 - `true` + client import available: adapter calls `client.auto().step(...)`
+- `false`: local-only control path
 - fallback stays local when client import is missing or client execution raises an error
 
-Enhanced runtime treats Aegis as a control layer:
+Aegis control treats Aegis as a control layer:
 
 - local runtime result remains primary
 - Aegis response is attached as `aegis_result`
@@ -68,6 +70,6 @@ Adapter metadata records:
 
 - `mode` (`local` or `aegis`)
 - `aegis_client_available`
-- `enhanced_enabled`
-- `fallback_reason` (`disabled`, `import_missing`, or `client_error`)
+- `control_status` (`enabled`, `disabled`, or `fallback`)
+- `control_reason` (`guidance_applied`, `no_api_key`, `disabled_by_config`, `import_missing`, or `client_error`)
 - `error_type` / `error_message` when client errors occur

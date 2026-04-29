@@ -18,6 +18,7 @@ def test_setup_check_empty_project(tmp_path: Path, monkeypatch) -> None:
     status = check_setup(tmp_path)
     assert status["initialized"] is False
     assert status["aegis_key"] is False
+    assert status["aegis_control_status"] == "disabled"
     assert status["provider_key"] is False
     assert status["provider_preset"] is False
     assert status["context_available"] is False
@@ -35,6 +36,7 @@ def test_setup_check_initialized_only(tmp_path: Path, monkeypatch) -> None:
     status = check_setup(tmp_path)
     assert status["initialized"] is True
     assert status["aegis_key"] is False
+    assert status["aegis_control_status"] == "disabled"
     assert status["provider_key"] is False
     assert status["provider_preset"] is True
     assert status["context_available"] is False
@@ -49,6 +51,7 @@ def test_setup_check_with_keys(tmp_path: Path, monkeypatch) -> None:
     status = check_setup(tmp_path)
     assert status["initialized"] is True
     assert status["aegis_key"] is True
+    assert status["aegis_control_status"] == "enabled"
     assert status["provider_key"] is True
 
 
@@ -71,6 +74,7 @@ def test_setup_check_full_ready(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "Setup Check:" in out
     assert "- Project initialized: true" in out
     assert "- Aegis key: set" in out
+    assert "- Aegis control: enabled" in out
     assert "- Provider key: found" in out
     assert "- Provider preset: configured" in out
     assert "- Context: available" in out

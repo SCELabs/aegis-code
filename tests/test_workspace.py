@@ -545,10 +545,90 @@ def test_workspace_compare_mixed(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "- With runs: 3" in out
     assert "- Missing runs: 0" in out
     assert "- Skipped (missing path): 1" in out
-    assert "- Passed: 2" in out
-    assert "- Failed: 1" in out
+    assert "- Passed: 1" in out
+    assert "- Failed: 2" in out
     assert "- Aegis mode: 1" in out
     assert "- Local mode: 2" in out
+
+
+def test_workspace_compare_uses_final_failures_over_completed_status(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "project-a"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps(
+            {
+                "status": "completed_with_aegis_unavailable",
+                "final_failures": {"failure_count": 1},
+                "runtime_adapter": {"mode": "local", "used_fallback": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "compare"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- Passed: 0" in out
+    assert "- Failed: 1" in out
+
+
+def test_workspace_compare_completed_tests_passed_counts_pass(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "project-a"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"status": "completed_tests_passed", "final_failures": {"failure_count": 0}}),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "compare"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- Passed: 1" in out
+    assert "- Failed: 0" in out
+
+
+def test_workspace_compare_uses_test_attempt_exit_code(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "project-a"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "test_attempts": [{"attempt": 1, "status": "failed", "exit_code": 1}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "compare"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- Passed: 0" in out
+    assert "- Failed: 1" in out
+
+
+def test_workspace_compare_malformed_latest_json_no_crash(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "project-a"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text("{not-json", encoding="utf-8")
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "compare"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- With runs: 1" in out
+    assert "- Failed: 1" in out
 
 
 def test_workspace_compare_no_workspace(tmp_path: Path, monkeypatch, capsys) -> None:

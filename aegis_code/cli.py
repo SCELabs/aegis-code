@@ -37,7 +37,7 @@ from aegis_code.policy import (
     select_runtime_mode,
 )
 from aegis_code.config import ensure_project_files, project_paths, update_model_tier
-from aegis_code.report import read_latest_markdown
+from aegis_code.report import read_latest_markdown, write_reports
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scaffolds import list_stacks
 from aegis_code.secrets import clear_key, get_status as get_secrets_status, set_key
@@ -61,11 +61,15 @@ from aegis_code.workspace import (
 
 def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
     info = adapter or {}
+    status = str(info.get("control_status", "disabled"))
+    reason = str(info.get("control_reason", info.get("fallback_reason", "n/a")))
     lines = [
-        "Runtime Adapter:",
-        f"- Mode: {info.get('mode', 'local')}",
-        f"- Aegis client available: {'true' if bool(info.get('aegis_client_available', False)) else 'false'}",
-        f"- Fallback: {info.get('fallback_reason', 'import_missing')}",
+        "Aegis Control:",
+        f"- Status: {status}",
+        f"- Reason: {reason}",
+        f"- Client available: {'true' if bool(info.get('aegis_client_available', False)) else 'false'}",
+        f"- Execution: {info.get('execution', 'local')}",
+        f"- Mutation: {'confirm-only' if str(info.get('mutation', 'confirm_only')) == 'confirm_only' else info.get('mutation')}",
     ]
     if info.get("error_type"):
         lines.append(f"- Error type: {info.get('error_type')}")
@@ -78,11 +82,13 @@ def _format_aegis_impact(impact: dict[str, object] | None) -> str:
     info = impact or {}
     lines = [
         "Aegis Impact:",
-        f"- Used: {'true' if bool(info.get('used', False)) else 'false'}",
-        f"- Actions: {int(info.get('action_count', 0) or 0)}",
+        f"- Guidance used: {'true' if bool(info.get('used', False)) else 'false'}",
+        f"- Actions returned: {int(info.get('action_count', 0) or 0)}",
         f"- Override applied: {'true' if bool(info.get('override_applied', False)) else 'false'}",
         f"- Fallback used: {'true' if bool(info.get('fallback_used', False)) else 'false'}",
     ]
+    if info.get("reason"):
+        lines.append(f"- Reason: {info.get('reason')}")
     return "\n".join(lines)
 
 
@@ -581,7 +587,7 @@ def handle_onboard(argv: Sequence[str]) -> int:
     if result.get("success", False):
         print("Aegis onboarding complete.")
         print("API key saved locally.")
-        print("Enhanced runtime remains opt-in. Enable aegis.enhanced_runtime in .aegis/aegis-code.yml when ready.")
+        print("Aegis control is auto-enabled when AEGIS_API_KEY is configured (unless disabled in aegis.control_enabled).")
         return 0
     if "status_code" in result:
         print(f"Onboarding failed: {result.get('reason', 'network_error')} status={result.get('status_code')}")
@@ -621,6 +627,60 @@ def _allow_runtime_or_print(
         return False
     record_event(operation, estimated_cost, cwd, selected_mode=selected_mode, reason=reason)
     return True
+
+
+def _write_budget_skipped_report(
+    *,
+    task: str,
+    mode: str,
+    dry_run: bool,
+    cwd: Path,
+    runtime_policy: dict[str, object],
+    budget_state: dict[str, object],
+) -> None:
+    payload = {
+        "task": task,
+        "mode": mode,
+        "dry_run": dry_run,
+        "status": "budget_skipped",
+        "notes": ["Runtime execution skipped by local budget control."],
+        "commands_run": [],
+        "test_attempts": [],
+        "failures": {"failure_count": 0, "failed_tests": []},
+        "initial_failures": {"failure_count": 0, "failed_tests": []},
+        "final_failures": {"failure_count": 0, "failed_tests": []},
+        "symptoms": [],
+        "retry_policy": {
+            "max_retries": 0,
+            "allow_escalation": False,
+            "retry_attempted": False,
+            "retry_count": 0,
+            "stopped_reason": "budget_skipped",
+        },
+        "patch_plan": {"strategy": "Skipped due to budget control.", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {"attempted": False, "available": False, "path": None, "error": None, "preview": ""},
+        "patch_quality": None,
+        "verification": {"available": False, "test_command": None, "detected_stack": None, "reason": "budget_skipped"},
+        "runtime_policy": runtime_policy,
+        "budget_state": budget_state,
+        "project_context": {"available": False, "included_paths": [], "total_chars": 0},
+        "adapter": {
+            "mode": "local",
+            "aegis_client_available": False,
+            "control_requested": False,
+            "control_status": "disabled",
+            "control_reason": "budget_skipped",
+            "execution": "local",
+            "mutation": "confirm_only",
+            "fallback_reason": "budget_skipped",
+            "error_type": None,
+            "error_message": None,
+        },
+        "aegis_impact": {"used": False, "action_count": 0, "override_applied": False, "fallback_used": True},
+        "selected_model_tier": "mid",
+        "selected_model": "unknown",
+    }
+    write_reports(payload, cwd=cwd)
 
 
 def handle_budget(argv: Sequence[str]) -> int:
@@ -939,6 +999,12 @@ def handle_apply(argv: Sequence[str]) -> int:
         print(f"Hunks: {summary.get('hunk_count', 0)}")
         print(f"Additions: {summary.get('additions', 0)}")
         print(f"Deletions: {summary.get('deletions', 0)}")
+        print(f"Apply blocked: {result.get('apply_blocked', False)}")
+        blockers = result.get("apply_block_reasons", [])
+        if blockers:
+            print("Apply block reasons:")
+            for item in blockers:
+                print(f"- {item}")
         print("Warnings:")
         warnings = result.get("warnings", [])
         if warnings:
@@ -1014,6 +1080,17 @@ def handle_task(argv: Sequence[str]) -> int:
     final_mode = select_runtime_mode(base_mode, cwd=cwd)
     reason = get_mode_reason(base_mode, final_mode, cwd=cwd)
     if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
+        if not args.no_report:
+            budget_state = get_budget_state(cwd=cwd)
+            runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=cwd)
+            _write_budget_skipped_report(
+                task=args.task,
+                mode=final_mode,
+                dry_run=bool(args.dry_run),
+                cwd=cwd,
+                runtime_policy=runtime_policy,
+                budget_state=budget_state,
+            )
         return 0
     project_context = load_runtime_context(cwd=cwd)
     budget_state = get_budget_state(cwd=cwd)
@@ -1064,6 +1141,8 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     print(f"Patch plan available: {has_patch_plan}")
     print(f"Patch diff attempted: {patch_diff.get('attempted', False)}")
+    if bool(payload.get("task_driven_patch_proposal", False)):
+        print("Patch proposal generated from task intent (no test failures).")
     if patch_diff.get("available", False):
         print("Patch diff status: generated")
     elif patch_diff.get("attempted", False):
@@ -1248,6 +1327,7 @@ def handle_setup(argv: Sequence[str]) -> int:
         print("Setup Check:")
         print(f"- Project initialized: {'true' if bool(status.get('initialized', False)) else 'false'}")
         print(f"- Aegis key: {'set' if bool(status.get('aegis_key', False)) else 'missing'}")
+        print(f"- Aegis control: {status.get('aegis_control_status', 'disabled')}")
         print(f"- Provider key: {'found' if bool(status.get('provider_key', False)) else 'missing'}")
         print(f"- Provider preset: {'configured' if bool(status.get('provider_preset', False)) else 'missing'}")
         print(f"- Context: {'available' if bool(status.get('context_available', False)) else 'missing'}")

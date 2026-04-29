@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aegis_code import cli
@@ -53,7 +54,21 @@ def test_main_task_skips_runtime_when_budget_exceeded(tmp_path: Path, monkeypatc
     assert exit_code == 0
     assert "Budget control limit reached. Runtime execution skipped." in out
     assert "Runtime Control:" not in out
-    assert "Runtime Adapter:" not in out
+    assert "Aegis Control:" not in out
+
+
+def test_budget_skip_writes_latest_report(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    set_budget(0.0, cwd=tmp_path)
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no runtime")))
+    assert cli.main(["fix failing tests", "--propose-patch"]) == 0
+    latest_json = tmp_path / ".aegis" / "runs" / "latest.json"
+    latest_md = tmp_path / ".aegis" / "runs" / "latest.md"
+    assert latest_json.exists()
+    assert latest_md.exists()
+    payload = json.loads(latest_json.read_text(encoding="utf-8"))
+    assert payload["task"] == "fix failing tests"
+    assert payload["status"] == "budget_skipped"
 
 
 def test_main_task_calls_runtime_when_budget_allows(tmp_path: Path, monkeypatch, capsys) -> None:

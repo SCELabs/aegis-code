@@ -48,7 +48,7 @@ def run_setup(
                 if assume_yes:
                     aegis["reason"] = "email_required"
                 else:
-                    if _confirm("Connect Aegis for enhanced runtime guidance? [Y/n] ", assume_yes=False):
+                    if _confirm("Connect Aegis control guidance? [Y/n] ", assume_yes=False):
                         selected_email = input("Email: ").strip()
                     else:
                         aegis["reason"] = "skipped"
@@ -131,8 +131,21 @@ def check_setup(cwd: Path) -> dict:
         )
     )
 
+    aegis_control_status = "disabled"
     if initialized:
         cfg = load_config(cwd)
+        control_setting = cfg.aegis.control_enabled
+        if isinstance(control_setting, bool):
+            control_requested = control_setting
+        else:
+            lowered = str(control_setting).strip().lower()
+            if lowered == "auto":
+                control_requested = aegis_key
+            elif lowered in {"true", "1", "yes", "on"}:
+                control_requested = True
+            else:
+                control_requested = False
+        aegis_control_status = "enabled" if control_requested else "disabled"
         provider_preset = all(
             bool(str(value).strip())
             for value in (cfg.models.cheap, cfg.models.mid, cfg.models.premium)
@@ -148,6 +161,7 @@ def check_setup(cwd: Path) -> dict:
     return {
         "initialized": initialized,
         "aegis_key": aegis_key,
+        "aegis_control_status": aegis_control_status,
         "provider_key": provider_key,
         "provider_preset": provider_preset,
         "context_available": context_available,
