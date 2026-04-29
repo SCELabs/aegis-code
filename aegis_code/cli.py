@@ -20,6 +20,7 @@ from aegis_code.context_state import (
 from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.create_scaffold import create_scaffold
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
+from aegis_code.onboard import run_onboard
 from aegis_code.overview import build_overview, format_overview
 from aegis_code.provider_presets import PRESETS, apply_preset
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
@@ -108,6 +109,12 @@ def _build_create_parser() -> argparse.ArgumentParser:
 
 def _build_doctor_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code doctor")
+
+
+def _build_onboard_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code onboard")
+    parser.add_argument("--email", required=True)
+    return parser
 
 
 def _build_context_parser() -> argparse.ArgumentParser:
@@ -483,6 +490,21 @@ def handle_doctor(argv: Sequence[str]) -> int:
     print(f"- Latest run: {'found' if latest.exists() else 'missing'}")
     print(f"- Backups: {len(backups)}")
     return 0
+
+
+def handle_onboard(argv: Sequence[str]) -> int:
+    parser = _build_onboard_parser()
+    args = parser.parse_args(list(argv))
+    result = run_onboard(email=str(args.email), cwd=Path.cwd())
+    if result.get("success", False):
+        print("Aegis onboarding complete.")
+        print("API key saved locally.")
+        return 0
+    if "status_code" in result:
+        print(f"Onboarding failed: {result.get('reason', 'network_error')} status={result.get('status_code')}")
+        return 1
+    print(f"Onboarding failed: {result.get('reason', 'network_error')}")
+    return 1
 
 
 def handle_context(argv: Sequence[str]) -> int:
@@ -1091,6 +1113,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_create(args[1:])
     if command == "doctor":
         return handle_doctor(args[1:])
+    if command == "onboard":
+        return handle_onboard(args[1:])
     if command == "context":
         return handle_context(args[1:])
     if command == "budget":

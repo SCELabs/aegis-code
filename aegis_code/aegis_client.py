@@ -4,8 +4,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+from aegis_code.config import load_config
 from aegis_code.models import AegisDecision
 from aegis_code.secrets import resolve_key
+
+DEFAULT_AEGIS_BASE_URL = "https://aegis-backend-production-4b47.up.railway.app"
 
 
 def _get_attr_or_key(source: Any, key: str, default: Any) -> Any:
@@ -93,11 +96,22 @@ class AegisBackendClient:
             )
 
 
+def resolve_base_url(cwd: Path) -> str:
+    env_base_url = os.environ.get("AEGIS_BASE_URL", "").strip()
+    if env_base_url:
+        return env_base_url
+    cfg = load_config(cwd)
+    cfg_base_url = str(cfg.aegis.base_url or "").strip()
+    if cfg_base_url:
+        return cfg_base_url
+    return DEFAULT_AEGIS_BASE_URL
+
+
 def client_from_env(default_base_url: str) -> AegisBackendClient:
     apply_resolved_aegis_env(Path.cwd(), default_base_url=default_base_url)
     return AegisBackendClient(
         api_key=os.getenv("AEGIS_API_KEY"),
-        base_url=os.getenv("AEGIS_BASE_URL", default_base_url),
+        base_url=os.getenv("AEGIS_BASE_URL", resolve_base_url(Path.cwd())),
     )
 
 
@@ -111,5 +125,5 @@ def apply_resolved_aegis_env(cwd: Path, default_base_url: str | None = None) -> 
         resolved_base_url = resolve_key("AEGIS_BASE_URL", cwd)
         if resolved_base_url:
             os.environ["AEGIS_BASE_URL"] = resolved_base_url
-        elif default_base_url:
-            os.environ["AEGIS_BASE_URL"] = default_base_url
+        else:
+            os.environ["AEGIS_BASE_URL"] = resolve_base_url(cwd)

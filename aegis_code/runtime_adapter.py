@@ -4,7 +4,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env
+from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, resolve_base_url
 from aegis_code.config import load_config
 from aegis_code.report import write_reports
 
@@ -109,7 +109,7 @@ def execute_task(
 
     if enhanced_enabled and aegis_available:
         try:
-            aegis_client = AegisClient(base_url=cfg.aegis.base_url)
+            aegis_client = AegisClient(base_url=resolve_base_url((cwd or Path.cwd()).resolve()))
             response = aegis_client.auto().step(
                 step_name="aegis-code-runtime",
                 step_input={
