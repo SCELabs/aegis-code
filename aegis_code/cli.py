@@ -39,6 +39,17 @@ from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scaffolds import list_stacks
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
+from aegis_code.workspace import (
+    add_project,
+    get_detailed_status,
+    get_status,
+    get_workspace_overview,
+    init_workspace,
+    preview_workspace_run,
+    refresh_workspace_context,
+    remove_project,
+    run_workspace_task,
+)
 
 
 def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
@@ -119,6 +130,25 @@ def _build_policy_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code policy")
     subparsers = parser.add_subparsers(dest="policy_command")
     subparsers.add_parser("status", prog="aegis-code policy status")
+    return parser
+
+
+def _build_workspace_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code workspace")
+    subparsers = parser.add_subparsers(dest="workspace_command")
+    subparsers.add_parser("init", prog="aegis-code workspace init")
+    add_parser = subparsers.add_parser("add", prog="aegis-code workspace add")
+    add_parser.add_argument("path")
+    remove_parser = subparsers.add_parser("remove", prog="aegis-code workspace remove")
+    remove_parser.add_argument("path")
+    status_parser = subparsers.add_parser("status", prog="aegis-code workspace status")
+    status_parser.add_argument("--detailed", action="store_true")
+    subparsers.add_parser("overview", prog="aegis-code workspace overview")
+    subparsers.add_parser("refresh-context", prog="aegis-code workspace refresh-context")
+    run_parser = subparsers.add_parser("run", prog="aegis-code workspace run")
+    run_parser.add_argument("task")
+    run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument("--confirm", action="store_true")
     return parser
 
 
@@ -495,6 +525,140 @@ def handle_policy(argv: Sequence[str]) -> int:
     return 1
 
 
+def handle_workspace(argv: Sequence[str]) -> int:
+    parser = _build_workspace_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    if args.workspace_command == "init":
+        init_workspace(cwd=cwd)
+        print("Workspace initialized: .aegis/workspace.json")
+        return 0
+    if args.workspace_command == "add":
+        result = add_project(Path(args.path), cwd=cwd)
+        if result.get("added", False):
+            print(f"Added: {Path(args.path).resolve()}")
+            return 0
+        reason = str(result.get("reason", ""))
+        if reason == "already exists":
+            print("Error: already exists")
+            return 1
+        if reason == "path does not exist":
+            print("Error: path does not exist")
+            return 1
+        print("Error: failed to add project")
+        return 1
+    if args.workspace_command == "remove":
+        result = remove_project(Path(args.path), cwd=cwd)
+        if result.get("removed", False):
+            print(f"Removed: {Path(args.path).resolve()}")
+            return 0
+        reason = str(result.get("reason", ""))
+        if reason == "no_workspace":
+            print("No workspace found. Run `aegis-code workspace init`.")
+            return 1
+        if reason == "not_found":
+            print("Error: project not found")
+            return 2
+        print("Error: failed to remove project")
+        return 2
+    if args.workspace_command == "status":
+        if not args.detailed:
+            status = get_status(cwd=cwd)
+            if not status.get("exists", False):
+                print("No workspace found. Run `aegis-code workspace init`.")
+                return 1
+            print("Workspace:")
+            print(f"- Projects: {status.get('project_count', 0)}")
+            for item in status.get("projects", []):
+                print("")
+                print(f"- {item.get('name', '')}")
+                print(f"  path: {item.get('path', '')}")
+                print(f"  exists: {'true' if item.get('exists', False) else 'false'}")
+            return 0
+
+        status = get_detailed_status(cwd=cwd)
+        if not status.get("exists", False):
+            print("No workspace found. Run `aegis-code workspace init`.")
+            return 1
+        print("Workspace:")
+        print(f"- Projects: {status.get('project_count', 0)}")
+        for item in status.get("projects", []):
+            print("")
+            print(f"- {item.get('name', '')}")
+            print(f"  path: {item.get('path', '')}")
+            print(f"  exists: {'true' if item.get('exists', False) else 'false'}")
+            if item.get("exists", False):
+                print(f"  config: {'found' if item.get('config', False) else 'missing'}")
+                print(f"  budget: {'set' if item.get('budget', False) else 'not set'}")
+                print(f"  context: {'available' if item.get('context', False) else 'missing'}")
+                print(f"  latest run: {'found' if item.get('latest_run', False) else 'missing'}")
+                print(f"  mode: {item.get('mode', 'unknown')}")
+        return 0
+    if args.workspace_command == "overview":
+        overview = get_workspace_overview(cwd=cwd)
+        if not overview.get("exists", False):
+            print("No workspace found. Run `aegis-code workspace init`.")
+            return 1
+        print("Workspace Overview:")
+        print(f"- Projects: {overview.get('total', 0)}")
+        print(f"- Available: {overview.get('available', 0)}")
+        print(f"- Missing: {overview.get('missing', 0)}")
+        print(f"- Configured: {overview.get('configured', 0)}")
+        print(f"- Budgets set: {overview.get('budget', 0)}")
+        print(f"- Context ready: {overview.get('context', 0)}")
+        print(f"- Latest runs: {overview.get('latest_run', 0)}")
+        return 0
+    if args.workspace_command == "refresh-context":
+        result = refresh_workspace_context(cwd=cwd)
+        if not result.get("exists", False):
+            print("No workspace found. Run `aegis-code workspace init`.")
+            return 1
+        print("Workspace context refresh:")
+        print(f"- Projects: {result.get('total', 0)}")
+        print(f"- Refreshed: {result.get('refreshed', 0)}")
+        print(f"- Skipped (missing): {result.get('skipped_missing', 0)}")
+        return 0
+    if args.workspace_command == "run":
+        if args.dry_run:
+            preview = preview_workspace_run(task=args.task, cwd=cwd)
+            if not preview.get("exists", False):
+                print("No workspace found. Run `aegis-code workspace init`.")
+                return 1
+            print("Workspace run preview:")
+            print(f"- Task: {preview.get('task', '')}")
+            print(f"- Projects: {preview.get('would_run', 0)}")
+            print(f"- Skipped (missing): {preview.get('skipped_missing', 0)}")
+            for item in preview.get("projects", []):
+                print("")
+                print(f"- {item.get('name', '')}")
+                print(f"  path: {item.get('path', '')}")
+                print(f"  action: {item.get('action', '')}")
+            return 0
+
+        if args.confirm:
+            result = run_workspace_task(task=args.task, cwd=cwd)
+            if not result.get("exists", False):
+                print("No workspace found. Run `aegis-code workspace init`.")
+                return 1
+            print("Workspace run:")
+            print(f"- Task: {result.get('task', '')}")
+            print(f"- Executed: {result.get('executed', 0)}")
+            print(f"- Skipped (missing): {result.get('skipped_missing', 0)}")
+            print(f"- Skipped (budget): {result.get('skipped_budget', 0)}")
+            for item in result.get("projects", []):
+                print("")
+                print(f"- {item.get('name', '')}")
+                print(f"  path: {item.get('path', '')}")
+                print(f"  mode: {item.get('mode', '')}")
+                print(f"  status: {item.get('status', '')}")
+            return 0
+
+        print("Error: must specify either --dry-run or --confirm")
+        return 2
+    parser.print_help()
+    return 1
+
+
 def handle_apply(argv: Sequence[str]) -> int:
     parser = _build_apply_parser()
     args = parser.parse_args(list(argv))
@@ -832,6 +996,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_budget(args[1:])
     if command == "policy":
         return handle_policy(args[1:])
+    if command == "workspace":
+        return handle_workspace(args[1:])
     if command == "apply":
         return handle_apply(args[1:])
     if command == "backups":

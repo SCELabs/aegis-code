@@ -63,6 +63,7 @@ def project_paths(cwd: Path | None = None) -> dict[str, Path]:
         "aegis_dir": aegis_dir,
         "config_path": aegis_dir / ConfigFileName,
         "project_model_path": aegis_dir / ProjectModelName,
+        "workspace_path": aegis_dir / "workspace.json",
         "runs_dir": aegis_dir / "runs",
         "latest_json": aegis_dir / "runs" / "latest.json",
         "latest_md": aegis_dir / "runs" / "latest.md",

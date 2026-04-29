@@ -42,6 +42,23 @@ Inspect read-only runtime policy status:
 aegis-code policy status
 ```
 
+## Workspace
+
+Manage multiple projects with a single local control layer.
+
+Commands:
+aegis-code workspace init
+aegis-code workspace add <path>
+aegis-code workspace remove <path>
+aegis-code workspace status
+aegis-code workspace status --detailed
+aegis-code workspace overview
+aegis-code workspace refresh-context
+aegis-code workspace run "<task>" --dry-run
+aegis-code workspace run "<task>" --confirm
+
+Full documentation: see docs/workspace.md
+
 Compare the last two runtime runs:
 
 ```bash
@@ -182,33 +199,12 @@ This is local-only, deterministic, and read-only.
 - reports include context metadata (`available`, `included_paths`, `total_chars`)
 - intended as high-signal project-local context for runtime control and project awareness
 
-## Command Index
+## Documentation
 
-- `aegis-code init` - create `.aegis` config/project model files
-- `aegis-code "<task>"` - run controlled failure-aware workflow
-- `aegis-code overview` - show compact full-project state summary
-- `aegis-code compare` - compare last two runs and show runtime behavior changes (including mode/reason shifts like `default` -> `low_budget`)
-- `aegis-code policy status` - show read-only local runtime policy summary
-- `aegis-code context refresh` - build deterministic project-local context files
-- `aegis-code context show` - show context status, paths, and compact previews
-- `aegis-code create --list-stacks` - list available internal stack profiles and versions
-- `aegis-code create "<idea>"` - generate a planning-only project plan preview
-- `aegis-code create "<idea>" --stack STACK_ID` - force a stack profile
-- `aegis-code create "<idea>" --target PATH` - preview scaffold file set (no writes)
-- `aegis-code create "<idea>" --target PATH --confirm` - write scaffold to empty target
-- `aegis-code create "<idea>" --target PATH --confirm --validate` - scaffold, verify, and run stabilization proposal on failures
-- `aegis-code budget set AMOUNT` - set local runtime budget estimate limit
-- `aegis-code budget status` - show local runtime budget estimate usage
-- `aegis-code budget clear` - clear local runtime budget file
-- `aegis-code report` - print latest markdown report
-- `aegis-code status` - compact latest-run summary
-- `aegis-code maintain` - read-only repo health and suggestions
-- `aegis-code --check-sll` - verify optional SLL local import
-- `aegis-code apply --check PATH` - inspect diff without modifying files
-- `aegis-code apply PATH` - preview apply and require explicit confirmation
-- `aegis-code apply PATH --confirm` - human-confirmed apply with backups
-- `aegis-code backups` - list backup snapshots
-- `aegis-code restore BACKUP_ID` - restore files from backup snapshot
+- Command reference: docs/commands.md
+- Workspace control: docs/workspace.md
+- Configuration: docs/config.md
+- Providers and keys: docs/providers.md
 
 ## Safety Model
 
