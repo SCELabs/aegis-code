@@ -59,8 +59,7 @@ def test_evaluate_diff_unrelated_file() -> None:
     context = {"files": [{"path": "docs/readme.md", "content": "x"}]}
     diff = "diff --git a/docs/readme.md b/docs/readme.md\n--- a/docs/readme.md\n+++ b/docs/readme.md\n@@ -1 +1 @@\n-a\n+b\n"
     result = evaluate_diff(diff, _failures(), context)
-    assert result["relevant_files"] is False
-    assert "unrelated_files" in result["issues"]
+    assert result["relevant_files"] is True
 
 
 def test_evaluate_diff_empty_diff() -> None:
@@ -76,3 +75,51 @@ def test_evaluate_diff_mixed_case_is_deterministic() -> None:
     result_a = evaluate_diff(diff, _failures(), _context())
     result_b = evaluate_diff(diff, _failures(), _context())
     assert result_a == result_b
+
+
+def test_task_context_relevance() -> None:
+    context = {"files": [{"path": "src/main.py", "content": "x"}]}
+    diff = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    result = evaluate_diff(diff, {"failure_count": 0, "failed_tests": []}, context)
+    assert result["relevant_files"] is True
+
+
+def test_new_file_with_entrypoint_modification() -> None:
+    context = {"files": [{"path": "main.py", "content": "x"}]}
+    diff = (
+        "diff --git a/main.py b/main.py\n"
+        "--- a/main.py\n"
+        "+++ b/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+        "diff --git a/src/helper.py b/src/helper.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helper.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n"
+    )
+    result = evaluate_diff(diff, {"failure_count": 0, "failed_tests": []}, context)
+    assert result["relevant_files"] is True
+
+
+def test_unrelated_file_still_flagged() -> None:
+    context = {"files": [{"path": "src/main.py", "content": "x"}]}
+    diff = (
+        "diff --git a/docs/readme.md b/docs/readme.md\n"
+        "--- a/docs/readme.md\n"
+        "+++ b/docs/readme.md\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    result = evaluate_diff(diff, {"failure_count": 0, "failed_tests": []}, context)
+    assert result["relevant_files"] is False
+    assert "unrelated_files" in result["issues"]

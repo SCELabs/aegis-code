@@ -117,7 +117,8 @@ def evaluate_diff(
     else:
         grounded = True
 
-    relevant_set = failure_files | _mapped_source_files(failure_files, context_files)
+    entrypoints = {"src/main.py", "main.py", "cli.py", "app.py"}
+    relevant_set = failure_files | context_files | _mapped_source_files(failure_files, context_files) | entrypoints
     relevant_files = bool(targets & relevant_set)
     if targets and not relevant_files:
         issues.append("unrelated_files")

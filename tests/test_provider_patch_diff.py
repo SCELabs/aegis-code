@@ -350,3 +350,31 @@ def test_failure_with_sll_and_patch_diff_report_state(monkeypatch, tmp_path: Pat
     assert "Regime: `fragmentation`" in report
     assert "## Proposed Fix Plan" in report
     assert "## Patch Diff Proposal" in report
+
+
+def test_task_driven_diff_without_git_header_is_normalized(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    (tmp_path / "main.py").write_text("print('x')\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-print('x')\n+print('y')\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="implement feature", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    diff_path = payload["patch_diff"]["path"]
+    assert diff_path
+    text = Path(diff_path).read_text(encoding="utf-8")
+    assert text.startswith("diff --git a/main.py b/main.py\n")

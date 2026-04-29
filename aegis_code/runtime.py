@@ -14,6 +14,7 @@ from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
 from aegis_code.patches.diff_evaluator import evaluate_diff
+from aegis_code.patches.diff_normalizer import normalize_unified_diff
 from aegis_code.patches.diff_writer import write_latest_diff
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
@@ -574,7 +575,8 @@ def build_run_payload(
             api_key_env=config.providers.api_key_env,
             max_context_chars=int(config.patches.max_context_chars),
         )
-        diff_text = str(provider_result.get("diff", "") or "").strip()
+        raw_diff_text = str(provider_result.get("diff", "") or "").strip()
+        diff_text = normalize_unified_diff(raw_diff_text).strip()
         path_value: str | None = None
         if provider_result.get("available", False) and diff_text:
             diff_path = write_latest_diff(diff_text, cwd=cwd)
