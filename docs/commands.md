@@ -23,6 +23,7 @@ Budget:
 aegis-code budget set <amount>
 aegis-code budget status
 aegis-code budget clear
+Budget is a control signal for runtime behavior, not real API spending.
 
 Context:
 aegis-code context refresh

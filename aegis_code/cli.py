@@ -628,17 +628,21 @@ def handle_budget(argv: Sequence[str]) -> int:
     cwd = Path.cwd()
     if args.budget_command == "set":
         data = set_budget(float(args.amount), cwd=cwd)
-        print(f"Budget set: limit={data['limit']} spent_estimate={data['spent_estimate']} currency={data['currency']}")
+        print(f"Budget set: ${float(data['limit']):.2f}")
+        print("This budget controls runtime behavior, not actual API cost.")
         return 0
     if args.budget_command == "status":
         data = load_budget(cwd=cwd)
         if not data:
-            print("Budget: not set")
+            print("Budget (control): not set")
             return 0
-        print(
-            f"Budget: limit={data.get('limit', 0.0)} spent_estimate={data.get('spent_estimate', 0.0)} "
-            f"currency={data.get('currency', 'USD')}"
-        )
+        limit = float(data.get("limit", 0.0) or 0.0)
+        spent = float(data.get("spent_estimate", 0.0) or 0.0)
+        remaining = max(0.0, limit - spent)
+        print("Budget (control):")
+        print(f"- Total: ${limit:.2f}")
+        print(f"- Remaining: ${remaining:.2f}")
+        print("Note: This budget influences runtime mode, not real spending.")
         return 0
     if args.budget_command == "clear":
         clear_budget(cwd=cwd)

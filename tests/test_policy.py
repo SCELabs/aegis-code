@@ -95,7 +95,8 @@ def test_format_runtime_control_summary_low_budget_case() -> None:
     )
     assert "Selected mode: cheapest" in text
     assert "Reason: low_budget" in text
-    assert "Budget remaining: $0.08" in text
+    assert "Budget remaining: $0.08 (control signal)" in text
+    assert "Budget affects runtime mode selection, not actual API cost." in text
     assert "Context available: true" in text
 
 
@@ -107,7 +108,8 @@ def test_format_runtime_control_summary_default_case() -> None:
     )
     assert "Selected mode: balanced" in text
     assert "Reason: default" in text
-    assert "Budget remaining: $1.00" in text
+    assert "Budget remaining: $1.00 (control signal)" in text
+    assert "Budget affects runtime mode selection, not actual API cost." in text
 
 
 def test_format_runtime_control_summary_no_budget_no_context() -> None:

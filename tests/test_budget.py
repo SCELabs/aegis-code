@@ -11,7 +11,8 @@ def test_budget_set_creates_file(tmp_path: Path, monkeypatch, capsys) -> None:
     exit_code = cli.main(["budget", "set", "1.5"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Budget set:" in out
+    assert "Budget set: $1.50" in out
+    assert "This budget controls runtime behavior, not actual API cost." in out
     assert (tmp_path / ".aegis" / "budget.json").exists()
 
 
@@ -21,8 +22,10 @@ def test_budget_status_prints_values(tmp_path: Path, monkeypatch, capsys) -> Non
     exit_code = cli.main(["budget", "status"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "limit=2.0" in out
-    assert "spent_estimate=0.0" in out
+    assert "Budget (control):" in out
+    assert "- Total: $2.00" in out
+    assert "- Remaining: $2.00" in out
+    assert "Note: This budget influences runtime mode, not real spending." in out
 
 
 def test_budget_clear_removes_file(tmp_path: Path, monkeypatch, capsys) -> None:

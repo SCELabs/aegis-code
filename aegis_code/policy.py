@@ -139,7 +139,7 @@ def format_runtime_control_summary(
     budget_available = bool(budget.get("available", False))
     remaining = budget.get("remaining_estimate")
     if budget_available and isinstance(remaining, (int, float)):
-        budget_line = f"- Budget remaining: ${float(remaining):.2f}"
+        budget_line = f"- Budget remaining: ${float(remaining):.2f} (control signal)"
     else:
         budget_line = "- Budget: not set"
     return "\n".join(
@@ -148,6 +148,7 @@ def format_runtime_control_summary(
             f"- Selected mode: {selected_mode}",
             f"- Reason: {reason}",
             budget_line,
+            "Budget affects runtime mode selection, not actual API cost.",
             f"- Context available: {'true' if bool(context.get('available', False)) else 'false'}",
         ]
     )

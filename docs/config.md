@@ -30,3 +30,9 @@ Workspace:
 Secrets:
 DO NOT store keys in config.
 Use environment variables.
+
+## Budget
+
+The budget in Aegis Code is a control signal used to influence runtime behavior (such as model selection and retry strategies).
+
+It does NOT track or limit real API spending.
