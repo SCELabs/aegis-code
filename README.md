@@ -24,6 +24,8 @@ See `.env.example` for a starter template.
 aegis-code init
 ```
 
+Run `aegis-code onboard` to enable enhanced runtime guidance.
+
 Run a task:
 
 ```bash
@@ -47,6 +49,35 @@ Inspect read-only runtime policy status:
 ```bash
 aegis-code policy status
 ```
+
+## Local vs Aegis-Enhanced Mode
+
+Aegis Code can run in two modes:
+
+### Local Mode (default)
+
+Works without connecting to Aegis.
+
+Provides:
+
+- project scaffolding and planning
+- budget-aware execution
+- context-aware task handling
+- deterministic runtime control
+- workspace orchestration
+- reporting and observability
+
+### Aegis-Enhanced Mode
+
+Enabled when an Aegis API key is configured.
+
+Adds:
+
+- runtime guidance based on system behavior
+- dynamic model tier selection overrides
+- retry and escalation control
+- context strategy adjustments
+- stronger stabilization signals for complex workflows
 
 ## Workspace
 

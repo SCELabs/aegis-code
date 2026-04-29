@@ -21,3 +21,25 @@ aegis-code keys status
 aegis-code keys clear OPENAI_API_KEY
 
 Secrets must not be committed.
+
+## Using Aegis
+
+Aegis integration is optional.
+
+Without Aegis:
+- all commands run locally
+- behavior is deterministic
+- no external calls are made
+
+With Aegis enabled:
+- runtime behavior can be adjusted dynamically
+- additional stabilization signals are applied
+- system performance may improve for complex workflows
+
+To enable:
+
+aegis-code onboard
+
+Or manually:
+
+aegis-code keys set AEGIS_API_KEY <key>
