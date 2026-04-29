@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from aegis_code.aegis_client import AegisBackendClient, client_from_env
+from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, client_from_env
 from aegis_code.budget import BudgetState
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
@@ -62,6 +62,7 @@ def build_run_payload(
     client: AegisBackendClient | None = None,
 ) -> dict[str, Any]:
     config = load_config(cwd)
+    apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=config.aegis.base_url)
     guidance = options.aegis_guidance or {}
     guidance_tier = str(guidance.get("model_tier", "") or "").strip().lower()
     guidance_max_retries_raw = guidance.get("max_retries")

@@ -12,6 +12,7 @@ venv/
 
 # Aegis local runtime state
 .aegis/
+.aegis/secrets.local.json
 
 # OS/editor
 .DS_Store

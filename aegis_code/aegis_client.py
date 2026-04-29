@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from aegis_code.models import AegisDecision
+from aegis_code.secrets import resolve_key
 
 
 def _get_attr_or_key(source: Any, key: str, default: Any) -> Any:
@@ -92,7 +94,22 @@ class AegisBackendClient:
 
 
 def client_from_env(default_base_url: str) -> AegisBackendClient:
+    apply_resolved_aegis_env(Path.cwd(), default_base_url=default_base_url)
     return AegisBackendClient(
         api_key=os.getenv("AEGIS_API_KEY"),
         base_url=os.getenv("AEGIS_BASE_URL", default_base_url),
     )
+
+
+def apply_resolved_aegis_env(cwd: Path, default_base_url: str | None = None) -> None:
+    if not os.environ.get("AEGIS_API_KEY", "").strip():
+        api_key = resolve_key("AEGIS_API_KEY", cwd)
+        if api_key:
+            os.environ["AEGIS_API_KEY"] = api_key
+
+    if not os.environ.get("AEGIS_BASE_URL", "").strip():
+        resolved_base_url = resolve_key("AEGIS_BASE_URL", cwd)
+        if resolved_base_url:
+            os.environ["AEGIS_BASE_URL"] = resolved_base_url
+        elif default_base_url:
+            os.environ["AEGIS_BASE_URL"] = default_base_url

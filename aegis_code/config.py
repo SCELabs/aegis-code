@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from aegis_code.models import (
     PatchesConfig,
     ProvidersConfig,
 )
+from aegis_code.secrets import resolve_key
 
 
 AegisDirName = ".aegis"
@@ -116,14 +118,19 @@ def _merged_config_dict(override_data: dict[str, Any]) -> dict[str, Any]:
 def load_config(cwd: Path | None = None) -> AppConfig:
     paths = project_paths(cwd)
     if not paths["config_path"].exists():
-        return default_config()
+        cfg = default_config()
+        key_name = str(cfg.providers.api_key_env or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+        resolved = resolve_key(key_name, paths["root"])
+        if resolved:
+            os.environ[key_name] = resolved
+        return cfg
 
     raw_data = yaml.safe_load(paths["config_path"].read_text(encoding="utf-8")) or {}
     if not isinstance(raw_data, dict):
         return default_config()
     merged = _merged_config_dict(raw_data)
 
-    return AppConfig(
+    cfg = AppConfig(
         mode=str(merged["mode"]),
         budget_per_task=float(merged["budget_per_task"]),
         models=ModelConfig(**merged["models"]),
@@ -132,3 +139,8 @@ def load_config(cwd: Path | None = None) -> AppConfig:
         providers=ProvidersConfig(**merged["providers"]),
         patches=PatchesConfig(**merged["patches"]),
     )
+    key_name = str(cfg.providers.api_key_env or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+    resolved = resolve_key(key_name, paths["root"])
+    if resolved:
+        os.environ[key_name] = resolved
+    return cfg

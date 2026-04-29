@@ -37,6 +37,7 @@ from aegis_code.config import ensure_project_files, project_paths
 from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scaffolds import list_stacks
+from aegis_code.secrets import clear_key, get_status as get_secrets_status, set_key
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
 from aegis_code.workspace import (
@@ -130,6 +131,21 @@ def _build_policy_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code policy")
     subparsers = parser.add_subparsers(dest="policy_command")
     subparsers.add_parser("status", prog="aegis-code policy status")
+    return parser
+
+
+def _build_keys_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code keys")
+    subparsers = parser.add_subparsers(dest="keys_command")
+
+    set_parser = subparsers.add_parser("set")
+    set_parser.add_argument("name")
+    set_parser.add_argument("value")
+
+    clear_parser = subparsers.add_parser("clear")
+    clear_parser.add_argument("name")
+
+    subparsers.add_parser("status")
     return parser
 
 
@@ -520,6 +536,32 @@ def handle_policy(argv: Sequence[str]) -> int:
     if args.policy_command == "status":
         status = build_policy_status(cwd=Path.cwd())
         print(format_policy_status(status))
+        return 0
+    parser.print_help()
+    return 1
+
+
+def handle_keys(argv: Sequence[str]) -> int:
+    parser = _build_keys_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    if args.keys_command == "set":
+        result = set_key(args.name, args.value, cwd=cwd)
+        print(f"Key set: {result.get('name', str(args.name).upper())}")
+        return 0
+    if args.keys_command == "clear":
+        result = clear_key(args.name, cwd=cwd)
+        name = str(result.get("name", str(args.name).upper()))
+        if result.get("cleared", False):
+            print(f"Key cleared: {name}")
+            return 0
+        print(f"Key not found: {name}")
+        return 0
+    if args.keys_command == "status":
+        data = get_secrets_status(cwd=cwd)
+        print("Keys:")
+        for item in data.get("keys", []):
+            print(f"- {item.get('name', '')}: {'set' if item.get('present', False) else 'not set'}")
         return 0
     parser.print_help()
     return 1
@@ -996,6 +1038,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_budget(args[1:])
     if command == "policy":
         return handle_policy(args[1:])
+    if command == "keys":
+        return handle_keys(args[1:])
     if command == "workspace":
         return handle_workspace(args[1:])
     if command == "apply":

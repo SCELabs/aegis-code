@@ -4,7 +4,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aegis_code.aegis_client import AegisBackendClient
+from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env
 from aegis_code.config import load_config
 from aegis_code.report import write_reports
 
@@ -85,6 +85,7 @@ def execute_task(
     from aegis_code.runtime import _run_task_local
 
     cfg = load_config(cwd)
+    apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=cfg.aegis.base_url)
     enhanced_enabled = bool(cfg.aegis.enhanced_runtime)
     aegis_available = False
     adapter_mode = "local"
