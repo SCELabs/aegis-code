@@ -7,7 +7,7 @@ from pathlib import Path
 from aegis_code.models import AegisDecision
 from aegis_code.providers.openai_provider import generate_patch_diff_openai
 from aegis_code.report import render_markdown_report
-from aegis_code.runtime import TaskOptions, build_run_payload, run_task
+from aegis_code.runtime import TaskOptions, build_run_payload, is_constructive_task, run_task
 from tests.helpers import command_result_from_output, pytest_output_fail, pytest_output_pass
 
 
@@ -378,3 +378,67 @@ def test_task_driven_diff_without_git_header_is_normalized(monkeypatch, tmp_path
     assert diff_path
     text = Path(diff_path).read_text(encoding="utf-8")
     assert text.startswith("diff --git a/main.py b/main.py\n")
+
+
+def test_is_constructive_task_test_generation_phrases() -> None:
+    assert is_constructive_task("add tests for saving notes") is True
+    assert is_constructive_task("write tests for save_note_to_file") is True
+    assert is_constructive_task("increase coverage for notes") is True
+    assert is_constructive_task("test for edge cases in note saving") is True
+    assert is_constructive_task("run tests") is False
+    assert is_constructive_task("check tests") is False
+
+
+def test_task_driven_test_writing_uses_patch_plan_and_attempts_diff(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text("def save_note_to_file():\n    return True\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_cli.py").write_text("def test_smoke():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        },
+    )
+
+    payload = build_run_payload(
+        options=TaskOptions(task="add tests for saving notes", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["task_driven_patch_proposal"] is True
+    assert payload["patch_plan"]["proposed_changes"]
+    assert any(
+        isinstance(item, dict) and item.get("reason") == "test_generation_task" and item.get("file") == "tests/test_cli.py"
+        for item in payload["patch_plan"]["proposed_changes"]
+    )
+    assert payload["patch_diff"]["attempted"] is True
+
+
+def test_run_tests_task_is_not_constructive_no_patch_attempt(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _boom(**_: object):
+        raise AssertionError("provider should not be called")
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _boom)
+    payload = build_run_payload(
+        options=TaskOptions(task="run tests", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["task_driven_patch_proposal"] is False
+    assert payload["patch_diff"]["attempted"] is False

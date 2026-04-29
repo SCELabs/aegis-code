@@ -48,6 +48,9 @@ def _is_tests_passed(status: str, exit_code: int | None) -> bool:
 
 def is_constructive_task(task: str) -> bool:
     lowered = str(task or "").lower()
+    if is_test_generation_task(lowered):
+        return True
+
     positive = (
         "add",
         "create",
@@ -59,10 +62,51 @@ def is_constructive_task(task: str) -> bool:
         "update",
         "extend",
     )
-    negative = ("run", "test", "analyze", "summarize", "explain")
+    negative = ("run tests", "execute tests", "check tests", "analyze", "summarize", "explain")
     if any(token in lowered for token in negative):
         return False
     return any(token in lowered for token in positive)
+
+
+def is_test_generation_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    if not lowered:
+        return False
+    verification_only = ("run tests", "execute tests", "check tests")
+    if any(phrase in lowered for phrase in verification_only):
+        return False
+
+    generation_phrases = (
+        "add test",
+        "add tests",
+        "write test",
+        "write tests",
+        "generate test",
+        "generate tests",
+        "test for",
+        "tests for",
+        "coverage",
+        "verify behavior",
+        "assert",
+    )
+    return any(phrase in lowered for phrase in generation_phrases)
+
+
+def _test_hint_path(task: str, context: dict[str, Any]) -> str:
+    files = context.get("files", []) if isinstance(context, dict) else []
+    for item in files:
+        if isinstance(item, dict):
+            path = str(item.get("path", "")).strip()
+            if path.startswith("tests/") and path.endswith(".py"):
+                return path
+
+    tokens = [
+        token
+        for token in "".join(ch if ch.isalnum() else " " for ch in str(task or "").lower()).split()
+        if token not in {"add", "write", "test", "tests", "for", "the", "a", "an", "to", "of", "and", "in"}
+    ]
+    base = tokens[0] if tokens else "task"
+    return f"tests/test_{base}.py"
 
 
 def _patch_diff_default() -> dict[str, Any]:
@@ -531,6 +575,7 @@ def build_run_payload(
                 if path in {"src/main.py", "main.py", "cli.py", "app.py"}:
                     entrypoint_file = path
                     break
+        test_task = is_test_generation_task(options.task)
         patch_plan = {
             "strategy": f"Implement requested task: {options.task}. Keep changes minimal and localized.",
             "confidence": 0.5,
@@ -543,6 +588,19 @@ def build_run_payload(
                 }
             ],
         }
+        if test_task:
+            test_file_hint = _test_hint_path(options.task, failure_context)
+            patch_plan["proposed_changes"].append(
+                {
+                    "file": test_file_hint,
+                    "change_type": "modify" if test_file_hint.startswith("tests/") and any(
+                        isinstance(item, dict) and str(item.get("path", "")).strip() == test_file_hint
+                        for item in failure_context.get("files", [])
+                    ) else "create",
+                    "description": "Add tests for requested behavior.",
+                    "reason": "test_generation_task",
+                }
+            )
         if entrypoint_file:
             patch_plan["proposed_changes"].append(
                 {
