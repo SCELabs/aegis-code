@@ -51,7 +51,7 @@ def test_main_task_skips_runtime_when_budget_exceeded(tmp_path: Path, monkeypatc
     exit_code = cli.main(["triage current test failures"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Budget limit reached. Skipping Aegis runtime." in out
+    assert "Budget control limit reached. Runtime execution skipped." in out
     assert "Runtime Control:" not in out
     assert "Runtime Adapter:" not in out
 
@@ -91,7 +91,7 @@ def test_fix_skips_runtime_when_budget_exceeded(tmp_path: Path, monkeypatch, cap
     exit_code = cli.main(["fix"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Budget limit reached. Skipping Aegis runtime." in out
+    assert "Budget control limit reached. Runtime execution skipped." in out
 
 
 def test_budget_exceeded_skips_runtime_before_loading_context(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -105,7 +105,7 @@ def test_budget_exceeded_skips_runtime_before_loading_context(tmp_path: Path, mo
     exit_code = cli.main(["x", "--dry-run"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Budget limit reached. Skipping Aegis runtime." in out
+    assert "Budget control limit reached. Runtime execution skipped." in out
 
 
 def test_record_event_includes_selected_mode_and_reason(tmp_path: Path) -> None:

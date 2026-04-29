@@ -23,7 +23,10 @@ def load_workspace(cwd: Path) -> dict | None:
     path = _workspace_path(cwd)
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _default_workspace()
     if not isinstance(data, dict):
         return _default_workspace()
     projects = data.get("projects")

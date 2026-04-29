@@ -33,7 +33,10 @@ def load_secrets(cwd: Path) -> dict:
     path = _secrets_path(cwd)
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
     if not isinstance(data, dict):
         return {}
     return {str(k): str(v) for k, v in data.items()}

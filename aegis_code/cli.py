@@ -101,7 +101,7 @@ def _format_aegis_usage(usage: dict[str, object] | None) -> str:
     info = usage or {}
     lines = [
         "Aegis Usage:",
-        f"- Calls: {int(info.get('calls', 0) or 0)}",
+        f"- Attempts: {int(info.get('calls', 0) or 0)}",
         f"- Successful: {int(info.get('successful', 0) or 0)}",
         f"- Fallbacks: {int(info.get('fallbacks', 0) or 0)}",
         f"- Actions applied: {int(info.get('actions_applied', 0) or 0)}",
@@ -581,6 +581,7 @@ def handle_onboard(argv: Sequence[str]) -> int:
     if result.get("success", False):
         print("Aegis onboarding complete.")
         print("API key saved locally.")
+        print("Enhanced runtime remains opt-in. Enable aegis.enhanced_runtime in .aegis/aegis-code.yml when ready.")
         return 0
     if "status_code" in result:
         print(f"Onboarding failed: {result.get('reason', 'network_error')} status={result.get('status_code')}")
@@ -616,7 +617,7 @@ def _allow_runtime_or_print(
     if not budget:
         return True
     if not can_spend(operation, estimated_cost, cwd):
-        print("Budget limit reached. Skipping Aegis runtime.")
+        print("Budget control limit reached. Runtime execution skipped.")
         return False
     record_event(operation, estimated_cost, cwd, selected_mode=selected_mode, reason=reason)
     return True
@@ -1220,7 +1221,7 @@ def handle_usage(argv: Sequence[str]) -> int:
         return 0
     usage = load_usage(cwd)
     print("Aegis Usage:")
-    print(f"- Calls: {int(usage.get('calls', 0) or 0)}")
+    print(f"- Attempts: {int(usage.get('calls', 0) or 0)}")
     print(f"- Successful: {int(usage.get('successful', 0) or 0)}")
     print(f"- Fallbacks: {int(usage.get('fallbacks', 0) or 0)}")
     print(f"- Actions applied: {int(usage.get('actions_applied', 0) or 0)}")

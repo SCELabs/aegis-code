@@ -40,6 +40,7 @@ def test_onboard_success(tmp_path: Path, monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert "Aegis onboarding complete." in out
     assert "API key saved locally." in out
+    assert "Enhanced runtime remains opt-in. Enable aegis.enhanced_runtime in .aegis/aegis-code.yml when ready." in out
     assert "secret_key_value" not in out
     assert load_secrets(tmp_path).get("AEGIS_API_KEY") == "secret_key_value"
 
@@ -143,6 +144,7 @@ def test_onboard_prompt_for_email(tmp_path: Path, monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert "Aegis onboarding complete." in out
     assert "API key saved locally." in out
+    assert "Enhanced runtime remains opt-in. Enable aegis.enhanced_runtime in .aegis/aegis-code.yml when ready." in out
     assert "secret_key_value" not in out
     assert load_secrets(tmp_path).get("AEGIS_API_KEY") == "secret_key_value"
 

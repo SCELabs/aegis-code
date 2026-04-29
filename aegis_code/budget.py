@@ -33,7 +33,10 @@ def load_budget(cwd: Path | None = None) -> dict[str, Any] | None:
     path = _budget_path(cwd)
     if not path.exists():
         return None
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
     if not isinstance(data, dict):
         return None
     return data

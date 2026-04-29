@@ -28,7 +28,7 @@ def test_usage_command_with_data(tmp_path: Path, monkeypatch, capsys) -> None:
 
     assert exit_code == 0
     assert "Aegis Usage:" in out
-    assert "- Calls: 3" in out
+    assert "- Attempts: 3" in out
     assert "- Successful: 2" in out
     assert "- Fallbacks: 1" in out
     assert "- Actions applied: 7" in out
