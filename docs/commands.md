@@ -4,6 +4,8 @@ Mode note: see README.md section "Local vs Aegis-Enhanced Mode" for runtime beha
 
 Project:
 aegis-code init
+aegis-code setup
+aegis-code setup --check
 aegis-code next
 aegis-code overview
 aegis-code status
@@ -28,6 +30,14 @@ aegis-code context show
 
 Policy:
 aegis-code policy status
+
+Provider:
+aegis-code provider status
+aegis-code provider list
+aegis-code provider detect
+aegis-code provider preset <name>
+aegis-code provider model <tier> <provider:model>
+Presets include: openai, cheap-openai, anthropic, local-ollama, openrouter, gemini
 
 Create:
 aegis-code create --list-stacks

@@ -26,6 +26,18 @@ aegis-code init
 
 Run `aegis-code onboard` to enable enhanced runtime guidance.
 
+Guided first-run setup:
+
+```bash
+aegis-code setup
+```
+
+Read-only readiness check (no changes made):
+
+```bash
+aegis-code setup --check
+```
+
 Run a task:
 
 ```bash

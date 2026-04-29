@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, resolve_base_url
 from aegis_code.config import load_config
 from aegis_code.report import write_reports
+from aegis_code.usage import update_usage
 
 if TYPE_CHECKING:
     from aegis_code.runtime import TaskOptions
@@ -48,6 +49,26 @@ def _normalize_aegis_result(raw: Any) -> dict[str, Any]:
 def _short_error_message(exc: Exception, max_chars: int = 300) -> str:
     text = str(exc).strip() or exc.__class__.__name__
     return text if len(text) <= max_chars else (text[: max_chars - 3] + "...")
+
+
+def _build_aegis_impact(
+    *,
+    adapter_mode: str,
+    fallback_reason: str | None,
+    actions: Any,
+    guidance: dict[str, Any],
+) -> dict[str, Any]:
+    fallback_used = bool(fallback_reason)
+    used = adapter_mode == "aegis" and not fallback_used
+    action_count = len(actions) if isinstance(actions, list) else 0
+    guidance_applied = any(value is not None for value in guidance.values())
+    override_applied = bool(used and (guidance_applied or action_count > 0))
+    return {
+        "used": used,
+        "action_count": action_count,
+        "override_applied": override_applied,
+        "fallback_used": fallback_used,
+    }
 
 
 def _apply_context_mode(project_context: dict[str, Any] | None, mode: str | None) -> dict[str, Any] | None:
@@ -187,6 +208,19 @@ def execute_task(
         "error_type": error_type,
         "error_message": error_message,
     }
+    result["aegis_impact"] = _build_aegis_impact(
+        adapter_mode=adapter_mode,
+        fallback_reason=fallback_reason,
+        actions=result.get("actions"),
+        guidance=guidance,
+    )
+    update_usage(
+        {
+            **result["aegis_impact"],
+            "client_available": aegis_available,
+        },
+        cwd=(cwd or Path.cwd()).resolve(),
+    )
     if not task_options.no_report:
         write_reports(result, cwd=cwd)
     return result

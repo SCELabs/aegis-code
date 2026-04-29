@@ -23,7 +23,7 @@ from aegis_code.maintain import build_maintenance_report, format_maintenance_rep
 from aegis_code.next_actions import build_next_actions, format_next_actions
 from aegis_code.onboard import run_onboard
 from aegis_code.overview import build_overview, format_overview
-from aegis_code.provider_presets import PRESETS, apply_preset
+from aegis_code.provider_presets import PRESETS, apply_preset, detect_available_providers
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_inspector import inspect_diff
@@ -41,8 +41,10 @@ from aegis_code.report import read_latest_markdown
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scaffolds import list_stacks
 from aegis_code.secrets import clear_key, get_status as get_secrets_status, set_key
+from aegis_code.setup import check_setup, run_setup
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
+from aegis_code.usage import get_usage_warning, load_usage
 from aegis_code.workspace import (
     add_project,
     compare_workspace_runs,
@@ -70,6 +72,57 @@ def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
     if info.get("error_message"):
         lines.append(f"- Error: {info.get('error_message')}")
     return "\n".join(lines)
+
+
+def _format_aegis_impact(impact: dict[str, object] | None) -> str:
+    info = impact or {}
+    lines = [
+        "Aegis Impact:",
+        f"- Used: {'true' if bool(info.get('used', False)) else 'false'}",
+        f"- Actions: {int(info.get('action_count', 0) or 0)}",
+        f"- Override applied: {'true' if bool(info.get('override_applied', False)) else 'false'}",
+        f"- Fallback used: {'true' if bool(info.get('fallback_used', False)) else 'false'}",
+    ]
+    return "\n".join(lines)
+
+
+def _print_aegis_impact_if_relevant(payload: dict[str, object]) -> None:
+    adapter = payload.get("adapter")
+    impact = payload.get("aegis_impact")
+    adapter_info = adapter if isinstance(adapter, dict) else {}
+    impact_info = impact if isinstance(impact, dict) else {}
+    available = bool(adapter_info.get("aegis_client_available", False))
+    used = bool(impact_info.get("used", False))
+    if available or used:
+        print(_format_aegis_impact(impact_info))
+
+
+def _format_aegis_usage(usage: dict[str, object] | None) -> str:
+    info = usage or {}
+    lines = [
+        "Aegis Usage:",
+        f"- Calls: {int(info.get('calls', 0) or 0)}",
+        f"- Successful: {int(info.get('successful', 0) or 0)}",
+        f"- Fallbacks: {int(info.get('fallbacks', 0) or 0)}",
+        f"- Actions applied: {int(info.get('actions_applied', 0) or 0)}",
+    ]
+    return "\n".join(lines)
+
+
+def _print_aegis_usage_if_available(payload: dict[str, object], cwd: Path) -> None:
+    adapter = payload.get("adapter")
+    adapter_info = adapter if isinstance(adapter, dict) else {}
+    if bool(adapter_info.get("aegis_client_available", False)):
+        usage = load_usage(cwd)
+        print(_format_aegis_usage(usage))
+        warning = get_usage_warning(usage)
+        if warning:
+            limit = int(warning.get("limit", 100) or 100)
+            if warning.get("type") == "approaching_limit":
+                print(f"⚠ Approaching Aegis usage limit ({limit} calls)")
+            elif warning.get("type") == "limit_reached":
+                print(f"⚠ Aegis usage limit reached ({limit} calls)")
+                print("Aegis will continue to run, but limits may apply in future versions.")
 
 
 def _build_init_parser() -> argparse.ArgumentParser:
@@ -152,6 +205,7 @@ def _build_provider_parser() -> argparse.ArgumentParser:
     model_parser.add_argument("tier")
     model_parser.add_argument("value")
     subparsers.add_parser("list", prog="aegis-code provider list")
+    subparsers.add_parser("detect", prog="aegis-code provider detect")
     preset_parser = subparsers.add_parser("preset", prog="aegis-code provider preset")
     preset_parser.add_argument("name")
     return parser
@@ -222,6 +276,21 @@ def _build_fix_parser() -> argparse.ArgumentParser:
 
 def _build_next_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(prog="aegis-code next")
+
+
+def _build_usage_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(prog="aegis-code usage")
+
+
+def _build_setup_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code setup")
+    parser.add_argument("--email", default=None)
+    parser.add_argument("--skip-aegis", action="store_true")
+    parser.add_argument("--skip-provider", action="store_true")
+    parser.add_argument("--skip-first-run", action="store_true")
+    parser.add_argument("--yes", action="store_true")
+    parser.add_argument("--check", action="store_true")
+    return parser
 
 
 def _build_task_parser() -> argparse.ArgumentParser:
@@ -451,6 +520,8 @@ def handle_create(argv: Sequence[str]) -> int:
     )
     print(format_runtime_control_summary(runtime_policy, budget_state, project_context))
     print(_format_adapter_summary(payload.get("adapter")))
+    _print_aegis_impact_if_relevant(payload)
+    _print_aegis_usage_if_available(payload, target_path)
     print("Aegis stabilization plan generated.")
     print("Report JSON: .aegis/runs/latest.json")
     print("Report MD: .aegis/runs/latest.md")
@@ -616,6 +687,21 @@ def handle_provider(argv: Sequence[str]) -> int:
         print("Available presets:")
         for name in PRESETS:
             print(f"- {name}")
+        return 0
+    if args.provider_command == "detect":
+        detection = detect_available_providers(cwd)
+        print("Provider detection:")
+        for item in detection.get("providers", []):
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("key", ""))
+            available = bool(item.get("available", False))
+            presets = item.get("presets", [])
+            preset_text = ", ".join(str(p) for p in presets) if isinstance(presets, list) else ""
+            print(f"- {key}: {'found' if available else 'missing'}")
+            print(f"  presets: {preset_text}")
+        recommended = detection.get("recommended_preset")
+        print(f"Recommended preset: {recommended if recommended else 'none'}")
         return 0
     if args.provider_command == "preset":
         preset_name = str(args.name)
@@ -1004,6 +1090,8 @@ def handle_task(argv: Sequence[str]) -> int:
         print(f"Report MD: {paths['latest_md']}")
     print(format_runtime_control_summary(payload.get("runtime_policy"), payload.get("budget_state"), payload.get("project_context")))
     print(_format_adapter_summary(payload.get("adapter")))
+    _print_aegis_impact_if_relevant(payload)
+    _print_aegis_usage_if_available(payload, cwd)
     return 0
 
 
@@ -1039,6 +1127,8 @@ def handle_fix(argv: Sequence[str]) -> int:
     payload = run_task(options=options, cwd=cwd)
     print(format_runtime_control_summary(options.runtime_policy, options.budget_state, options.project_context))
     print(_format_adapter_summary(payload.get("adapter")))
+    _print_aegis_impact_if_relevant(payload)
+    _print_aegis_usage_if_available(payload, cwd)
 
     latest = project_paths()["latest_json"]
     if not latest.exists():
@@ -1116,6 +1206,100 @@ def handle_next(argv: Sequence[str]) -> int:
     return 0
 
 
+def handle_usage(argv: Sequence[str]) -> int:
+    parser = _build_usage_parser()
+    parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    usage_path = cwd / ".aegis" / "usage.json"
+    if not usage_path.exists():
+        print("No Aegis usage recorded yet.")
+        return 0
+    usage = load_usage(cwd)
+    print("Aegis Usage:")
+    print(f"- Calls: {int(usage.get('calls', 0) or 0)}")
+    print(f"- Successful: {int(usage.get('successful', 0) or 0)}")
+    print(f"- Fallbacks: {int(usage.get('fallbacks', 0) or 0)}")
+    print(f"- Actions applied: {int(usage.get('actions_applied', 0) or 0)}")
+    print(f"- Last used: {usage.get('last_used') or 'n/a'}")
+    warning = get_usage_warning(usage)
+    if warning:
+        limit = int(warning.get("limit", 100) or 100)
+        if warning.get("type") == "approaching_limit":
+            print(f"⚠ Approaching Aegis usage limit ({limit} calls)")
+        elif warning.get("type") == "limit_reached":
+            print(f"⚠ Aegis usage limit reached ({limit} calls)")
+            print("Aegis will continue to run, but limits may apply in future versions.")
+    return 0
+
+
+def handle_setup(argv: Sequence[str]) -> int:
+    parser = _build_setup_parser()
+    args = parser.parse_args(list(argv))
+    if args.check:
+        status = check_setup(Path.cwd())
+        if not bool(status.get("initialized", False)):
+            print("No project initialized. Run `aegis-code setup`.")
+            return 2
+        print("Setup Check:")
+        print(f"- Project initialized: {'true' if bool(status.get('initialized', False)) else 'false'}")
+        print(f"- Aegis key: {'set' if bool(status.get('aegis_key', False)) else 'missing'}")
+        print(f"- Provider key: {'found' if bool(status.get('provider_key', False)) else 'missing'}")
+        print(f"- Provider preset: {'configured' if bool(status.get('provider_preset', False)) else 'missing'}")
+        print(f"- Context: {'available' if bool(status.get('context_available', False)) else 'missing'}")
+        print(f"- Latest run: {'found' if bool(status.get('latest_run', False)) else 'missing'}")
+        print(f"- Verification: {'available' if bool(status.get('verification_available', False)) else 'missing'}")
+
+        fully_ready = all(
+            bool(status.get(key, False))
+            for key in (
+                "initialized",
+                "aegis_key",
+                "provider_key",
+                "provider_preset",
+                "context_available",
+                "verification_available",
+            )
+        )
+        return 0 if fully_ready else 1
+
+    result = run_setup(
+        cwd=Path.cwd(),
+        email=args.email,
+        skip_aegis=bool(args.skip_aegis),
+        skip_provider=bool(args.skip_provider),
+        skip_first_run=bool(args.skip_first_run),
+        assume_yes=bool(args.yes),
+    )
+
+    aegis_result = result.get("aegis", {}) if isinstance(result.get("aegis"), dict) else {}
+    provider_result = result.get("provider", {}) if isinstance(result.get("provider"), dict) else {}
+    first_run_result = result.get("first_run", {}) if isinstance(result.get("first_run"), dict) else {}
+
+    if bool(aegis_result.get("success", False)):
+        if str(aegis_result.get("reason", "")) == "already_configured":
+            aegis_status = "already configured"
+        else:
+            aegis_status = "connected"
+    elif str(aegis_result.get("reason", "")) in {"skipped", "email_required"}:
+        aegis_status = "skipped"
+    else:
+        aegis_status = "failed"
+
+    applied_preset = provider_result.get("applied_preset")
+    provider_summary = str(applied_preset) if applied_preset else "none"
+    first_status = first_run_result.get("status")
+    first_summary = str(first_status) if first_status else "skipped"
+
+    print("Aegis Code setup")
+    print("")
+    print("Setup complete.")
+    print(f"- Initialized: {'true' if bool(result.get('initialized', False)) else 'false'}")
+    print(f"- Aegis: {aegis_status}")
+    print(f"- Provider preset: {provider_summary}")
+    print(f"- First run: {first_summary}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(argv) if argv is not None else None
     if args is None:
@@ -1171,6 +1355,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_fix(args[1:])
     if command == "next":
         return handle_next(args[1:])
+    if command == "usage":
+        return handle_usage(args[1:])
+    if command == "setup":
+        return handle_setup(args[1:])
     return handle_task(args)
 
 
