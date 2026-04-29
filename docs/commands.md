@@ -1,5 +1,7 @@
 # Command Reference
 
+Mode note: see README.md section "Local vs Aegis-Enhanced Mode" for runtime behavior differences.
+
 Project:
 aegis-code init
 aegis-code next

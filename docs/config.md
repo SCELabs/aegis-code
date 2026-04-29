@@ -14,6 +14,8 @@ Contains:
 - provider config
 - patch config
 
+Note: `aegis.enhanced_runtime` controls whether Aegis guidance is applied when an `AEGIS_API_KEY` is available.
+
 Project model:
 .aegis/project_model.md
 
