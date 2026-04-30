@@ -68,6 +68,27 @@ def test_apply_context_mismatch_refuses(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == before
 
 
+def test_apply_hunk_count_mismatch_refuses_before_mutation(tmp_path: Path) -> None:
+    target = tmp_path / "aegis_code" / "x.py"
+    _write_file(target, "x=1\n")
+    before = target.read_text(encoding="utf-8")
+    diff = tmp_path / "latest.diff"
+    diff.write_text(
+        "diff --git a/aegis_code/x.py b/aegis_code/x.py\n"
+        "--- a/aegis_code/x.py\n"
+        "+++ b/aegis_code/x.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-x=1\n"
+        "+x=2\n"
+        "+x=3\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "hunk_count_mismatch" in result["errors"]
+    assert target.read_text(encoding="utf-8") == before
+
+
 def test_apply_unsafe_path_refuses(tmp_path: Path) -> None:
     diff = tmp_path / "latest.diff"
     diff.write_text(
@@ -156,6 +177,19 @@ def test_format_apply_result_contains_fields() -> None:
     assert "Files changed: 0" in text
     assert "Warnings:" in text
     assert "Errors:" in text
+
+
+def test_format_apply_result_context_mismatch_message() -> None:
+    text = format_apply_result(
+        {
+            "applied": False,
+            "path": "x.diff",
+            "files_changed": [],
+            "warnings": [],
+            "errors": ["context_mismatch"],
+        }
+    )
+    assert "context_mismatch: Patch context did not match current files." in text
 
 
 def test_cli_apply_without_confirm_refuses(tmp_path: Path, monkeypatch, capsys) -> None:

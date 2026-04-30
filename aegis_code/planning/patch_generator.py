@@ -2,6 +2,28 @@ from __future__ import annotations
 
 from typing import Any
 
+def _is_test_generation_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    if not lowered:
+        return False
+    verification_only = ("run tests", "execute tests", "check tests")
+    if any(phrase in lowered for phrase in verification_only):
+        return False
+    generation_phrases = (
+        "add test",
+        "add tests",
+        "write test",
+        "write tests",
+        "generate test",
+        "generate tests",
+        "test for",
+        "tests for",
+        "coverage",
+        "verify behavior",
+        "assert",
+    )
+    return any(phrase in lowered for phrase in generation_phrases)
+
 
 def _pick_target_file(
     failure_file: str,
@@ -21,17 +43,24 @@ def generate_patch_plan(
     aegis_decision: dict[str, Any],
     sll_analysis: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    test_task = _is_test_generation_task(task)
     if not failures:
         return {
             "strategy": f"No failures detected for task '{task}'. No patch required.",
             "confidence": 0.95,
             "proposed_changes": [],
+            "task_type": "test_generation" if test_task else "general",
         }
 
     guidance = str(aegis_decision.get("context_mode", "balanced"))
     strategy = (
         f"Address {len(failures)} pytest failure(s) with {guidance} context and targeted edits only."
     )
+    if test_task:
+        strategy += (
+            " Prefer test-only edits. Do not change source files unless explicitly requested. "
+            "Keep imports at the top of test files and keep hunks minimal/valid."
+        )
     if sll_analysis and sll_analysis.get("available", False):
         strategy += f" SLL regime='{sll_analysis.get('regime', 'unknown')}'."
 
@@ -73,4 +102,5 @@ def generate_patch_plan(
         "strategy": strategy,
         "confidence": round(confidence, 3),
         "proposed_changes": proposed_changes,
+        "task_type": "test_generation" if test_task else "general",
     }

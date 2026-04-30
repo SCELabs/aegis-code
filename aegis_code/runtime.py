@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
+from copy import deepcopy
 from typing import Any
 
 from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, client_from_env
@@ -14,6 +15,7 @@ from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
 from aegis_code.patches.diff_evaluator import evaluate_diff
+from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
 from aegis_code.patches.diff_writer import write_latest_diff
 from aegis_code.parsers.pytest_parser import parse_pytest_output
@@ -113,6 +115,10 @@ def _patch_diff_default() -> dict[str, Any]:
     return {
         "attempted": False,
         "available": False,
+        "status": "skipped",
+        "regenerated": False,
+        "regeneration_attempted": False,
+        "aegis_corrective_control_applied": False,
         "provider": None,
         "model": None,
         "path": None,
@@ -222,6 +228,105 @@ def _control_requested(cfg: Any, cwd: Path) -> bool:
     if lowered in {"false", "0", "no", "off"}:
         return False
     return key_available
+
+
+def _extract_context_paths(context: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    files = context.get("files", []) if isinstance(context, dict) else []
+    if not isinstance(files, list):
+        return paths
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).strip()
+        if path:
+            paths.append(path)
+    return paths
+
+
+def should_regenerate(validation: dict[str, Any], quality: dict[str, Any] | None, issues: list[str], task_type: str) -> bool:
+    if not bool(validation.get("valid", False)):
+        return True
+    confidence = float((quality or {}).get("confidence", 0.0))
+    if confidence < 0.70:
+        return True
+    if "unexpected_source_modification_for_test_task" in issues:
+        return True
+    if "unrelated_files" in issues:
+        return True
+    if task_type == "test_generation":
+        for issue in issues:
+            if issue == "unexpected_source_modification_for_test_task":
+                return True
+    return False
+
+
+def _collect_regeneration_reasons(
+    validation: dict[str, Any],
+    quality: dict[str, Any] | None,
+    issues: list[str],
+    task_type: str,
+) -> list[str]:
+    reasons: list[str] = []
+    if not bool(validation.get("valid", False)):
+        reasons.append("invalid_diff")
+    confidence = float((quality or {}).get("confidence", 0.0))
+    if confidence < 0.70:
+        reasons.append("low_quality")
+    if "unrelated_files" in issues:
+        reasons.append("unrelated_files")
+    if task_type == "test_generation" and "unexpected_source_modification_for_test_task" in issues:
+        reasons.append("test_source_modification")
+    return reasons
+
+
+def _aegis_corrective_control(
+    *,
+    task: str,
+    task_type: str,
+    issues: list[str],
+    validation_errors: list[str],
+    context_paths: list[str],
+    base_url: str,
+) -> dict[str, Any]:
+    fallback = {
+        "applied": False,
+        "constraints": [],
+        "context_mode": None,
+        "allowed_targets": [],
+        "guidance_signals": [],
+    }
+    try:
+        from aegis import AegisClient  # type: ignore
+    except Exception:
+        return fallback
+    try:
+        client = AegisClient(base_url=base_url)
+        response = client.auto().step(
+            input={
+                "task": task,
+                "task_type": task_type,
+                "issues": issues,
+                "validation_errors": validation_errors,
+                "context_files": context_paths,
+            },
+            symptoms=["low_patch_quality"],
+            severity="medium",
+        )
+        if not isinstance(response, dict):
+            return fallback
+        constraints = response.get("constraints", [])
+        allowed_targets = response.get("allowed_targets", [])
+        guidance_signals = response.get("guidance_signals", [])
+        return {
+            "applied": True,
+            "constraints": constraints if isinstance(constraints, list) else [],
+            "context_mode": response.get("context_mode"),
+            "allowed_targets": allowed_targets if isinstance(allowed_targets, list) else [],
+            "guidance_signals": guidance_signals if isinstance(guidance_signals, list) else [],
+        }
+    except Exception:
+        return fallback
 
 
 def _refine_task_context_with_aegis(task: str, local_context: dict, cwd: Path, cfg: Any) -> dict:
@@ -590,6 +695,11 @@ def build_run_payload(
         }
         if test_task:
             test_file_hint = _test_hint_path(options.task, failure_context)
+            patch_plan["task_type"] = "test_generation"
+            patch_plan["strategy"] += (
+                " Prefer modifying tests only. Avoid source changes unless explicitly requested. "
+                "Place imports at the top of test files, replace placeholder tests cleanly, and keep hunk counts valid."
+            )
             patch_plan["proposed_changes"].append(
                 {
                     "file": test_file_hint,
@@ -622,6 +732,16 @@ def build_run_payload(
         and should_patch_flow
         and (has_context_files or has_proposed_changes)
     ):
+        task_type = str(patch_plan.get("task_type", "general") or "general")
+        test_task = task_type == "test_generation" or is_test_generation_task(options.task)
+        regeneration: dict[str, Any] = {
+            "triggered": False,
+            "reason": "none",
+            "reasons": [],
+            "attempted": False,
+            "aegis_guidance_applied": False,
+            "final_status": "not_needed",
+        }
         provider_result = generate_patch_diff(
             provider=config.providers.provider,
             model=selected_model,
@@ -633,31 +753,152 @@ def build_run_payload(
             api_key_env=config.providers.api_key_env,
             max_context_chars=int(config.patches.max_context_chars),
         )
-        raw_diff_text = str(provider_result.get("diff", "") or "").strip()
-        diff_text = normalize_unified_diff(raw_diff_text).strip()
+        initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
+        validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd())) if initial_diff else {"valid": False, "errors": ["empty_diff"]}
+        initial_quality = evaluate_diff(
+            initial_diff,
+            final_failures,
+            failure_context,
+            test_generation_task=test_task,
+        ) if initial_diff else {
+            "grounded": False,
+            "relevant_files": False,
+            "confidence": 0.0,
+            "issues": ["empty_diff"],
+        }
+        initial_issues = [str(item) for item in initial_quality.get("issues", [])]
+        regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
+        reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
+        regeneration["triggered"] = regenerate
+        regeneration["reasons"] = reasons
+        if reasons:
+            regeneration["reason"] = reasons[0]
+
+        provider_used = provider_result
+        diff_text = initial_diff
+        quality_used = initial_quality
+        validation_used = validation_result
+
+        if regenerate:
+            regeneration["attempted"] = True
+            enhanced_patch_plan = deepcopy(patch_plan)
+            enhanced_constraints = [
+                "Produce a valid unified diff.",
+                "Ensure hunk line counts match unified diff headers.",
+                "Minimize unrelated file changes.",
+            ]
+            if test_task:
+                enhanced_constraints.extend(
+                    [
+                        "Modify only tests/ paths unless explicitly requested.",
+                        "Keep imports at top of test files.",
+                        "Replace placeholder tests cleanly; do not append imports after test functions.",
+                    ]
+                )
+                enhanced_patch_plan["allowed_targets"] = [
+                    path for path in _extract_context_paths(failure_context) if path.startswith("tests/")
+                ]
+            if _control_requested(config, (cwd or Path.cwd()).resolve()):
+                corrective = _aegis_corrective_control(
+                    task=options.task,
+                    task_type=task_type,
+                    issues=initial_issues,
+                    validation_errors=[str(item) for item in validation_result.get("errors", [])],
+                    context_paths=_extract_context_paths(failure_context),
+                    base_url=str(config.aegis.base_url),
+                )
+                if corrective.get("applied", False):
+                    regeneration["aegis_guidance_applied"] = True
+                    if isinstance(corrective.get("constraints"), list):
+                        enhanced_constraints.extend(str(item) for item in corrective.get("constraints", []))
+                    if isinstance(corrective.get("allowed_targets"), list) and corrective.get("allowed_targets"):
+                        enhanced_patch_plan["allowed_targets"] = [
+                            str(item) for item in corrective.get("allowed_targets", [])
+                        ]
+                    if corrective.get("context_mode"):
+                        enhanced_patch_plan["context_mode"] = str(corrective.get("context_mode"))
+                    if isinstance(corrective.get("guidance_signals"), list) and corrective.get("guidance_signals"):
+                        enhanced_patch_plan["guidance_signals"] = [
+                            str(item) for item in corrective.get("guidance_signals", [])
+                        ]
+            enhanced_patch_plan["regeneration_constraints"] = sorted(set(enhanced_constraints))
+
+            second = generate_patch_diff(
+                provider=config.providers.provider,
+                model=selected_model,
+                task=options.task,
+                failures=final_failures,
+                context=failure_context,
+                patch_plan=enhanced_patch_plan,
+                aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                api_key_env=config.providers.api_key_env,
+                max_context_chars=int(config.patches.max_context_chars),
+            )
+            second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
+            second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
+            second_quality = evaluate_diff(
+                second_diff,
+                final_failures,
+                failure_context,
+                test_generation_task=test_task,
+            ) if second_diff else {
+                "grounded": False,
+                "relevant_files": False,
+                "confidence": 0.0,
+                "issues": ["empty_diff"],
+            }
+            provider_used = second
+            diff_text = second_diff
+            validation_used = second_validation
+            quality_used = second_quality
+
         path_value: str | None = None
-        if provider_result.get("available", False) and diff_text:
+        if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
             diff_path = write_latest_diff(diff_text, cwd=cwd)
             path_value = str(diff_path)
-            patch_quality = evaluate_diff(diff_text, final_failures, failure_context)
+            patch_quality = quality_used
+        else:
+            patch_quality = quality_used
+
+        final_status = "generated" if path_value else "invalid"
+        if not regenerate:
+            final_status = "generated" if path_value else "invalid"
+        regeneration["final_status"] = final_status
         patch_diff = {
             "attempted": True,
-            "available": bool(provider_result.get("available", False)) and bool(path_value),
-            "provider": provider_result.get("provider"),
-            "model": provider_result.get("model"),
+            "available": bool(provider_used.get("available", False)) and bool(path_value),
+            "status": final_status,
+            "regenerated": bool(regenerate),
+            "regeneration_attempted": bool(regeneration.get("attempted", False)),
+            "aegis_corrective_control_applied": bool(regeneration.get("aegis_guidance_applied", False)),
+            "regeneration": regeneration,
+            "initial_diff": initial_diff[:800],
+            "validation_result": validation_used,
+            "quality_score": float((quality_used or {}).get("confidence", 0.0)),
+            "issues": list((quality_used or {}).get("issues", [])),
+            "provider": provider_used.get("provider"),
+            "model": provider_used.get("model"),
             "path": path_value,
-            "error": provider_result.get("error"),
+            "error": provider_used.get("error"),
             "preview": diff_text[:800],
         }
-        if provider_result.get("available", False) and not path_value:
+        if provider_used.get("available", False) and not path_value:
             patch_diff["available"] = False
-            patch_diff["error"] = "Diff generation returned empty output."
+            validation_errors = validation_used.get("errors", [])
+            if validation_errors:
+                patch_diff["error"] = ", ".join(str(item) for item in validation_errors)
+            else:
+                patch_diff["error"] = "Diff generation returned empty output."
         if patch_diff["attempted"] and not patch_diff["available"] and not patch_diff.get("error"):
             patch_diff["error"] = "Provider unavailable"
     elif should_attempt_provider_diff and not provider_enabled:
         patch_diff = {
             "attempted": True,
             "available": False,
+            "status": "invalid",
+            "regenerated": False,
+            "regeneration_attempted": False,
+            "aegis_corrective_control_applied": False,
             "provider": config.providers.provider,
             "model": selected_model,
             "path": None,
@@ -668,6 +909,10 @@ def build_run_payload(
         patch_diff = {
             "attempted": True,
             "available": False,
+            "status": "invalid",
+            "regenerated": False,
+            "regeneration_attempted": False,
+            "aegis_corrective_control_applied": False,
             "provider": config.providers.provider,
             "model": selected_model,
             "path": None,

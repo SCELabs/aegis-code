@@ -78,6 +78,7 @@ def evaluate_diff(
     diff: str,
     failures: dict[str, Any],
     context: dict[str, Any],
+    test_generation_task: bool = False,
 ) -> dict[str, Any]:
     issues: list[str] = []
     text = str(diff or "").strip()
@@ -123,6 +124,16 @@ def evaluate_diff(
     if targets and not relevant_files:
         issues.append("unrelated_files")
 
+    if test_generation_task:
+        unexpected = False
+        for target in targets:
+            p = PurePosixPath(target)
+            if target.startswith("src/") or p.name in {"main.py", "app.py"}:
+                unexpected = True
+                break
+        if unexpected:
+            issues.append("unexpected_source_modification_for_test_task")
+
     confidence = 0.5
     if grounded:
         confidence += 0.2
@@ -130,6 +141,8 @@ def evaluate_diff(
         confidence += 0.2
     if issues:
         confidence -= 0.2
+    if "unexpected_source_modification_for_test_task" in issues:
+        confidence -= 0.15
     confidence = max(0.0, min(1.0, round(confidence, 3)))
 
     return {

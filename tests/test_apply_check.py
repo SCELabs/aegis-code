@@ -51,6 +51,45 @@ def test_check_patch_file_valid_new_file_diff(tmp_path: Path) -> None:
     assert result["apply_blocked"] is False
 
 
+def test_check_patch_file_hunk_count_mismatch_too_many_added_lines(tmp_path: Path) -> None:
+    target = tmp_path / "aegis_code" / "x.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("x=1\n", encoding="utf-8")
+    diff_file = tmp_path / "bad_hunk.diff"
+    diff_file.write_text(
+        "diff --git a/aegis_code/x.py b/aegis_code/x.py\n"
+        "--- a/aegis_code/x.py\n"
+        "+++ b/aegis_code/x.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-x=1\n"
+        "+x=2\n"
+        "+x=3\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is False
+    assert "hunk_count_mismatch" in result["errors"]
+
+
+def test_check_patch_file_hunk_count_mismatch_too_few_old_side_lines(tmp_path: Path) -> None:
+    target = tmp_path / "aegis_code" / "x.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("line1\nline2\n", encoding="utf-8")
+    diff_file = tmp_path / "bad_hunk_old.diff"
+    diff_file.write_text(
+        "diff --git a/aegis_code/x.py b/aegis_code/x.py\n"
+        "--- a/aegis_code/x.py\n"
+        "+++ b/aegis_code/x.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " line1\n"
+        "+line1b\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is False
+    assert "hunk_count_mismatch" in result["errors"]
+
+
 def test_check_patch_file_blocks_internal_path(tmp_path: Path) -> None:
     diff_file = tmp_path / "unsafe.diff"
     diff_file.write_text(

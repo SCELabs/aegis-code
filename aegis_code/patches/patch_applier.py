@@ -300,7 +300,13 @@ def format_apply_result(result: dict[str, Any]) -> str:
     lines.append("Errors:")
     errors = result.get("errors", [])
     if errors:
-        lines.extend(f"- {e}" for e in errors)
+        for error in errors:
+            if error == "context_mismatch":
+                lines.append(
+                    "- context_mismatch: Patch context did not match current files. Regenerate the patch or inspect file changes."
+                )
+            else:
+                lines.append(f"- {error}")
     else:
         lines.append("- none")
     lines.append("No git commands were run.")

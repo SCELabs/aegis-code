@@ -1141,6 +1141,12 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     print(f"Patch plan available: {has_patch_plan}")
     print(f"Patch diff attempted: {patch_diff.get('attempted', False)}")
+    print(f"Regeneration attempted: {patch_diff.get('regeneration_attempted', False)}")
+    if patch_diff.get("regeneration_attempted", False):
+        print(
+            "Aegis corrective control: "
+            f"{'applied' if bool(patch_diff.get('aegis_corrective_control_applied', False)) else 'not applied'}"
+        )
     if bool(payload.get("task_driven_patch_proposal", False)):
         print("Patch proposal generated from task intent (no test failures).")
     if patch_diff.get("available", False):

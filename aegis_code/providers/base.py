@@ -38,6 +38,22 @@ def build_diff_prompt(
     patch_plan: dict[str, Any],
     aegis_execution: dict[str, Any],
 ) -> str:
+    test_constraints: list[str] = []
+    regen_constraints: list[str] = []
+    task_type = str(patch_plan.get("task_type", "")).strip().lower()
+    raw_regen = patch_plan.get("regeneration_constraints", [])
+    if isinstance(raw_regen, list):
+        regen_constraints = [f"- {str(item)}" for item in raw_regen if str(item).strip()]
+    if task_type == "test_generation":
+        test_constraints = [
+            "Test-generation guidance:",
+            "- Prefer modifying tests only.",
+            "- Do not modify source files unless explicitly requested.",
+            "- Put imports at the top of test files.",
+            "- Replace placeholder tests cleanly instead of appending imports after functions.",
+            "- Keep diff hunks minimal and valid.",
+            "- Ensure unified diff hunk line counts match hunk headers.",
+        ]
     return (
         "You generate a unified git diff only.\n"
         "Do not output markdown fences or explanations.\n"
@@ -47,6 +63,8 @@ def build_diff_prompt(
         f"Context: {context}\n"
         f"Patch plan: {patch_plan}\n"
         f"Aegis execution guidance: {aegis_execution}\n"
+        + ("\n".join(test_constraints) + "\n" if test_constraints else "")
+        + ("Regeneration constraints:\n" + "\n".join(regen_constraints) + "\n" if regen_constraints else "")
     )
 
 
