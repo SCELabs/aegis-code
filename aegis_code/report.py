@@ -282,29 +282,35 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
 
     if not patch_diff.get("attempted", False):
         lines.append("- Not attempted")
-    elif patch_diff.get("available", False):
+    elif str(patch_diff.get("status", "")) == "generated":
+        lines.append("- Status: `generated`")
         lines.append(f"- Provider: `{patch_diff.get('provider', 'unknown')}`")
         lines.append(f"- Model: `{patch_diff.get('model', 'unknown')}`")
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
-        lines.append(
-            f"- Aegis corrective control: `{'applied' if bool(patch_diff.get('aegis_corrective_control_applied', False)) else 'not_applied'}`"
-        )
+        lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         lines.append(f"- Path: `{patch_diff.get('path', '')}`")
         preview = str(patch_diff.get("preview", "") or "")
         lines.append("- Preview:")
         lines.append("```diff")
         lines.append(preview[:800] if preview else "(empty)")
         lines.append("```")
+    elif str(patch_diff.get("status", "")) == "invalid":
+        lines.append("- Status: `invalid`")
+        lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
+        lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
+        if patch_diff.get("error"):
+            lines.append(f"- Error: `{patch_diff.get('error')}`")
+        if patch_diff.get("invalid_diff_path"):
+            lines.append(f"- Invalid diff path: `{patch_diff.get('invalid_diff_path')}`")
+        lines.append("- Note: Diff failed validation and cannot be applied.")
     else:
-        lines.append("- Attempted but unavailable")
+        lines.append("- Status: `unavailable`")
         if patch_diff.get("provider"):
             lines.append(f"- Provider: `{patch_diff.get('provider')}`")
         if patch_diff.get("model"):
             lines.append(f"- Model: `{patch_diff.get('model')}`")
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
-        lines.append(
-            f"- Aegis corrective control: `{'applied' if bool(patch_diff.get('aegis_corrective_control_applied', False)) else 'not_applied'}`"
-        )
+        lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
 
@@ -316,12 +322,21 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
             f"- Triggered: `{bool(regeneration.get('triggered', False))}`",
             f"- Reason: `{regeneration.get('reason', 'none')}`",
-            f"- Aegis guidance applied: `{bool(regeneration.get('aegis_guidance_applied', False))}`",
+            f"- Aegis corrective control: `{regeneration.get('corrective_control_status', patch_diff.get('corrective_control_status', 'not_triggered'))}`",
             f"- Final status: `{regeneration.get('final_status', patch_diff.get('status', 'unknown'))}`",
         ]
     )
 
-    if patch_quality:
+    if str(patch_diff.get("status", "")) == "invalid":
+        lines.extend(
+            [
+                "",
+                "## Patch Quality",
+                "",
+                "- Patch quality: invalid (not evaluated)",
+            ]
+        )
+    elif patch_quality:
         lines.extend(
             [
                 "",

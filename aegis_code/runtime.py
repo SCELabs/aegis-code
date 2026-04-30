@@ -17,7 +17,7 @@ from aegis_code.models import CommandResult
 from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
-from aegis_code.patches.diff_writer import write_latest_diff
+from aegis_code.patches.diff_writer import remove_latest_diff, write_latest_diff, write_latest_invalid_diff
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
 from aegis_code.providers import generate_patch_diff
@@ -119,6 +119,9 @@ def _patch_diff_default() -> dict[str, Any]:
         "regenerated": False,
         "regeneration_attempted": False,
         "aegis_corrective_control_applied": False,
+        "corrective_control_status": "not_triggered",
+        "corrective_control_reason": "not_triggered",
+        "corrective_control_error": None,
         "provider": None,
         "model": None,
         "path": None,
@@ -291,6 +294,9 @@ def _aegis_corrective_control(
 ) -> dict[str, Any]:
     fallback = {
         "applied": False,
+        "status": "not_available",
+        "reason": "not_available",
+        "error": None,
         "constraints": [],
         "context_mode": None,
         "allowed_targets": [],
@@ -299,11 +305,14 @@ def _aegis_corrective_control(
     try:
         from aegis import AegisClient  # type: ignore
     except Exception:
+        fallback["status"] = "not_available"
+        fallback["reason"] = "not_available"
         return fallback
     try:
         client = AegisClient(base_url=base_url)
         response = client.auto().step(
-            input={
+            step_name="patch_regeneration_correction",
+            step_input={
                 "task": task,
                 "task_type": task_type,
                 "issues": issues,
@@ -312,20 +321,34 @@ def _aegis_corrective_control(
             },
             symptoms=["low_patch_quality"],
             severity="medium",
+            metadata={"task_type": task_type},
         )
         if not isinstance(response, dict):
+            fallback["status"] = "no_guidance_returned"
+            fallback["reason"] = "no_guidance_returned"
             return fallback
         constraints = response.get("constraints", [])
         allowed_targets = response.get("allowed_targets", [])
         guidance_signals = response.get("guidance_signals", [])
+        has_guidance = bool(constraints) or bool(allowed_targets) or bool(guidance_signals) or bool(response.get("context_mode"))
+        if not has_guidance:
+            fallback["status"] = "no_guidance_returned"
+            fallback["reason"] = "no_guidance_returned"
+            return fallback
         return {
             "applied": True,
+            "status": "applied",
+            "reason": "applied",
+            "error": None,
             "constraints": constraints if isinstance(constraints, list) else [],
             "context_mode": response.get("context_mode"),
             "allowed_targets": allowed_targets if isinstance(allowed_targets, list) else [],
             "guidance_signals": guidance_signals if isinstance(guidance_signals, list) else [],
         }
-    except Exception:
+    except Exception as exc:
+        fallback["status"] = "client_error"
+        fallback["reason"] = "client_error"
+        fallback["error"] = str(exc)
         return fallback
 
 
@@ -696,6 +719,7 @@ def build_run_payload(
         if test_task:
             test_file_hint = _test_hint_path(options.task, failure_context)
             patch_plan["task_type"] = "test_generation"
+            patch_plan["target_file"] = test_file_hint
             patch_plan["strategy"] += (
                 " Prefer modifying tests only. Avoid source changes unless explicitly requested. "
                 "Place imports at the top of test files, replace placeholder tests cleanly, and keep hunk counts valid."
@@ -711,7 +735,7 @@ def build_run_payload(
                     "reason": "test_generation_task",
                 }
             )
-        if entrypoint_file:
+        if entrypoint_file and not test_task:
             patch_plan["proposed_changes"].append(
                 {
                     "file": entrypoint_file,
@@ -741,6 +765,9 @@ def build_run_payload(
             "attempted": False,
             "aegis_guidance_applied": False,
             "final_status": "not_needed",
+            "corrective_control_status": "not_triggered",
+            "corrective_control_reason": "not_triggered",
+            "corrective_control_error": None,
         }
         provider_result = generate_patch_diff(
             provider=config.providers.provider,
@@ -807,6 +834,9 @@ def build_run_payload(
                     context_paths=_extract_context_paths(failure_context),
                     base_url=str(config.aegis.base_url),
                 )
+                regeneration["corrective_control_status"] = str(corrective.get("status", "client_error"))
+                regeneration["corrective_control_reason"] = str(corrective.get("reason", "client_error"))
+                regeneration["corrective_control_error"] = corrective.get("error")
                 if corrective.get("applied", False):
                     regeneration["aegis_guidance_applied"] = True
                     if isinstance(corrective.get("constraints"), list):
@@ -821,6 +851,9 @@ def build_run_payload(
                         enhanced_patch_plan["guidance_signals"] = [
                             str(item) for item in corrective.get("guidance_signals", [])
                         ]
+            else:
+                regeneration["corrective_control_status"] = "disabled_by_config"
+                regeneration["corrective_control_reason"] = "disabled_by_config"
             enhanced_patch_plan["regeneration_constraints"] = sorted(set(enhanced_constraints))
 
             second = generate_patch_diff(
@@ -853,16 +886,23 @@ def build_run_payload(
             quality_used = second_quality
 
         path_value: str | None = None
+        invalid_path: str | None = None
         if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
             diff_path = write_latest_diff(diff_text, cwd=cwd)
             path_value = str(diff_path)
             patch_quality = quality_used
         else:
-            patch_quality = quality_used
+            patch_quality = None
+            if provider_used.get("available", False) and diff_text:
+                invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
+                remove_latest_diff(cwd=cwd)
 
-        final_status = "generated" if path_value else "invalid"
-        if not regenerate:
-            final_status = "generated" if path_value else "invalid"
+        if path_value:
+            final_status = "generated"
+        elif not bool(provider_used.get("available", False)):
+            final_status = "unavailable"
+        else:
+            final_status = "invalid"
         regeneration["final_status"] = final_status
         patch_diff = {
             "attempted": True,
@@ -871,14 +911,19 @@ def build_run_payload(
             "regenerated": bool(regenerate),
             "regeneration_attempted": bool(regeneration.get("attempted", False)),
             "aegis_corrective_control_applied": bool(regeneration.get("aegis_guidance_applied", False)),
+            "corrective_control_status": str(regeneration.get("corrective_control_status", "not_triggered")),
+            "corrective_control_reason": str(regeneration.get("corrective_control_reason", "not_triggered")),
+            "corrective_control_error": regeneration.get("corrective_control_error"),
             "regeneration": regeneration,
             "initial_diff": initial_diff[:800],
             "validation_result": validation_used,
+            "validation_errors": [str(item) for item in validation_used.get("errors", [])],
             "quality_score": float((quality_used or {}).get("confidence", 0.0)),
             "issues": list((quality_used or {}).get("issues", [])),
             "provider": provider_used.get("provider"),
             "model": provider_used.get("model"),
             "path": path_value,
+            "invalid_diff_path": invalid_path,
             "error": provider_used.get("error"),
             "preview": diff_text[:800],
         }
@@ -886,7 +931,7 @@ def build_run_payload(
             patch_diff["available"] = False
             validation_errors = validation_used.get("errors", [])
             if validation_errors:
-                patch_diff["error"] = ", ".join(str(item) for item in validation_errors)
+                patch_diff["error"] = str(validation_errors[0])
             else:
                 patch_diff["error"] = "Diff generation returned empty output."
         if patch_diff["attempted"] and not patch_diff["available"] and not patch_diff.get("error"):
@@ -895,10 +940,13 @@ def build_run_payload(
         patch_diff = {
             "attempted": True,
             "available": False,
-            "status": "invalid",
+            "status": "unavailable",
             "regenerated": False,
             "regeneration_attempted": False,
             "aegis_corrective_control_applied": False,
+            "corrective_control_status": "not_triggered",
+            "corrective_control_reason": "not_triggered",
+            "corrective_control_error": None,
             "provider": config.providers.provider,
             "model": selected_model,
             "path": None,
@@ -909,10 +957,13 @@ def build_run_payload(
         patch_diff = {
             "attempted": True,
             "available": False,
-            "status": "invalid",
+            "status": "unavailable",
             "regenerated": False,
             "regeneration_attempted": False,
             "aegis_corrective_control_applied": False,
+            "corrective_control_status": "not_triggered",
+            "corrective_control_reason": "not_triggered",
+            "corrective_control_error": None,
             "provider": config.providers.provider,
             "model": selected_model,
             "path": None,

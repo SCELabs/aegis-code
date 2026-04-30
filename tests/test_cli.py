@@ -295,3 +295,45 @@ def test_task_prints_task_driven_patch_note(tmp_path: Path, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Patch proposal generated from task intent (no test failures)." in out
+
+
+def test_task_prints_invalid_patch_status_and_quality_message(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": [{}]},
+            "patch_diff": {
+                "attempted": True,
+                "available": False,
+                "status": "invalid",
+                "error": "hunk_count_mismatch",
+                "invalid_diff_path": ".aegis/runs/latest.invalid.diff",
+                "regeneration_attempted": True,
+                "corrective_control_status": "no_guidance_returned",
+            },
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--propose-patch"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Patch diff status: invalid" in out
+    assert "Patch quality: invalid (not evaluated)" in out
+    assert "Aegis corrective control: no_guidance_returned" in out

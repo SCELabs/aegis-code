@@ -229,3 +229,45 @@ def test_report_writes_history_snapshots(tmp_path: Path) -> None:
     assert paths1["history_json"].exists()
     assert paths2["history_json"].exists()
     assert len(history_files) == 2
+
+
+def test_report_invalid_patch_shows_invalid_sections(tmp_path: Path) -> None:
+    payload = {
+        "task": "fix tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["tests"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {
+            "attempted": True,
+            "available": False,
+            "status": "invalid",
+            "error": "hunk_count_mismatch",
+            "invalid_diff_path": ".aegis/runs/latest.invalid.diff",
+            "regeneration_attempted": True,
+            "corrective_control_status": "no_guidance_returned",
+            "regeneration": {"triggered": True, "reason": "invalid_diff", "final_status": "invalid"},
+        },
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Status: `invalid`" in content
+    assert "Invalid diff path: `.aegis/runs/latest.invalid.diff`" in content
+    assert "Diff failed validation and cannot be applied." in content
+    assert "Patch quality: invalid (not evaluated)" in content
+    assert "Aegis corrective control: `no_guidance_returned`" in content

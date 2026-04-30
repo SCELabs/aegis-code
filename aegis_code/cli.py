@@ -1143,23 +1143,19 @@ def handle_task(argv: Sequence[str]) -> int:
     print(f"Patch diff attempted: {patch_diff.get('attempted', False)}")
     print(f"Regeneration attempted: {patch_diff.get('regeneration_attempted', False)}")
     if patch_diff.get("regeneration_attempted", False):
-        print(
-            "Aegis corrective control: "
-            f"{'applied' if bool(patch_diff.get('aegis_corrective_control_applied', False)) else 'not applied'}"
-        )
+        print(f"Aegis corrective control: {patch_diff.get('corrective_control_status', 'not_triggered')}")
     if bool(payload.get("task_driven_patch_proposal", False)):
         print("Patch proposal generated from task intent (no test failures).")
-    if patch_diff.get("available", False):
-        print("Patch diff status: generated")
-    elif patch_diff.get("attempted", False):
-        print("Patch diff status: unavailable")
-    else:
-        print("Patch diff status: skipped")
+    print(f"Patch diff status: {patch_diff.get('status', 'skipped')}")
     if patch_diff.get("path"):
         print(f"Patch diff written: {patch_diff.get('path')}")
+    if patch_diff.get("invalid_diff_path"):
+        print(f"Invalid diff written: {patch_diff.get('invalid_diff_path')}")
     if patch_diff.get("error"):
         print(f"Patch diff error: {patch_diff.get('error')}")
-    if patch_quality:
+    if str(patch_diff.get("status", "")) == "invalid":
+        print("Patch quality: invalid (not evaluated)")
+    elif patch_quality:
         quality_state = []
         if patch_quality.get("grounded", False):
             quality_state.append("grounded")

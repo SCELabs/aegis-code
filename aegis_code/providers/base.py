@@ -41,12 +41,17 @@ def build_diff_prompt(
     test_constraints: list[str] = []
     regen_constraints: list[str] = []
     task_type = str(patch_plan.get("task_type", "")).strip().lower()
+    target_file = str(patch_plan.get("target_file", "")).strip()
     raw_regen = patch_plan.get("regeneration_constraints", [])
     if isinstance(raw_regen, list):
         regen_constraints = [f"- {str(item)}" for item in raw_regen if str(item).strip()]
     if task_type == "test_generation":
         test_constraints = [
             "Test-generation guidance:",
+            "- Produce a full-file unified diff for the test file.",
+            "- Replace the entire contents of the test file.",
+            "- Ensure the hunk header matches the full file length.",
+            "- Return exactly one diff block.",
             "- Prefer modifying tests only.",
             "- Do not modify source files unless explicitly requested.",
             "- Put imports at the top of test files.",
@@ -54,6 +59,13 @@ def build_diff_prompt(
             "- Keep diff hunks minimal and valid.",
             "- Ensure unified diff hunk line counts match hunk headers.",
         ]
+        if target_file:
+            test_constraints.extend(
+                [
+                    f"- Modify only this file: {target_file}",
+                    "- Do not touch any other files.",
+                ]
+            )
     return (
         "You generate a unified git diff only.\n"
         "Do not output markdown fences or explanations.\n"

@@ -20,11 +20,15 @@ def test_build_diff_prompt_adds_test_generation_guidance() -> None:
         task="add tests",
         failures={},
         context={"files": []},
-        patch_plan={"task_type": "test_generation", "proposed_changes": []},
+        patch_plan={"task_type": "test_generation", "target_file": "tests/test_cli.py", "proposed_changes": []},
         aegis_execution={},
     )
     assert "Prefer modifying tests only." in prompt
     assert "Put imports at the top of test files." in prompt
+    assert "Produce a full-file unified diff for the test file." in prompt
+    assert "Replace the entire contents of the test file." in prompt
+    assert "Return exactly one diff block." in prompt
+    assert "Modify only this file: tests/test_cli.py" in prompt
 
 
 def test_build_diff_prompt_adds_regeneration_constraints() -> None:

@@ -98,9 +98,21 @@ def generate_patch_plan(
         )
         confidence = max(0.2, min(0.9, confidence + (1.0 - max_risk) * 0.2))
 
-    return {
+    plan = {
         "strategy": strategy,
         "confidence": round(confidence, 3),
         "proposed_changes": proposed_changes,
         "task_type": "test_generation" if test_task else "general",
     }
+    if test_task:
+        target_file = next(
+            (
+                str(item.get("file", "")).strip()
+                for item in proposed_changes
+                if isinstance(item, dict) and str(item.get("file", "")).strip().startswith("tests/")
+            ),
+            "",
+        )
+        if target_file:
+            plan["target_file"] = target_file
+    return plan
