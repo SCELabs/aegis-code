@@ -310,6 +310,9 @@ def test_runtime_payload_includes_project_context_metadata(monkeypatch, tmp_path
     assert payload["project_context"]["available"] is True
     assert payload["project_context"]["included_paths"] == [".aegis/context/project_summary.md"]
     assert payload["project_context"]["total_chars"] == 88
+    assert payload["project_context"]["secret_values_exposed"] is False
+    assert isinstance(payload["project_context"]["available_project_keys"], list)
+    assert isinstance(payload["project_context"]["available_global_keys"], list)
 
 
 def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, tmp_path: Path) -> None:

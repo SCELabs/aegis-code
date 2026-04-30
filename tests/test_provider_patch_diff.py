@@ -849,6 +849,101 @@ def test_valid_final_diff_writes_latest_diff(monkeypatch, tmp_path: Path) -> Non
     assert payload["patch_quality"] is not None
 
 
+def test_valid_diff_sets_syntactic_valid_true(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_example.py").write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1,2 +1,2 @@\n-def test_old():\n-    assert True\n+def test_new():\n+    assert True\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["syntactic_valid"] is True
+    assert payload["patch_diff"]["syntactic_error"] is None
+
+
+def test_truncated_function_sets_syntactic_valid_false(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_example.py").write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1,2 +1,2 @@\n-def test_old():\n-    assert True\n+def test_new(\n+    assert True\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["syntactic_valid"] is False
+    assert payload["patch_diff"]["syntactic_error"]
+
+
+def test_valid_diff_generation_removes_stale_latest_invalid_diff(monkeypatch, tmp_path: Path) -> None:
+    stale = tmp_path / ".aegis" / "runs" / "latest.invalid.diff"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale invalid diff", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["status"] == "generated"
+    assert not stale.exists()
+
+
+def test_invalid_diff_generation_preserves_latest_invalid_diff(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1,1 +1,1 @@\n-a\n+b\n+c\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["status"] == "invalid"
+    invalid_path = payload["patch_diff"]["invalid_diff_path"]
+    assert invalid_path
+    assert Path(invalid_path).exists()
+
+
 def test_corrective_control_reason_displayed(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",

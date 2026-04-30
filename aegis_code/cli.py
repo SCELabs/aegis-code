@@ -1,8 +1,10 @@
 ﻿from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Sequence
 
@@ -40,7 +42,14 @@ from aegis_code.config import ensure_project_files, project_paths, update_model_
 from aegis_code.report import read_latest_markdown, write_reports
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scaffolds import list_stacks
-from aegis_code.secrets import clear_key, get_status as get_secrets_status, set_key
+from aegis_code.secrets import (
+    clear_key,
+    get_status as get_secrets_status,
+    list_scoped_keys,
+    mask_key,
+    resolve_key_source,
+    set_key,
+)
 from aegis_code.setup import check_setup, run_setup
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
@@ -223,12 +232,18 @@ def _build_keys_parser() -> argparse.ArgumentParser:
 
     set_parser = subparsers.add_parser("set")
     set_parser.add_argument("name")
-    set_parser.add_argument("value")
+    set_parser.add_argument("value", nargs="?", default=None)
+    set_parser.add_argument("--global", dest="global_scope", action="store_true")
+    set_parser.add_argument("--project", dest="project_scope", action="store_true")
+    set_parser.add_argument("--yes", action="store_true")
 
     clear_parser = subparsers.add_parser("clear")
     clear_parser.add_argument("name")
+    clear_parser.add_argument("--global", dest="global_scope", action="store_true")
+    clear_parser.add_argument("--project", dest="project_scope", action="store_true")
 
     subparsers.add_parser("status")
+    subparsers.add_parser("list")
     return parser
 
 
@@ -788,23 +803,66 @@ def handle_keys(argv: Sequence[str]) -> int:
     parser = _build_keys_parser()
     args = parser.parse_args(list(argv))
     cwd = Path.cwd()
+    def _scope_from_args(parsed: object) -> str:
+        if bool(getattr(parsed, "global_scope", False)):
+            return "global"
+        return "project"
+
     if args.keys_command == "set":
-        result = set_key(args.name, args.value, cwd=cwd)
-        print(f"Key set: {result.get('name', str(args.name).upper())}")
+        scope = _scope_from_args(args)
+        key_name = str(args.name).upper()
+        existing = list_scoped_keys(cwd).get(scope, {}).get(key_name)
+        if existing and not bool(args.yes):
+            if not sys.stdin.isatty():
+                print(f"Key {key_name} already exists in {scope} scope. Use --yes to overwrite in non-interactive mode.")
+                return 2
+            confirm = input(f"Key {key_name} already exists in {scope} scope. Overwrite? (y/N) ").strip().lower()
+            if confirm != "y":
+                print("Cancelled.")
+                return 0
+        value = args.value
+        if value is None:
+            if not sys.stdin.isatty():
+                print(f"Missing value for {key_name}. Provide VALUE or run interactively.")
+                return 2
+            value = getpass.getpass(f"Enter value for {key_name}: ")
+        if not str(value).strip():
+            print("Error: empty key value is not allowed.")
+            return 2
+        result = set_key(args.name, str(value), cwd=cwd, scope=scope)
+        print(f"Stored {result.get('name', key_name)}: {mask_key(str(value))}")
+        print(f"Scope: {scope}")
         return 0
     if args.keys_command == "clear":
-        result = clear_key(args.name, cwd=cwd)
+        scope = _scope_from_args(args)
+        result = clear_key(args.name, cwd=cwd, scope=scope)
         name = str(result.get("name", str(args.name).upper()))
         if result.get("cleared", False):
-            print(f"Key cleared: {name}")
+            print(f"Key cleared: {name} ({scope})")
             return 0
         print(f"Key not found: {name}")
         return 0
+    if args.keys_command == "list":
+        data = list_scoped_keys(cwd)
+        print("GLOBAL:")
+        for name in sorted(data.get("global", {}).keys()):
+            print(f"- {name}: {mask_key(str(data['global'][name]))}")
+        if not data.get("global"):
+            print("- none")
+        print("PROJECT:")
+        for name in sorted(data.get("project", {}).keys()):
+            print(f"- {name}: {mask_key(str(data['project'][name]))}")
+        if not data.get("project"):
+            print("- none")
+        return 0
     if args.keys_command == "status":
         data = get_secrets_status(cwd=cwd)
-        print("Keys:")
+        print("KEY                SOURCE      PRESENT")
         for item in data.get("keys", []):
-            print(f"- {item.get('name', '')}: {'set' if item.get('present', False) else 'not set'}")
+            name = str(item.get("name", ""))
+            source = str(item.get("source", "missing"))
+            present = "yes" if bool(item.get("present", False)) else "no"
+            print(f"{name:<18} {source:<10} {present}")
         return 0
     parser.print_help()
     return 1

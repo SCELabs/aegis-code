@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import ast
 import json
+import re
 from pathlib import Path
 from copy import deepcopy
 from typing import Any
@@ -17,15 +19,23 @@ from aegis_code.models import CommandResult
 from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
-from aegis_code.patches.diff_writer import remove_latest_diff, write_latest_diff, write_latest_invalid_diff
+from aegis_code.patches.diff_repair import repair_malformed_diff
+from aegis_code.patches.diff_writer import (
+    remove_latest_diff,
+    remove_latest_invalid_diff,
+    write_latest_diff,
+    write_latest_invalid_diff,
+)
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
 from aegis_code.providers import generate_patch_diff
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
-from aegis_code.secrets import resolve_key
+from aegis_code.secrets import list_scoped_keys, resolve_key, resolve_key_source
 from aegis_code.sll_adapter import analyze_failures_sll
 from aegis_code.tools.tests import run_configured_tests
+
+_HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
 
 
 @dataclass(slots=True)
@@ -119,6 +129,13 @@ def _patch_diff_default() -> dict[str, Any]:
         "regenerated": False,
         "regeneration_attempted": False,
         "aegis_corrective_control_applied": False,
+        "repair_attempted": False,
+        "repair_applied": False,
+        "repair_status": "not_attempted",
+        "repair_reason": "not_attempted",
+        "repair_error": None,
+        "syntactic_valid": None,
+        "syntactic_error": None,
         "corrective_control_status": "not_triggered",
         "corrective_control_reason": "not_triggered",
         "corrective_control_error": None,
@@ -231,6 +248,26 @@ def _control_requested(cfg: Any, cwd: Path) -> bool:
     if lowered in {"false", "0", "no", "off"}:
         return False
     return key_available
+
+
+def _key_usage_metadata(cwd: Path, cfg: Any) -> list[dict[str, Any]]:
+    provider_key = str(cfg.providers.api_key_env or "OPENAI_API_KEY").strip() or "OPENAI_API_KEY"
+    tracked = [
+        ("AEGIS_API_KEY", "aegis_control"),
+        (provider_key, f"provider_{str(cfg.providers.provider or 'unknown').strip().lower()}"),
+    ]
+    usage: list[dict[str, Any]] = []
+    for name, purpose in tracked:
+        resolved = resolve_key_source(name, cwd)
+        usage.append(
+            {
+                "name": name,
+                "source": resolved.get("source", "missing"),
+                "used_for": purpose,
+                "present": bool(resolved.get("present", False)),
+            }
+        )
+    return usage
 
 
 def _extract_context_paths(context: dict[str, Any]) -> list[str]:
@@ -350,6 +387,103 @@ def _aegis_corrective_control(
         fallback["reason"] = "client_error"
         fallback["error"] = str(exc)
         return fallback
+
+
+def _parse_unified_diff_files(diff_text: str) -> list[dict[str, Any]]:
+    lines = str(diff_text or "").splitlines()
+    files: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("diff --git "):
+            tokens = line.split()
+            if len(tokens) >= 4:
+                current = {"old_path": tokens[2].removeprefix("a/"), "new_path": tokens[3].removeprefix("b/"), "hunks": []}
+                files.append(current)
+            else:
+                current = None
+            i += 1
+            continue
+        if current is None:
+            i += 1
+            continue
+        if line.startswith("--- "):
+            p = line[4:].strip()
+            current["old_path"] = None if p == "/dev/null" else p.removeprefix("a/")
+            i += 1
+            continue
+        if line.startswith("+++ "):
+            p = line[4:].strip()
+            current["new_path"] = None if p == "/dev/null" else p.removeprefix("b/")
+            i += 1
+            continue
+        m = _HUNK_RE.match(line)
+        if m:
+            hunk: dict[str, Any] = {"old_start": int(m.group("old_start")), "lines": []}
+            i += 1
+            while i < len(lines):
+                content = lines[i]
+                if content.startswith("diff --git ") or _HUNK_RE.match(content):
+                    break
+                if content.startswith((" ", "+", "-")):
+                    hunk["lines"].append((content[:1], content[1:]))
+                i += 1
+            current["hunks"].append(hunk)
+            continue
+        i += 1
+    return files
+
+
+def _apply_hunks_in_memory(source: str, hunks: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    src = source.splitlines()
+    out: list[str] = []
+    src_idx = 0
+    for hunk in hunks:
+        start = int(hunk.get("old_start", 1))
+        target_idx = 0 if start == 0 else start - 1
+        if target_idx < src_idx or target_idx > len(src):
+            return None, "context_mismatch"
+        out.extend(src[src_idx:target_idx])
+        src_idx = target_idx
+        for kind, text in hunk.get("lines", []):
+            if kind == " ":
+                if src_idx >= len(src) or src[src_idx] != text:
+                    return None, "context_mismatch"
+                out.append(src[src_idx])
+                src_idx += 1
+            elif kind == "-":
+                if src_idx >= len(src) or src[src_idx] != text:
+                    return None, "context_mismatch"
+                src_idx += 1
+            elif kind == "+":
+                out.append(text)
+    out.extend(src[src_idx:])
+    if not out:
+        return "", None
+    return "\n".join(out) + ("\n" if source.endswith("\n") or not source else ""), None
+
+
+def _syntactic_python_check(diff_text: str, cwd: Path) -> tuple[bool, str | None]:
+    files = _parse_unified_diff_files(diff_text)
+    for f in files:
+        new_path = f.get("new_path")
+        old_path = f.get("old_path")
+        target = new_path or old_path
+        if not isinstance(target, str) or not target.endswith(".py"):
+            continue
+        path = cwd / target
+        source = ""
+        if old_path is not None and path.exists():
+            source = path.read_text(encoding="utf-8")
+        updated, apply_error = _apply_hunks_in_memory(source, f.get("hunks", []))
+        if apply_error or updated is None:
+            return False, f"{target}: {apply_error or 'syntax_precheck_failed'}"
+        try:
+            ast.parse(updated)
+        except SyntaxError as exc:
+            return False, f"{target}: {exc}"
+    return True, None
 
 
 def _refine_task_context_with_aegis(task: str, local_context: dict, cwd: Path, cfg: Any) -> dict:
@@ -782,6 +916,26 @@ def build_run_payload(
         )
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
         validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd())) if initial_diff else {"valid": False, "errors": ["empty_diff"]}
+        repair_result = {
+            "applied": False,
+            "status": "skipped",
+            "reason": "not_attempted",
+            "diff": initial_diff,
+            "error": None,
+        }
+        repair_attempted = False
+        if initial_diff and not bool(validation_result.get("valid", False)):
+            repair_attempted = True
+            repair_result = repair_malformed_diff(
+                initial_diff,
+                cwd=(cwd or Path.cwd()),
+                task=options.task,
+                patch_plan=patch_plan,
+                context=failure_context,
+            )
+            if bool(repair_result.get("applied", False)):
+                initial_diff = str(repair_result.get("diff", "") or initial_diff)
+                validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd()))
         initial_quality = evaluate_diff(
             initial_diff,
             final_failures,
@@ -888,11 +1042,14 @@ def build_run_payload(
         path_value: str | None = None
         invalid_path: str | None = None
         if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
+            syntactic_valid, syntactic_error = _syntactic_python_check(diff_text, cwd=(cwd or Path.cwd()))
             diff_path = write_latest_diff(diff_text, cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
             path_value = str(diff_path)
             patch_quality = quality_used
         else:
             patch_quality = None
+            syntactic_valid, syntactic_error = None, None
             if provider_used.get("available", False) and diff_text:
                 invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
                 remove_latest_diff(cwd=cwd)
@@ -911,6 +1068,13 @@ def build_run_payload(
             "regenerated": bool(regenerate),
             "regeneration_attempted": bool(regeneration.get("attempted", False)),
             "aegis_corrective_control_applied": bool(regeneration.get("aegis_guidance_applied", False)),
+            "repair_attempted": bool(repair_attempted),
+            "repair_applied": bool(repair_result.get("applied", False)),
+            "repair_status": str(repair_result.get("status", "skipped")),
+            "repair_reason": str(repair_result.get("reason", "unknown")),
+            "repair_error": repair_result.get("error"),
+            "syntactic_valid": syntactic_valid,
+            "syntactic_error": syntactic_error,
             "corrective_control_status": str(regeneration.get("corrective_control_status", "not_triggered")),
             "corrective_control_reason": str(regeneration.get("corrective_control_reason", "not_triggered")),
             "corrective_control_error": regeneration.get("corrective_control_error"),
@@ -1001,6 +1165,9 @@ def build_run_payload(
             "available": bool((options.project_context or {}).get("available", False)),
             "included_paths": list((options.project_context or {}).get("included_paths", [])),
             "total_chars": int((options.project_context or {}).get("total_chars", 0) or 0),
+            "available_project_keys": sorted(list(list_scoped_keys((cwd or Path.cwd()).resolve()).get("project", {}).keys())),
+            "available_global_keys": sorted(list(list_scoped_keys((cwd or Path.cwd()).resolve()).get("global", {}).keys())),
+            "secret_values_exposed": False,
         },
         "budget_state": {
             "available": bool((options.budget_state or {}).get("available", False)),
@@ -1022,6 +1189,7 @@ def build_run_payload(
             "context_mode": guidance_context_mode or "balanced",
         },
         "task_driven_patch_proposal": task_driven_patch_proposal,
+        "key_usage": _key_usage_metadata((cwd or Path.cwd()).resolve(), config),
     }
     return payload
 

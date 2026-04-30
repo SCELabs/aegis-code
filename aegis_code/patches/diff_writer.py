@@ -25,3 +25,9 @@ def remove_latest_diff(cwd: Path | None = None) -> None:
     latest = project_paths(cwd)["latest_diff"]
     if latest.exists():
         latest.unlink()
+
+
+def remove_latest_invalid_diff(cwd: Path | None = None) -> None:
+    latest_invalid = project_paths(cwd)["runs_dir"] / "latest.invalid.diff"
+    if latest_invalid.exists():
+        latest_invalid.unlink()

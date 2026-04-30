@@ -271,3 +271,37 @@ def test_report_invalid_patch_shows_invalid_sections(tmp_path: Path) -> None:
     assert "Diff failed validation and cannot be applied." in content
     assert "Patch quality: invalid (not evaluated)" in content
     assert "Aegis corrective control: `no_guidance_returned`" in content
+
+
+def test_report_key_usage_metadata_has_no_values(tmp_path: Path) -> None:
+    payload = {
+        "task": "x",
+        "mode": "balanced",
+        "dry_run": True,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": []},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "dry_run"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {"attempted": False, "available": False},
+        "patch_quality": None,
+        "key_usage": [
+            {"name": "OPENAI_API_KEY", "source": "env", "used_for": "provider_openai", "present": True},
+            {"name": "AEGIS_API_KEY", "source": "global", "used_for": "aegis_control", "present": True},
+        ],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "## Key Usage" in content
+    assert "OPENAI_API_KEY" in content
+    assert "provider_openai" in content
+    assert "secret" not in content.lower()

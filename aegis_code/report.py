@@ -50,6 +50,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     project_context = payload.get("project_context", {}) or {}
     adapter = payload.get("adapter", {}) or {}
     applied_guidance = payload.get("applied_aegis_guidance", {}) or {}
+    key_usage = payload.get("key_usage", []) if isinstance(payload.get("key_usage", []), list) else []
 
     lines = [
         "# Aegis Code Run Report",
@@ -130,9 +131,21 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         f"- Escalation allowed: `{bool(applied_guidance.get('escalation_allowed', False))}`",
         f"- Context mode: `{applied_guidance.get('context_mode', 'balanced')}`",
         "",
+        "## Key Usage",
+        "",
+        "",
         "## Commands Run",
         "",
     ]
+    if key_usage:
+        for item in key_usage:
+            if isinstance(item, dict):
+                lines.append(
+                    f"- {item.get('name', '')}: source={item.get('source', 'missing')}, used_for={item.get('used_for', 'unknown')}, present={bool(item.get('present', False))}"
+                )
+    else:
+        lines.append("- none")
+    lines.append("")
     if not verification.get("available", False):
         lines.append("- No verification command was available, so no fix can be verified.")
         lines.append("")
@@ -289,6 +302,9 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
         lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         lines.append(f"- Path: `{patch_diff.get('path', '')}`")
+        lines.append(f"- Syntactic valid: `{patch_diff.get('syntactic_valid')}`")
+        if patch_diff.get("syntactic_error"):
+            lines.append(f"- Syntactic error: `{patch_diff.get('syntactic_error')}`")
         preview = str(patch_diff.get("preview", "") or "")
         lines.append("- Preview:")
         lines.append("```diff")

@@ -6,8 +6,7 @@ from typing import Any
 from aegis_code.patches.diff_inspector import inspect_diff
 
 
-def check_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
-    diff_text = path.read_text(encoding="utf-8")
+def check_patch_text(diff_text: str, cwd: Path | None = None) -> dict[str, Any]:
     result = inspect_diff(diff_text, cwd=cwd)
     warnings = result.get("warnings", [])
     blockers = []
@@ -16,10 +15,17 @@ def check_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
         blockers.append("unsafe_paths")
     if "binary_diff_detected" in warnings:
         blockers.append("binary_diff_unsupported")
-    result["path"] = str(path)
+    result["path"] = "<inline>"
     result["applied"] = False
     result["apply_blocked"] = bool(blockers)
     result["apply_block_reasons"] = blockers
+    return result
+
+
+def check_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
+    diff_text = path.read_text(encoding="utf-8")
+    result = check_patch_text(diff_text, cwd=cwd)
+    result["path"] = str(path)
     return result
 
 
