@@ -338,6 +338,7 @@ def _build_task_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--session", default=None, help="Optional session id/name.")
     parser.add_argument("--no-report", action="store_true", help="Skip writing latest report files.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress progress updates.")
     return parser
 
 
@@ -1153,6 +1154,31 @@ def handle_task(argv: Sequence[str]) -> int:
     project_context = load_runtime_context(cwd=cwd)
     budget_state = get_budget_state(cwd=cwd)
     runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=cwd)
+    if not args.quiet:
+        print("Aegis Code: controlled execution...")
+    progress_state = {"i": 0}
+    progress_labels = [
+        "loading config",
+        "resolving keys",
+        "running verification command",
+        "requesting Aegis guidance",
+        "building task context",
+        "generating provider diff",
+        "validating diff",
+        "attempting repair",
+        "attempting regeneration",
+        "checking syntax of proposed Python changes",
+        "writing report",
+    ]
+
+    def _progress_cb(message: str) -> None:
+        if args.quiet:
+            return
+        progress_state["i"] += 1
+        step = progress_state["i"]
+        total = len(progress_labels)
+        print(f"[{step}/{total}] {message}")
+
     options = TaskOptions(
         task=args.task,
         budget=args.budget,
@@ -1165,6 +1191,7 @@ def handle_task(argv: Sequence[str]) -> int:
         project_context=project_context,
         budget_state=budget_state,
         runtime_policy=runtime_policy,
+        progress_callback=_progress_cb,
     )
     payload = run_task(options=options, cwd=cwd)
 

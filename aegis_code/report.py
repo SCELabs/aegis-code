@@ -315,6 +315,8 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
         lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         if patch_diff.get("error"):
+            lines.append(f"- Reason: `{patch_diff.get('error')}`")
+        if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
         if patch_diff.get("invalid_diff_path"):
             lines.append(f"- Invalid diff path: `{patch_diff.get('invalid_diff_path')}`")
@@ -329,6 +331,23 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
+
+    if patch_diff.get("attempted", False) and patch_diff.get("plan_consistent") is not None:
+        lines.extend(
+            [
+                "",
+                "## Plan Consistency",
+                "",
+                f"- Consistent: `{bool(patch_diff.get('plan_consistent', True))}`",
+            ]
+        )
+        missing_targets = patch_diff.get("plan_missing_targets", [])
+        if isinstance(missing_targets, list) and missing_targets:
+            lines.append("- Missing targets:")
+            for path in missing_targets:
+                lines.append(f"  - `{path}`")
+        else:
+            lines.append("- Missing targets: none")
 
     regeneration = patch_diff.get("regeneration", {}) if isinstance(patch_diff.get("regeneration"), dict) else {}
     lines.extend(

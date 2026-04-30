@@ -203,6 +203,7 @@ def execute_task(
             budget_state=task_options.budget_state,
             runtime_policy=task_options.runtime_policy,
             aegis_guidance=guidance,
+            progress_callback=task_options.progress_callback,
         )
 
     local_result = _run_task_local(
@@ -249,5 +250,11 @@ def execute_task(
         cwd=(cwd or Path.cwd()).resolve(),
     )
     if not task_options.no_report:
+        callback = getattr(task_options, "progress_callback", None)
+        if callable(callback):
+            try:
+                callback("writing report")
+            except Exception:
+                pass
         write_reports(result, cwd=cwd)
     return result

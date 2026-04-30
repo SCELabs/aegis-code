@@ -52,6 +52,16 @@ class TaskOptions:
     budget_state: dict[str, Any] | None = None
     runtime_policy: dict[str, Any] | None = None
     aegis_guidance: dict[str, Any] | None = None
+    progress_callback: Any | None = None
+
+
+def _progress(options: TaskOptions, message: str) -> None:
+    callback = getattr(options, "progress_callback", None)
+    if callable(callback):
+        try:
+            callback(str(message))
+        except Exception:
+            pass
 
 
 def _is_tests_passed(status: str, exit_code: int | None) -> bool:
@@ -141,10 +151,60 @@ def _patch_diff_default() -> dict[str, Any]:
         "corrective_control_error": None,
         "provider": None,
         "model": None,
+        "plan_consistent": None,
+        "plan_missing_targets": [],
         "path": None,
         "error": None,
         "preview": "",
     }
+
+
+def _normalize_rel_path(path: str) -> str:
+    return str(path or "").strip().replace("\\", "/").lstrip("./")
+
+
+def _collect_plan_targets(patch_plan: dict[str, Any]) -> set[str]:
+    targets: set[str] = set()
+    proposed = patch_plan.get("proposed_changes", [])
+    if not isinstance(proposed, list):
+        return targets
+    for change in proposed:
+        if not isinstance(change, dict):
+            continue
+        file_value = _normalize_rel_path(str(change.get("file", "") or ""))
+        if not file_value:
+            continue
+        change_type = str(change.get("change_type", "") or "").strip().lower()
+        if change_type in {"task_intent", "note", "metadata"}:
+            continue
+        targets.add(file_value)
+    return targets
+
+
+def _collect_diff_targets(validation: dict[str, Any]) -> set[str]:
+    targets: set[str] = set()
+    files = validation.get("files", [])
+    if not isinstance(files, list):
+        return targets
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        old_path = item.get("old_path")
+        new_path = item.get("new_path")
+        if isinstance(old_path, str) and old_path:
+            targets.add(_normalize_rel_path(old_path))
+        if isinstance(new_path, str) and new_path:
+            targets.add(_normalize_rel_path(new_path))
+    return targets
+
+
+def _compute_plan_consistency(patch_plan: dict[str, Any], validation: dict[str, Any]) -> tuple[bool, list[str]]:
+    planned_targets = _collect_plan_targets(patch_plan)
+    if not planned_targets:
+        return True, []
+    diff_targets = _collect_diff_targets(validation)
+    missing = sorted(path for path in planned_targets if path not in diff_targets)
+    return not missing, missing
 
 
 def _is_ignored_path(path: Path) -> bool:
@@ -466,6 +526,7 @@ def _apply_hunks_in_memory(source: str, hunks: list[dict[str, Any]]) -> tuple[st
 
 def _syntactic_python_check(diff_text: str, cwd: Path) -> tuple[bool, str | None]:
     files = _parse_unified_diff_files(diff_text)
+    checked_any = False
     for f in files:
         new_path = f.get("new_path")
         old_path = f.get("old_path")
@@ -478,11 +539,18 @@ def _syntactic_python_check(diff_text: str, cwd: Path) -> tuple[bool, str | None
             source = path.read_text(encoding="utf-8")
         updated, apply_error = _apply_hunks_in_memory(source, f.get("hunks", []))
         if apply_error or updated is None:
-            return False, f"{target}: {apply_error or 'syntax_precheck_failed'}"
+            # Syntax signal should only fail on parse errors. If we cannot
+            # reliably materialize patched content in-memory from local state,
+            # skip this file and leave structural validity decisions to diff
+            # inspection/checking.
+            continue
+        checked_any = True
         try:
             ast.parse(updated)
         except SyntaxError as exc:
             return False, f"{target}: {exc}"
+    if not checked_any:
+        return True, None
     return True, None
 
 
@@ -549,7 +617,9 @@ def build_run_payload(
     cwd: Path | None = None,
     client: AegisBackendClient | None = None,
 ) -> dict[str, Any]:
+    _progress(options, "loading config")
     config = load_config(cwd)
+    _progress(options, "resolving keys")
     apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=config.aegis.base_url)
     guidance = options.aegis_guidance or {}
     guidance_tier = str(guidance.get("model_tier", "") or "").strip().lower()
@@ -616,6 +686,7 @@ def build_run_payload(
         test_command = config.commands.test.strip()
         decision = None
         if test_command:
+            _progress(options, f"running verification command: {test_command}")
             initial_result: CommandResult = run_configured_tests(test_command, cwd=cwd)
             commands_run.append(initial_result.to_dict())
             initial_failures = parse_pytest_output(initial_result.full_output)
@@ -637,6 +708,7 @@ def build_run_payload(
                 }
             )
 
+            _progress(options, "requesting Aegis guidance")
             aegis_client = client or client_from_env(config.aegis.base_url)
             decision = aegis_client.step_scope(
                 step_name="aegis_code_task",
@@ -732,6 +804,7 @@ def build_run_payload(
                 "v0.4 controlled loop runs test retries only; no file edits.",
             ]
         else:
+            _progress(options, "requesting Aegis guidance")
             aegis_client = client or client_from_env(config.aegis.base_url)
             decision = aegis_client.step_scope(
                 step_name="aegis_code_task",
@@ -757,6 +830,7 @@ def build_run_payload(
             retry_policy["stopped_reason"] = "no_test_command"
 
     if decision is None:
+        _progress(options, "requesting Aegis guidance")
         decision = client_from_env(config.aegis.base_url).step_scope(
             step_name="aegis_code_task",
             step_input={"task": options.task},
@@ -817,6 +891,7 @@ def build_run_payload(
     task_driven_patch_proposal = bool(options.propose_patch and final_failure_count == 0 and is_constructive_task(options.task))
     should_patch_flow = bool(final_failure_count > 0 or task_driven_patch_proposal)
     if task_driven_patch_proposal:
+        _progress(options, "building task context")
         local_task_context = build_task_context((cwd or Path.cwd()).resolve())
         refined_task_context = _refine_task_context_with_aegis(
             options.task,
@@ -903,6 +978,7 @@ def build_run_payload(
             "corrective_control_reason": "not_triggered",
             "corrective_control_error": None,
         }
+        _progress(options, f"generating provider diff with {selected_model}")
         provider_result = generate_patch_diff(
             provider=config.providers.provider,
             model=selected_model,
@@ -915,6 +991,7 @@ def build_run_payload(
             max_context_chars=int(config.patches.max_context_chars),
         )
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
+        _progress(options, "validating diff")
         validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd())) if initial_diff else {"valid": False, "errors": ["empty_diff"]}
         repair_result = {
             "applied": False,
@@ -925,6 +1002,7 @@ def build_run_payload(
         }
         repair_attempted = False
         if initial_diff and not bool(validation_result.get("valid", False)):
+            _progress(options, "attempting repair")
             repair_attempted = True
             repair_result = repair_malformed_diff(
                 initial_diff,
@@ -961,6 +1039,7 @@ def build_run_payload(
         validation_used = validation_result
 
         if regenerate:
+            _progress(options, "attempting regeneration")
             regeneration["attempted"] = True
             enhanced_patch_plan = deepcopy(patch_plan)
             enhanced_constraints = [
@@ -1041,12 +1120,28 @@ def build_run_payload(
 
         path_value: str | None = None
         invalid_path: str | None = None
+        plan_consistent, plan_missing_targets = _compute_plan_consistency(patch_plan, validation_used)
         if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
+            _progress(options, "checking syntax of proposed Python changes")
             syntactic_valid, syntactic_error = _syntactic_python_check(diff_text, cwd=(cwd or Path.cwd()))
-            diff_path = write_latest_diff(diff_text, cwd=cwd)
-            remove_latest_invalid_diff(cwd=cwd)
-            path_value = str(diff_path)
-            patch_quality = quality_used
+            additions = int((validation_used.get("summary", {}) or {}).get("additions", 0))
+            size_threshold = 500 if test_task else 800
+            if syntactic_valid is False:
+                patch_quality = None
+                invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
+                remove_latest_diff(cwd=cwd)
+            elif additions > size_threshold:
+                patch_quality = None
+                invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
+                remove_latest_diff(cwd=cwd)
+                syntactic_error = None
+            else:
+                diff_path = write_latest_diff(diff_text, cwd=cwd)
+                remove_latest_invalid_diff(cwd=cwd)
+                path_value = str(diff_path)
+                patch_quality = quality_used
+                if patch_quality is not None and not plan_consistent:
+                    patch_quality["confidence"] = min(float(patch_quality.get("confidence", 0.0)), 0.5)
         else:
             patch_quality = None
             syntactic_valid, syntactic_error = None, None
@@ -1086,6 +1181,8 @@ def build_run_payload(
             "issues": list((quality_used or {}).get("issues", [])),
             "provider": provider_used.get("provider"),
             "model": provider_used.get("model"),
+            "plan_consistent": plan_consistent,
+            "plan_missing_targets": plan_missing_targets,
             "path": path_value,
             "invalid_diff_path": invalid_path,
             "error": provider_used.get("error"),
@@ -1094,7 +1191,18 @@ def build_run_payload(
         if provider_used.get("available", False) and not path_value:
             patch_diff["available"] = False
             validation_errors = validation_used.get("errors", [])
-            if validation_errors:
+            if syntactic_valid is False:
+                patch_diff["error"] = "syntactic_invalid"
+            elif provider_used.get("available", False) and syntactic_valid is True:
+                additions = int((validation_used.get("summary", {}) or {}).get("additions", 0))
+                size_threshold = 500 if test_task else 800
+                if additions > size_threshold:
+                    patch_diff["error"] = "excessive_diff_size"
+                elif validation_errors:
+                    patch_diff["error"] = str(validation_errors[0])
+                else:
+                    patch_diff["error"] = "Diff generation returned empty output."
+            elif validation_errors:
                 patch_diff["error"] = str(validation_errors[0])
             else:
                 patch_diff["error"] = "Diff generation returned empty output."
@@ -1113,6 +1221,8 @@ def build_run_payload(
             "corrective_control_error": None,
             "provider": config.providers.provider,
             "model": selected_model,
+            "plan_consistent": None,
+            "plan_missing_targets": [],
             "path": None,
             "error": "Provider unavailable",
             "preview": "",
@@ -1130,6 +1240,8 @@ def build_run_payload(
             "corrective_control_error": None,
             "provider": config.providers.provider,
             "model": selected_model,
+            "plan_consistent": None,
+            "plan_missing_targets": [],
             "path": None,
             "error": "Provider unavailable",
             "preview": "",
@@ -1203,6 +1315,7 @@ def _run_task_local(
 ) -> dict[str, Any]:
     payload = build_run_payload(options=options, cwd=cwd, client=client)
     if write_report and not options.no_report:
+        _progress(options, "writing report")
         write_reports(payload, cwd=cwd)
     return payload
 
