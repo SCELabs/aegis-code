@@ -357,8 +357,9 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
             f"- Triggered: `{bool(regeneration.get('triggered', False))}`",
             f"- Reason: `{regeneration.get('reason', 'none')}`",
+            f"- Attempt: `{int(regeneration.get('attempt', 1 if regeneration.get('attempted', False) else 0))}`",
             f"- Aegis corrective control: `{regeneration.get('corrective_control_status', patch_diff.get('corrective_control_status', 'not_triggered'))}`",
-            f"- Final status: `{regeneration.get('final_status', patch_diff.get('status', 'unknown'))}`",
+            f"- Result: `{regeneration.get('result', regeneration.get('final_status', patch_diff.get('status', 'unknown')))}`",
         ]
     )
 

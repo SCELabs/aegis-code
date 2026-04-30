@@ -758,6 +758,7 @@ def test_no_regeneration_when_valid(monkeypatch, tmp_path: Path) -> None:
     payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
     assert calls["count"] == 1
     assert payload["patch_diff"]["regeneration_attempted"] is False
+    assert payload["patch_diff"]["regenerated"] is False
 
 
 def test_invalid_final_diff_writes_invalid_diff_not_latest(monkeypatch, tmp_path: Path) -> None:
@@ -1168,8 +1169,10 @@ def test_plan_consistency_detects_missing_target(monkeypatch, tmp_path: Path) ->
     payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
     assert payload["patch_diff"]["plan_consistent"] is False
     assert payload["patch_diff"]["plan_missing_targets"] == ["src/helpers.py"]
-    assert payload["patch_quality"] is not None
-    assert float(payload["patch_quality"]["confidence"]) <= 0.5
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "plan_inconsistent"
+    assert payload["patch_diff"]["regeneration_attempted"] is True
+    assert payload["patch_quality"] is None
 
 
 def test_plan_consistency_aligned(monkeypatch, tmp_path: Path) -> None:
@@ -1239,3 +1242,203 @@ def test_plan_consistency_partial_multifile_missing(monkeypatch, tmp_path: Path)
     payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
     assert payload["patch_diff"]["plan_consistent"] is False
     assert payload["patch_diff"]["plan_missing_targets"] == ["src/helpers.py"]
+
+
+def test_plan_consistency_detects_missing_inferred_helpers_from_import(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_plan",
+        lambda *_args, **_kwargs: {
+            "strategy": "implement feature",
+            "confidence": 0.7,
+            "task_type": "general",
+            "proposed_changes": [
+                {"file": "src/main.py", "change_type": "modify", "description": "main", "reason": "feature"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+from src.helpers import build_helper\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["plan_consistent"] is False
+    assert "src/helpers.py" in payload["patch_diff"]["plan_missing_targets"]
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "plan_inconsistent"
+    assert payload["patch_quality"] is None
+
+
+def test_plan_consistency_detects_missing_inferred_helpers_from_strategy(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_plan",
+        lambda *_args, **_kwargs: {
+            "strategy": "add module for helper functions",
+            "confidence": 0.7,
+            "task_type": "general",
+            "proposed_changes": [
+                {"file": "src/main.py", "change_type": "modify", "description": "main", "reason": "feature"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["plan_consistent"] is False
+    assert "src/helpers.py" in payload["patch_diff"]["plan_missing_targets"]
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "plan_inconsistent"
+    assert payload["patch_quality"] is None
+
+
+def test_plan_consistency_helpers_present_no_mismatch(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_plan",
+        lambda *_args, **_kwargs: {
+            "strategy": "create module for helpers",
+            "confidence": 0.7,
+            "task_type": "general",
+            "proposed_changes": [
+                {"file": "src/main.py", "change_type": "modify", "description": "main", "reason": "feature"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+from src.helpers import build_helper\n"
+                "diff --git a/src/helpers.py b/src/helpers.py\n--- /dev/null\n+++ b/src/helpers.py\n@@ -0,0 +1,2 @@\n+def build_helper() -> str:\n+    return \"ok\"\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["plan_consistent"] is True
+    assert payload["patch_diff"]["plan_missing_targets"] == []
+
+
+def test_plan_consistency_test_only_no_false_positive(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_cli.py b/tests/test_cli.py\n--- a/tests/test_cli.py\n+++ b/tests/test_cli.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add tests for cli behavior", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["plan_consistent"] is True
+    assert payload["patch_diff"]["plan_missing_targets"] == []
+
+
+def test_hard_invalid_regeneration_succeeds_once(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+    captured_second_plan: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "available": True,
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+                "error": None,
+            }
+        captured_second_plan.update(kwargs.get("patch_plan", {}))
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert calls["count"] == 2
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["regeneration_attempted"] is True
+    assert payload["patch_diff"]["regenerated"] is True
+    assert payload["patch_diff"]["regeneration"]["attempt"] == 1
+    constraints = captured_second_plan.get("regeneration_constraints", [])
+    assert isinstance(constraints, list)
+    assert any("Limit additions to 300 lines." in str(item) for item in constraints)
+
+
+def test_hard_invalid_regeneration_fails_still_invalid_and_once(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    def _provider(**_: object) -> dict[str, object]:
+        calls["count"] += 1
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert calls["count"] == 2
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] in {"syntactic_invalid", "hunk_count_mismatch"}
+    assert payload["patch_diff"]["regeneration_attempted"] is True
+    assert payload["patch_diff"]["regenerated"] is False
+    assert payload["patch_diff"]["regeneration"]["attempt"] == 1

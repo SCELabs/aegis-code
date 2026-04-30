@@ -198,13 +198,87 @@ def _collect_diff_targets(validation: dict[str, Any]) -> set[str]:
     return targets
 
 
-def _compute_plan_consistency(patch_plan: dict[str, Any], validation: dict[str, Any]) -> tuple[bool, list[str]]:
+def _infer_heuristic_targets(strategy: str, diff_text: str) -> set[str]:
+    inferred: set[str] = set()
+    lowered_strategy = str(strategy or "").lower()
+    strategy_hints = (
+        "add module",
+        "create module",
+        "add file",
+        "new file",
+        "helpers module",
+    )
+    if any(hint in lowered_strategy for hint in strategy_hints):
+        inferred.add("src/helpers.py")
+
+    for raw_line in str(diff_text or "").splitlines():
+        if not raw_line.startswith("+") or raw_line.startswith("+++ "):
+            continue
+        line = raw_line[1:].strip()
+        if line.startswith("import src.helpers") or line.startswith("from src.helpers import"):
+            inferred.add("src/helpers.py")
+
+    return inferred
+
+
+def _compute_plan_consistency(
+    patch_plan: dict[str, Any],
+    validation: dict[str, Any],
+    diff_text: str,
+) -> tuple[bool, list[str]]:
     planned_targets = _collect_plan_targets(patch_plan)
+    planned_targets.update(_infer_heuristic_targets(str(patch_plan.get("strategy", "") or ""), diff_text))
     if not planned_targets:
         return True, []
     diff_targets = _collect_diff_targets(validation)
     missing = sorted(path for path in planned_targets if path not in diff_targets)
     return not missing, missing
+
+
+def _hard_invalid_reason(
+    *,
+    syntactic_valid: bool | None,
+    additions: int,
+    size_threshold: int,
+    plan_consistent: bool,
+) -> str | None:
+    if syntactic_valid is False:
+        return "syntactic_invalid"
+    if additions > size_threshold:
+        return "excessive_diff_size"
+    if not plan_consistent:
+        return "plan_inconsistent"
+    return None
+
+
+def _aegis_regeneration_control(
+    *,
+    base_url: str,
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    fallback = {"status": "not_available", "error": None, "actions": {}}
+    try:
+        from aegis import AegisClient  # type: ignore
+    except Exception:
+        return fallback
+    try:
+        client = AegisClient(base_url=base_url)
+        response = client.auto().step(
+            step_name="patch_regeneration_control",
+            step_input={"control": "hard_invalid_patch"},
+            symptoms=["invalid_patch"],
+            severity="high",
+            metadata=metadata,
+        )
+        if isinstance(response, dict):
+            return {
+                "status": "applied",
+                "error": None,
+                "actions": response.get("actions", response),
+            }
+        return {"status": "no_guidance_returned", "error": None, "actions": {}}
+    except Exception as exc:
+        return {"status": "client_error", "error": str(exc), "actions": {}}
 
 
 def _is_ignored_path(path: Path) -> bool:
@@ -972,8 +1046,10 @@ def build_run_payload(
             "reason": "none",
             "reasons": [],
             "attempted": False,
+            "attempt": 0,
             "aegis_guidance_applied": False,
             "final_status": "not_needed",
+            "result": "not_needed",
             "corrective_control_status": "not_triggered",
             "corrective_control_reason": "not_triggered",
             "corrective_control_error": None,
@@ -1041,6 +1117,7 @@ def build_run_payload(
         if regenerate:
             _progress(options, "attempting regeneration")
             regeneration["attempted"] = True
+            regeneration["attempt"] = 1
             enhanced_patch_plan = deepcopy(patch_plan)
             enhanced_constraints = [
                 "Produce a valid unified diff.",
@@ -1120,7 +1197,7 @@ def build_run_payload(
 
         path_value: str | None = None
         invalid_path: str | None = None
-        plan_consistent, plan_missing_targets = _compute_plan_consistency(patch_plan, validation_used)
+        plan_consistent, plan_missing_targets = _compute_plan_consistency(patch_plan, validation_used, diff_text)
         if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
             _progress(options, "checking syntax of proposed Python changes")
             syntactic_valid, syntactic_error = _syntactic_python_check(diff_text, cwd=(cwd or Path.cwd()))
@@ -1135,6 +1212,10 @@ def build_run_payload(
                 invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
                 remove_latest_diff(cwd=cwd)
                 syntactic_error = None
+            elif not plan_consistent:
+                patch_quality = None
+                invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
+                remove_latest_diff(cwd=cwd)
             else:
                 diff_path = write_latest_diff(diff_text, cwd=cwd)
                 remove_latest_invalid_diff(cwd=cwd)
@@ -1156,6 +1237,7 @@ def build_run_payload(
         else:
             final_status = "invalid"
         regeneration["final_status"] = final_status
+        regeneration["result"] = final_status
         patch_diff = {
             "attempted": True,
             "available": bool(provider_used.get("available", False)) and bool(path_value),
@@ -1198,6 +1280,8 @@ def build_run_payload(
                 size_threshold = 500 if test_task else 800
                 if additions > size_threshold:
                     patch_diff["error"] = "excessive_diff_size"
+                elif not plan_consistent:
+                    patch_diff["error"] = "plan_inconsistent"
                 elif validation_errors:
                     patch_diff["error"] = str(validation_errors[0])
                 else:
@@ -1208,6 +1292,191 @@ def build_run_payload(
                 patch_diff["error"] = "Diff generation returned empty output."
         if patch_diff["attempted"] and not patch_diff["available"] and not patch_diff.get("error"):
             patch_diff["error"] = "Provider unavailable"
+
+        hard_regen_reason = str(patch_diff.get("error") or "")
+        hard_regen_allowed = hard_regen_reason in {"excessive_diff_size", "syntactic_invalid", "plan_inconsistent"}
+        if (
+            patch_diff.get("status") == "invalid"
+            and hard_regen_allowed
+            and not bool(regeneration.get("attempted", False))
+        ):
+            _progress(options, "attempting regeneration")
+            regeneration["triggered"] = True
+            regeneration["reason"] = hard_regen_reason
+            regeneration["reasons"] = [hard_regen_reason]
+            regeneration["attempted"] = True
+            regeneration["attempt"] = 1
+
+            planned_targets = sorted(_collect_plan_targets(patch_plan))
+            regen_metadata: dict[str, Any] = {
+                "max_additions": 300,
+                "allowed_targets": planned_targets,
+                "disallow_new_unplanned_files": True,
+                "force_small_diff": True,
+                "require_plan_alignment": True,
+            }
+            regen_plan = deepcopy(patch_plan)
+            regen_constraints = [
+                "Produce a valid unified diff.",
+                "Limit additions to 300 lines.",
+                "Modify only allowed targets.",
+                "Do not create unplanned files.",
+                "Keep diff minimal and small.",
+                "Ensure patch aligns with patch plan targets.",
+            ]
+            if planned_targets:
+                regen_plan["allowed_targets"] = planned_targets
+
+            if _control_requested(config, (cwd or Path.cwd()).resolve()):
+                control = _aegis_regeneration_control(
+                    base_url=str(config.aegis.base_url),
+                    metadata=regen_metadata,
+                )
+                regeneration["corrective_control_status"] = str(control.get("status", "client_error"))
+                regeneration["corrective_control_reason"] = str(control.get("status", "client_error"))
+                regeneration["corrective_control_error"] = control.get("error")
+                if control.get("status") == "applied":
+                    regeneration["aegis_guidance_applied"] = True
+                    actions = control.get("actions", {})
+                    if isinstance(actions, dict):
+                        allowed = actions.get("allowed_targets")
+                        if isinstance(allowed, list) and allowed:
+                            regen_plan["allowed_targets"] = [str(item) for item in allowed if str(item).strip()]
+                        max_additions = actions.get("max_additions")
+                        if isinstance(max_additions, int) and max_additions > 0:
+                            regen_metadata["max_additions"] = int(max_additions)
+                            regen_constraints.append(f"Limit additions to {int(max_additions)} lines.")
+                        extra = actions.get("constraints")
+                        if isinstance(extra, list):
+                            regen_constraints.extend(str(item) for item in extra)
+            else:
+                regeneration["corrective_control_status"] = "disabled_by_config"
+                regeneration["corrective_control_reason"] = "disabled_by_config"
+
+            regen_plan["regeneration_constraints"] = sorted(set(regen_constraints))
+            second = generate_patch_diff(
+                provider=config.providers.provider,
+                model=selected_model,
+                task=options.task,
+                failures=final_failures,
+                context=failure_context,
+                patch_plan=regen_plan,
+                aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                api_key_env=config.providers.api_key_env,
+                max_context_chars=int(config.patches.max_context_chars),
+            )
+            second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
+            second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
+            if second_diff and not bool(second_validation.get("valid", False)):
+                second_repair = repair_malformed_diff(
+                    second_diff,
+                    cwd=(cwd or Path.cwd()),
+                    task=options.task,
+                    patch_plan=regen_plan,
+                    context=failure_context,
+                )
+                if bool(second_repair.get("applied", False)):
+                    second_diff = str(second_repair.get("diff", "") or second_diff)
+                    second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd()))
+            second_quality = evaluate_diff(
+                second_diff,
+                final_failures,
+                failure_context,
+                test_generation_task=test_task,
+            ) if second_diff else {
+                "grounded": False,
+                "relevant_files": False,
+                "confidence": 0.0,
+                "issues": ["empty_diff"],
+            }
+            second_plan_consistent, second_plan_missing = _compute_plan_consistency(regen_plan, second_validation, second_diff)
+            second_syntactic_valid, second_syntactic_error = (None, None)
+            if second.get("available", False) and second_diff and bool(second_validation.get("valid", False)):
+                second_syntactic_valid, second_syntactic_error = _syntactic_python_check(second_diff, cwd=(cwd or Path.cwd()))
+            second_additions = int((second_validation.get("summary", {}) or {}).get("additions", 0))
+            second_threshold = min(300, 500 if test_task else 800)
+            second_hard_invalid = _hard_invalid_reason(
+                syntactic_valid=second_syntactic_valid,
+                additions=second_additions,
+                size_threshold=second_threshold,
+                plan_consistent=second_plan_consistent,
+            )
+
+            provider_used = second
+            diff_text = second_diff
+            validation_used = second_validation
+            quality_used = second_quality
+            plan_consistent = second_plan_consistent
+            plan_missing_targets = second_plan_missing
+            syntactic_valid = second_syntactic_valid
+            syntactic_error = second_syntactic_error
+
+            if second.get("available", False) and second_diff and bool(second_validation.get("valid", False)) and not second_hard_invalid:
+                diff_path = write_latest_diff(second_diff, cwd=cwd)
+                remove_latest_invalid_diff(cwd=cwd)
+                patch_quality = second_quality
+                if patch_quality is not None and not second_plan_consistent:
+                    patch_quality["confidence"] = min(float(patch_quality.get("confidence", 0.0)), 0.5)
+                patch_diff.update(
+                    {
+                        "available": True,
+                        "status": "generated",
+                        "path": str(diff_path),
+                        "invalid_diff_path": None,
+                        "error": None,
+                        "provider": second.get("provider"),
+                        "model": second.get("model"),
+                        "preview": second_diff[:800],
+                        "validation_result": second_validation,
+                        "validation_errors": [str(item) for item in second_validation.get("errors", [])],
+                        "quality_score": float((second_quality or {}).get("confidence", 0.0)),
+                        "issues": list((second_quality or {}).get("issues", [])),
+                        "syntactic_valid": second_syntactic_valid,
+                        "syntactic_error": second_syntactic_error,
+                        "plan_consistent": second_plan_consistent,
+                        "plan_missing_targets": second_plan_missing,
+                    }
+                )
+                regeneration["final_status"] = "generated"
+                regeneration["result"] = "generated"
+            else:
+                patch_quality = None
+                invalid_path = str(write_latest_invalid_diff(second_diff, cwd=cwd)) if second_diff else None
+                remove_latest_diff(cwd=cwd)
+                final_error = second_hard_invalid
+                if not final_error:
+                    errors_second = second_validation.get("errors", [])
+                    final_error = str(errors_second[0]) if errors_second else "Diff generation returned empty output."
+                patch_diff.update(
+                    {
+                        "available": False,
+                        "status": "invalid",
+                        "path": None,
+                        "invalid_diff_path": invalid_path,
+                        "error": final_error,
+                        "provider": second.get("provider"),
+                        "model": second.get("model"),
+                        "preview": second_diff[:800],
+                        "validation_result": second_validation,
+                        "validation_errors": [str(item) for item in second_validation.get("errors", [])],
+                        "quality_score": float((second_quality or {}).get("confidence", 0.0)),
+                        "issues": list((second_quality or {}).get("issues", [])),
+                        "syntactic_valid": second_syntactic_valid,
+                        "syntactic_error": second_syntactic_error,
+                        "plan_consistent": second_plan_consistent,
+                        "plan_missing_targets": second_plan_missing,
+                    }
+                )
+                regeneration["final_status"] = "invalid"
+                regeneration["result"] = "invalid"
+
+        # Keep top-level summary flags aligned with the final regeneration state,
+        # including post-invalid regeneration paths.
+        patch_diff["regeneration_attempted"] = bool(regeneration.get("attempted", False))
+        patch_diff["regenerated"] = bool(
+            regeneration.get("attempted", False) and patch_diff.get("status") == "generated"
+        )
+        patch_diff["regeneration"] = regeneration
     elif should_attempt_provider_diff and not provider_enabled:
         patch_diff = {
             "attempted": True,
