@@ -1174,6 +1174,9 @@ def handle_task(argv: Sequence[str]) -> int:
     def _progress_cb(message: str) -> None:
         if args.quiet:
             return
+        if str(message).startswith("  waiting on provider"):
+            print(str(message))
+            return
         progress_state["i"] += 1
         step = progress_state["i"]
         total = len(progress_labels)

@@ -314,8 +314,9 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append("- Status: `invalid`")
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
         lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
-        if patch_diff.get("error"):
-            lines.append(f"- Reason: `{patch_diff.get('error')}`")
+        final_invalid_reason = patch_diff.get("final_invalid_reason", patch_diff.get("error"))
+        if final_invalid_reason:
+            lines.append(f"- Reason: `{final_invalid_reason}`")
         if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
         if patch_diff.get("invalid_diff_path"):
@@ -356,12 +357,14 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "## Patch Regeneration",
             "",
             f"- Triggered: `{bool(regeneration.get('triggered', False))}`",
-            f"- Reason: `{regeneration.get('reason', 'none')}`",
+            f"- Reason: `{patch_diff.get('regeneration_trigger_reason', regeneration.get('trigger_reason', regeneration.get('reason', 'none')))}`",
             f"- Attempt: `{int(regeneration.get('attempt', 1 if regeneration.get('attempted', False) else 0))}`",
             f"- Aegis corrective control: `{regeneration.get('corrective_control_status', patch_diff.get('corrective_control_status', 'not_triggered'))}`",
             f"- Result: `{regeneration.get('result', regeneration.get('final_status', patch_diff.get('status', 'unknown')))}`",
         ]
     )
+    if str(regeneration.get("result", "")) == "invalid" and regeneration.get("regenerated_invalid_reason"):
+        lines.append(f"- Regenerated invalid reason: `{regeneration.get('regenerated_invalid_reason')}`")
 
     if str(patch_diff.get("status", "")) == "invalid":
         lines.extend(

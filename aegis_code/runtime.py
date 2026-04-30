@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 import ast
 import json
 import re
+import threading
+import time
 from pathlib import Path
 from copy import deepcopy
 from typing import Any
@@ -36,6 +38,7 @@ from aegis_code.sll_adapter import analyze_failures_sll
 from aegis_code.tools.tests import run_configured_tests
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
+_PROVIDER_HEARTBEAT_SECONDS = 2.0
 
 
 @dataclass(slots=True)
@@ -62,6 +65,31 @@ def _progress(options: TaskOptions, message: str) -> None:
             callback(str(message))
         except Exception:
             pass
+
+
+def _run_with_provider_heartbeat(options: TaskOptions, label: str, fn: Any) -> Any:
+    callback = getattr(options, "progress_callback", None)
+    if not callable(callback):
+        return fn()
+
+    stop_event = threading.Event()
+    start = time.monotonic()
+
+    def _ticker() -> None:
+        while not stop_event.wait(_PROVIDER_HEARTBEAT_SECONDS):
+            elapsed = int(max(0.0, time.monotonic() - start))
+            try:
+                callback(f"  waiting on provider for {label}... ({elapsed}s)")
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_ticker, daemon=True)
+    thread.start()
+    try:
+        return fn()
+    finally:
+        stop_event.set()
+        thread.join(timeout=0.05)
 
 
 def _is_tests_passed(status: str, exit_code: int | None) -> bool:
@@ -1044,27 +1072,33 @@ def build_run_payload(
         regeneration: dict[str, Any] = {
             "triggered": False,
             "reason": "none",
+            "trigger_reason": "none",
             "reasons": [],
             "attempted": False,
             "attempt": 0,
             "aegis_guidance_applied": False,
             "final_status": "not_needed",
             "result": "not_needed",
+            "regenerated_invalid_reason": None,
             "corrective_control_status": "not_triggered",
             "corrective_control_reason": "not_triggered",
             "corrective_control_error": None,
         }
         _progress(options, f"generating provider diff with {selected_model}")
-        provider_result = generate_patch_diff(
-            provider=config.providers.provider,
-            model=selected_model,
-            task=options.task,
-            failures=final_failures,
-            context=failure_context,
-            patch_plan=patch_plan,
-            aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
-            api_key_env=config.providers.api_key_env,
-            max_context_chars=int(config.patches.max_context_chars),
+        provider_result = _run_with_provider_heartbeat(
+            options,
+            "patch generation",
+            lambda: generate_patch_diff(
+                provider=config.providers.provider,
+                model=selected_model,
+                task=options.task,
+                failures=final_failures,
+                context=failure_context,
+                patch_plan=patch_plan,
+                aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                api_key_env=config.providers.api_key_env,
+                max_context_chars=int(config.patches.max_context_chars),
+            ),
         )
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
         _progress(options, "validating diff")
@@ -1108,6 +1142,7 @@ def build_run_payload(
         regeneration["reasons"] = reasons
         if reasons:
             regeneration["reason"] = reasons[0]
+            regeneration["trigger_reason"] = reasons[0]
 
         provider_used = provider_result
         diff_text = initial_diff
@@ -1166,16 +1201,20 @@ def build_run_payload(
                 regeneration["corrective_control_reason"] = "disabled_by_config"
             enhanced_patch_plan["regeneration_constraints"] = sorted(set(enhanced_constraints))
 
-            second = generate_patch_diff(
-                provider=config.providers.provider,
-                model=selected_model,
-                task=options.task,
-                failures=final_failures,
-                context=failure_context,
-                patch_plan=enhanced_patch_plan,
-                aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
-                api_key_env=config.providers.api_key_env,
-                max_context_chars=int(config.patches.max_context_chars),
+            second = _run_with_provider_heartbeat(
+                options,
+                "regeneration",
+                lambda: generate_patch_diff(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    task=options.task,
+                    failures=final_failures,
+                    context=failure_context,
+                    patch_plan=enhanced_patch_plan,
+                    aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                    api_key_env=config.providers.api_key_env,
+                    max_context_chars=int(config.patches.max_context_chars),
+                ),
             )
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
@@ -1255,6 +1294,9 @@ def build_run_payload(
             "corrective_control_status": str(regeneration.get("corrective_control_status", "not_triggered")),
             "corrective_control_reason": str(regeneration.get("corrective_control_reason", "not_triggered")),
             "corrective_control_error": regeneration.get("corrective_control_error"),
+            "initial_invalid_reason": None,
+            "regeneration_trigger_reason": None,
+            "final_invalid_reason": None,
             "regeneration": regeneration,
             "initial_diff": initial_diff[:800],
             "validation_result": validation_used,
@@ -1292,6 +1334,8 @@ def build_run_payload(
                 patch_diff["error"] = "Diff generation returned empty output."
         if patch_diff["attempted"] and not patch_diff["available"] and not patch_diff.get("error"):
             patch_diff["error"] = "Provider unavailable"
+        if patch_diff.get("status") == "invalid":
+            patch_diff["initial_invalid_reason"] = patch_diff.get("error")
 
         hard_regen_reason = str(patch_diff.get("error") or "")
         hard_regen_allowed = hard_regen_reason in {"excessive_diff_size", "syntactic_invalid", "plan_inconsistent"}
@@ -1303,9 +1347,11 @@ def build_run_payload(
             _progress(options, "attempting regeneration")
             regeneration["triggered"] = True
             regeneration["reason"] = hard_regen_reason
+            regeneration["trigger_reason"] = hard_regen_reason
             regeneration["reasons"] = [hard_regen_reason]
             regeneration["attempted"] = True
             regeneration["attempt"] = 1
+            patch_diff["regeneration_trigger_reason"] = hard_regen_reason
 
             planned_targets = sorted(_collect_plan_targets(patch_plan))
             regen_metadata: dict[str, Any] = {
@@ -1354,16 +1400,20 @@ def build_run_payload(
                 regeneration["corrective_control_reason"] = "disabled_by_config"
 
             regen_plan["regeneration_constraints"] = sorted(set(regen_constraints))
-            second = generate_patch_diff(
-                provider=config.providers.provider,
-                model=selected_model,
-                task=options.task,
-                failures=final_failures,
-                context=failure_context,
-                patch_plan=regen_plan,
-                aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
-                api_key_env=config.providers.api_key_env,
-                max_context_chars=int(config.patches.max_context_chars),
+            second = _run_with_provider_heartbeat(
+                options,
+                "post-invalid regeneration",
+                lambda: generate_patch_diff(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    task=options.task,
+                    failures=final_failures,
+                    context=failure_context,
+                    patch_plan=regen_plan,
+                    aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                    api_key_env=config.providers.api_key_env,
+                    max_context_chars=int(config.patches.max_context_chars),
+                ),
             )
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
@@ -1439,6 +1489,7 @@ def build_run_payload(
                 )
                 regeneration["final_status"] = "generated"
                 regeneration["result"] = "generated"
+                regeneration["regenerated_invalid_reason"] = None
             else:
                 patch_quality = None
                 invalid_path = str(write_latest_invalid_diff(second_diff, cwd=cwd)) if second_diff else None
@@ -1469,9 +1520,14 @@ def build_run_payload(
                 )
                 regeneration["final_status"] = "invalid"
                 regeneration["result"] = "invalid"
+                regeneration["regenerated_invalid_reason"] = final_error
 
         # Keep top-level summary flags aligned with the final regeneration state,
         # including post-invalid regeneration paths.
+        if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):
+            patch_diff["regeneration_trigger_reason"] = regeneration.get("trigger_reason") or regeneration.get("reason")
+        if patch_diff.get("status") == "invalid":
+            patch_diff["final_invalid_reason"] = patch_diff.get("error")
         patch_diff["regeneration_attempted"] = bool(regeneration.get("attempted", False))
         patch_diff["regenerated"] = bool(
             regeneration.get("attempted", False) and patch_diff.get("status") == "generated"

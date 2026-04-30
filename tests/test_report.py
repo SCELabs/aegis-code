@@ -346,3 +346,54 @@ def test_report_includes_plan_consistency_section(tmp_path: Path) -> None:
     assert "## Plan Consistency" in content
     assert "Consistent: `False`" in content
     assert "src/helpers.py" in content
+
+
+def test_report_invalid_reason_sections_are_explicit(tmp_path: Path) -> None:
+    payload = {
+        "task": "x",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {
+            "attempted": True,
+            "available": False,
+            "status": "invalid",
+            "error": "excessive_diff_size",
+            "final_invalid_reason": "excessive_diff_size",
+            "regeneration_trigger_reason": "syntactic_invalid",
+            "invalid_diff_path": ".aegis/runs/latest.invalid.diff",
+            "regeneration_attempted": True,
+            "corrective_control_status": "applied",
+            "regeneration": {
+                "triggered": True,
+                "reason": "syntactic_invalid",
+                "trigger_reason": "syntactic_invalid",
+                "attempt": 1,
+                "result": "invalid",
+                "regenerated_invalid_reason": "excessive_diff_size",
+                "final_status": "invalid",
+            },
+        },
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Reason: `excessive_diff_size`" in content
+    assert "## Patch Regeneration" in content
+    assert "Reason: `syntactic_invalid`" in content
+    assert "Regenerated invalid reason: `excessive_diff_size`" in content
