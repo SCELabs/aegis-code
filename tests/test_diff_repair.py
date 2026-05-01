@@ -180,3 +180,93 @@ def test_repaired_feature_diff_passes_inspect_check(tmp_path: Path) -> None:
     )
     assert result["applied"] is True
     assert inspect_diff(result["diff"], cwd=tmp_path)["valid"] is True
+
+
+def test_impl_with_tests_multi_file_create_repaired(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text.lower().replace(' ', '-')\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+from src.helpers import slugify\n"
+        "+\n"
+        "+def test_slugify_spaces():\n"
+        "+    assert slugify('Hello World') == 'hello-world'\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add a helpers module with a slugify(text) function and tests for it",
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}],
+        },
+        context={"files": []},
+    )
+    assert result["applied"] is True
+    repaired = str(result["diff"])
+    assert "diff --git a/src/helpers.py b/src/helpers.py" in repaired
+    assert "diff --git a/tests/test_helpers.py b/tests/test_helpers.py" in repaired
+    assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
+
+
+def test_impl_with_tests_mixed_create_modify_repaired(tmp_path: Path) -> None:
+    existing = tmp_path / "tests" / "test_helpers.py"
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text("def test_smoke():\n    assert True\n", encoding="utf-8")
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- a/tests/test_helpers.py\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        " def test_smoke():\n"
+        "+def test_slugify():\n"
+        "+    assert True\n"
+        "     assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}],
+        },
+        context={"files": [{"path": "tests/test_helpers.py", "content": existing.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is True
+    assert inspect_diff(result["diff"], cwd=tmp_path)["valid"] is True
+
+
+def test_impl_with_tests_out_of_scope_file_count_skipped(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n--- /dev/null\n+++ b/src/helpers.py\n@@ -0,0 +1,1 @@\n+a\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n--- /dev/null\n+++ b/tests/test_helpers.py\n@@ -0,0 +1,1 @@\n+b\n"
+        "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1,1 +1,1 @@\n-c\n+d\n+e\n"
+        "diff --git a/src/extra.py b/src/extra.py\n--- /dev/null\n+++ b/src/extra.py\n@@ -0,0 +1,1 @@\n+z\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}, {"file": "README.md"}, {"file": "src/extra.py"}],
+        },
+        context={"files": []},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "impl_with_tests_file_count_out_of_scope"
