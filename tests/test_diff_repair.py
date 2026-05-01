@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import aegis_code.patches.diff_repair as diff_repair_module
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_repair import repair_malformed_diff
 
@@ -58,7 +59,7 @@ def test_malformed_multi_file_diff_skipped(tmp_path: Path) -> None:
         context={"files": []},
     )
     assert result["status"] == "skipped"
-    assert result["reason"] == "not_single_file_target"
+    assert result["reason"] == "file_count_out_of_scope"
 
 
 def test_non_test_task_skipped(tmp_path: Path) -> None:
@@ -269,4 +270,66 @@ def test_impl_with_tests_out_of_scope_file_count_skipped(tmp_path: Path) -> None
     )
     assert result["applied"] is False
     assert result["status"] == "skipped"
-    assert result["reason"] == "impl_with_tests_file_count_out_of_scope"
+    assert result["reason"] == "file_count_out_of_scope"
+
+
+def test_impl_with_tests_skipped_when_target_not_in_plan(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def test_slugify():\n"
+        "+    assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "src/helpers.py"}]},
+        context={"files": []},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "target_not_in_plan"
+
+
+def test_repair_validation_failed_reason(tmp_path: Path, monkeypatch) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_cli_placeholder():\n    assert True\n", encoding="utf-8")
+    malformed = (
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        " def test_cli_placeholder():\n"
+        "+import os\n"
+        "     assert True\n"
+    )
+    original_inspect = diff_repair_module.inspect_diff
+    call_count = {"n": 0}
+
+    def _inspect(diff: str, cwd: Path | None = None):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return original_inspect(diff, cwd=cwd)
+        return {"valid": False, "errors": ["forced_invalid"], "warnings": [], "files": []}
+
+    monkeypatch.setattr(diff_repair_module, "inspect_diff", _inspect)
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add tests",
+        patch_plan={"task_type": "test_generation"},
+        context={"files": []},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "failed"
+    assert result["reason"] == "validation_failed"

@@ -332,6 +332,13 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
+    if patch_diff.get("attempted", False):
+        lines.append(f"- Repair attempted: `{bool(patch_diff.get('repair_attempted', False))}`")
+        lines.append(f"- Repair applied: `{bool(patch_diff.get('repair_applied', False))}`")
+        lines.append(f"- Repair status: `{patch_diff.get('repair_status', 'not_attempted')}`")
+        lines.append(f"- Repair reason: `{patch_diff.get('repair_reason', 'not_attempted')}`")
+        if patch_diff.get("repair_error"):
+            lines.append(f"- Repair error: `{patch_diff.get('repair_error')}`")
 
     if patch_diff.get("attempted", False) and patch_diff.get("plan_consistent") is not None:
         lines.extend(
@@ -365,6 +372,13 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     )
     if str(regeneration.get("result", "")) in {"invalid", "timeout"} and regeneration.get("regenerated_invalid_reason"):
         lines.append(f"- Regenerated invalid reason: `{regeneration.get('regenerated_invalid_reason')}`")
+    if bool(regeneration.get("regenerated_repair_attempted", False)):
+        lines.append(f"- Regenerated repair attempted: `{bool(regeneration.get('regenerated_repair_attempted', False))}`")
+        lines.append(f"- Regenerated repair applied: `{bool(regeneration.get('regenerated_repair_applied', False))}`")
+        lines.append(f"- Regenerated repair status: `{regeneration.get('regenerated_repair_status', 'not_attempted')}`")
+        lines.append(f"- Regenerated repair reason: `{regeneration.get('regenerated_repair_reason', 'not_attempted')}`")
+        if regeneration.get("regenerated_repair_error"):
+            lines.append(f"- Regenerated repair error: `{regeneration.get('regenerated_repair_error')}`")
 
     if str(patch_diff.get("status", "")) == "invalid":
         lines.extend(

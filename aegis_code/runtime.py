@@ -1204,6 +1204,11 @@ def build_run_payload(
             "final_status": "not_needed",
             "result": "not_needed",
             "regenerated_invalid_reason": None,
+            "regenerated_repair_attempted": False,
+            "regenerated_repair_applied": False,
+            "regenerated_repair_status": "not_attempted",
+            "regenerated_repair_reason": "not_attempted",
+            "regenerated_repair_error": None,
             "corrective_control_status": "not_triggered",
             "corrective_control_reason": "not_triggered",
             "corrective_control_error": None,
@@ -1461,6 +1466,11 @@ def build_run_payload(
             "repair_status": str(repair_result.get("status", "skipped")),
             "repair_reason": str(repair_result.get("reason", "unknown")),
             "repair_error": repair_result.get("error"),
+            "regenerated_repair_attempted": bool(regeneration.get("regenerated_repair_attempted", False)),
+            "regenerated_repair_applied": bool(regeneration.get("regenerated_repair_applied", False)),
+            "regenerated_repair_status": str(regeneration.get("regenerated_repair_status", "not_attempted")),
+            "regenerated_repair_reason": str(regeneration.get("regenerated_repair_reason", "not_attempted")),
+            "regenerated_repair_error": regeneration.get("regenerated_repair_error"),
             "syntactic_valid": syntactic_valid,
             "syntactic_error": syntactic_error,
             "corrective_control_status": str(regeneration.get("corrective_control_status", "not_triggered")),
@@ -1600,6 +1610,7 @@ def build_run_payload(
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
             if second_diff and not bool(second_validation.get("valid", False)):
+                regeneration["regenerated_repair_attempted"] = True
                 second_repair = repair_malformed_diff(
                     second_diff,
                     cwd=(cwd or Path.cwd()),
@@ -1607,6 +1618,10 @@ def build_run_payload(
                     patch_plan=regen_plan,
                     context=failure_context,
                 )
+                regeneration["regenerated_repair_applied"] = bool(second_repair.get("applied", False))
+                regeneration["regenerated_repair_status"] = str(second_repair.get("status", "skipped"))
+                regeneration["regenerated_repair_reason"] = str(second_repair.get("reason", "unknown"))
+                regeneration["regenerated_repair_error"] = second_repair.get("error")
                 if bool(second_repair.get("applied", False)):
                     second_diff = str(second_repair.get("diff", "") or second_diff)
                     second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd()))
@@ -1719,6 +1734,11 @@ def build_run_payload(
             patch_diff["regeneration_trigger_reason"] = regeneration.get("trigger_reason") or regeneration.get("reason")
         if patch_diff.get("status") == "invalid":
             patch_diff["final_invalid_reason"] = patch_diff.get("error")
+        patch_diff["regenerated_repair_attempted"] = bool(regeneration.get("regenerated_repair_attempted", False))
+        patch_diff["regenerated_repair_applied"] = bool(regeneration.get("regenerated_repair_applied", False))
+        patch_diff["regenerated_repair_status"] = str(regeneration.get("regenerated_repair_status", "not_attempted"))
+        patch_diff["regenerated_repair_reason"] = str(regeneration.get("regenerated_repair_reason", "not_attempted"))
+        patch_diff["regenerated_repair_error"] = regeneration.get("regenerated_repair_error")
         patch_diff["regeneration_attempted"] = bool(regeneration.get("attempted", False))
         patch_diff["regenerated"] = bool(
             regeneration.get("attempted", False) and patch_diff.get("status") == "generated"
