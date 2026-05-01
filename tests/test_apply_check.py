@@ -144,8 +144,40 @@ def test_check_patch_file_blocks_binary_diff(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is False
     assert result["apply_blocked"] is True
-    assert "binary_diff_unsupported" in result["apply_block_reasons"]
+    assert "invalid_diff" in result["apply_block_reasons"]
+
+
+def test_check_patch_file_zero_hunks_is_blocked(tmp_path: Path) -> None:
+    diff_file = tmp_path / "zero-hunks.diff"
+    diff_file.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is False
+    assert "no_hunks" in result["errors"]
+    assert result["apply_blocked"] is True
+
+
+def test_check_patch_file_malformed_hunk_header_is_blocked(tmp_path: Path) -> None:
+    diff_file = tmp_path / "malformed-hunk.diff"
+    diff_file.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ ... @@\n"
+        "-a\n"
+        "+b\n",
+        encoding="utf-8",
+    )
+    result = check_patch_file(diff_file, cwd=tmp_path)
+    assert result["valid"] is False
+    assert "malformed_hunk_header" in result["errors"]
+    assert result["apply_blocked"] is True
 
 
 def test_format_apply_check_result_contains_summary_fields() -> None:

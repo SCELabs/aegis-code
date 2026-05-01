@@ -80,6 +80,61 @@ def _parse_block_git_target(block: list[str]) -> str | None:
     return None
 
 
+def _merge_duplicate_target_blocks(diff_text: str) -> tuple[str, bool]:
+    blocks = _split_file_blocks(diff_text)
+    if not blocks:
+        return str(diff_text or ""), False
+    grouped: dict[str, list[list[str]]] = {}
+    order: list[str] = []
+    passthrough_blocks: list[list[str]] = []
+    for block in blocks:
+        git_target = _parse_block_git_target(block)
+        old_path, new_path = _parse_block_paths(block)
+        target = git_target or new_path or old_path
+        if not target:
+            passthrough_blocks.append(block)
+            continue
+        if target not in grouped:
+            grouped[target] = []
+            order.append(target)
+        grouped[target].append(block)
+
+    changed = any(len(items) > 1 for items in grouped.values())
+    if not changed:
+        return str(diff_text or ""), False
+
+    merged_blocks: list[str] = []
+    for target in order:
+        target_blocks = grouped[target]
+        first = target_blocks[0]
+        first_old, first_new = _parse_block_paths(first)
+        old_header = f"--- /dev/null" if first_old is None else f"--- a/{first_old}"
+        new_header = f"+++ /dev/null" if first_new is None else f"+++ b/{first_new}"
+        merged_lines: list[str] = [f"diff --git a/{target} b/{target}", old_header, new_header]
+        for block in target_blocks:
+            in_hunk = False
+            for line in block:
+                if line.startswith("@@ "):
+                    in_hunk = True
+                    merged_lines.append(line)
+                    continue
+                if not in_hunk:
+                    continue
+                if line.startswith("diff --git "):
+                    in_hunk = False
+                    continue
+                if line.startswith("--- ") or line.startswith("+++ "):
+                    continue
+                merged_lines.append(line)
+        merged_blocks.append("\n".join(merged_lines))
+    for block in passthrough_blocks:
+        merged_blocks.append("\n".join(block))
+    merged = "\n".join(merged_blocks)
+    if merged and not merged.endswith("\n"):
+        merged += "\n"
+    return normalize_unified_diff(merged), True
+
+
 def _extract_block_intended_content(block: list[str], *, is_new_file: bool) -> str:
     out: list[str] = []
     in_hunk = False
@@ -183,11 +238,31 @@ def repair_malformed_diff(
             "repair_targets": repair_targets,
             "raw_repair_file_count": raw_repair_file_count,
         }
-    if "hunk_count_mismatch" not in errors:
+    if "duplicate_file_targets" in errors:
+        merged, merged_applied = _merge_duplicate_target_blocks(source)
+        if merged_applied:
+            merged_inspection = inspect_diff(merged, cwd=cwd)
+            merged_check = check_patch_text(merged, cwd=cwd)
+            if bool(merged_inspection.get("valid", False)) and not bool(merged_check.get("apply_blocked", False)):
+                return {
+                    "applied": True,
+                    "status": "repaired",
+                    "reason": "duplicate_targets_merged",
+                    "diff": merged,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
+            source = merged
+            inspection = merged_inspection
+            errors = [str(item) for item in inspection.get("errors", [])]
+            files = inspection.get("files", [])
+    if not any(item in errors for item in ("hunk_count_mismatch", "malformed_hunk_header", "no_hunks")):
         return {
             "applied": False,
             "status": "skipped",
-            "reason": "no_hunk_count_mismatch",
+            "reason": "no_repairable_structure_error",
             "diff": source,
             "error": None,
             "repair_file_count": repair_file_count,

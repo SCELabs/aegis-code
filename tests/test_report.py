@@ -482,3 +482,41 @@ def test_report_renders_repair_diagnostics(tmp_path: Path) -> None:
     assert "Raw repair file count: `4`" in content
     assert "Repair file count: `2`" in content
     assert "Repair targets: `src/helpers.py, tests/test_helpers.py`" in content
+
+
+def test_report_shows_task_too_vague_message(tmp_path: Path) -> None:
+    payload = {
+        "task": "add a new feature with tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "scope needed", "confidence": 0.5, "proposed_changes": [], "task_type": "vague_task"},
+        "patch_diff": {
+            "attempted": False,
+            "available": False,
+            "status": "skipped",
+            "error": "task_too_vague",
+            "reason": "task_too_vague",
+            "regeneration_attempted": False,
+        },
+        "patch_quality": None,
+        "status": "completed_tests_passed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Status: `skipped`" in content
+    assert "task_too_vague" in content
+    assert "Task needs clearer scope before patch generation." in content

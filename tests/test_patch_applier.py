@@ -408,3 +408,46 @@ def test_apply_result_mentions_no_git_commands(tmp_path: Path) -> None:
     result = apply_patch_file(diff, cwd=tmp_path)
     text = format_apply_result(result)
     assert "No git commands were run." in text
+
+
+def test_apply_zero_hunk_diff_is_rejected(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.py"
+    _write_file(target, "x=1\n")
+    before = target.read_text(encoding="utf-8")
+    diff = tmp_path / "zero-hunks.diff"
+    diff.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "no_hunks" in result["errors"]
+    assert target.read_text(encoding="utf-8") == before
+
+
+def test_apply_duplicate_same_file_blocks_not_applied_twice(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.py"
+    _write_file(target, "x=1\n")
+    before = target.read_text(encoding="utf-8")
+    diff = tmp_path / "dup.diff"
+    diff.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n"
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=2\n"
+        "+x=3\n",
+        encoding="utf-8",
+    )
+    result = apply_patch_file(diff, cwd=tmp_path)
+    assert result["applied"] is False
+    assert "duplicate_file_targets" in result["errors"]
+    assert target.read_text(encoding="utf-8") == before

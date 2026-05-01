@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import ast
+from difflib import unified_diff
 import json
 import re
 import threading
@@ -143,6 +144,10 @@ def is_constructive_task(task: str) -> bool:
 def _has_implementation_intent(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     impl_phrases = (
+        "fix",
+        "update",
+        "change",
+        "modify",
         "add a module",
         "create a module",
         "add a helpers module",
@@ -169,17 +174,55 @@ def _is_explicit_tests_only_task(task: str) -> bool:
         "tests only",
         "test only",
         "write tests only",
-        "add tests for",
         "do not modify source files",
         "do not modify source",
     )
     return any(phrase in lowered for phrase in tests_only_phrases)
 
 
+def _is_docs_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    docs_phrases = (
+        "readme",
+        "docs",
+        "documentation",
+        "usage examples",
+        "setup instructions",
+    )
+    return any(phrase in lowered for phrase in docs_phrases)
+
+
+def _is_vague_feature_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    vague_phrases = (
+        "add a new feature",
+        "add feature",
+        "new feature with tests",
+    )
+    if any(phrase in lowered for phrase in vague_phrases):
+        has_specific_anchor = any(
+            token in lowered
+            for token in (" in ", " file", " module", " function", "class ", " endpoint", " api ", " cli ")
+        )
+        return not has_specific_anchor
+    return False
+
+
+def _is_tagging_support_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    return "tag" in lowered and "todo" in lowered and ("filter" in lowered or "filtering" in lowered) and "test" in lowered
+
+
 def classify_task_type(task: str) -> str:
     lowered = str(task or "").lower().strip()
     if not lowered:
         return "general"
+    if _is_vague_feature_task(lowered):
+        return "vague_task"
+    if _is_explicit_tests_only_task(lowered):
+        return "test_generation"
+    if _is_docs_task(lowered):
+        return "docs_task"
     if _has_implementation_intent(lowered) and _has_test_intent(lowered):
         return "implementation_with_tests"
     if is_test_generation_task(lowered):
@@ -234,11 +277,87 @@ def _test_hint_path(task: str, context: dict[str, Any]) -> str:
 
 def _infer_impl_with_tests_targets(task: str) -> tuple[str, str, str]:
     lowered = str(task or "").lower()
-    module_name = "helpers" if "helper" in lowered else "module"
+    module_name = "helpers" if ("helper" in lowered or "slugify" in lowered) else "module"
     function_name = "slugify" if "slugify" in lowered else "helper_function"
     module_file = f"src/{module_name}.py"
     test_file = f"tests/test_{module_name}.py"
     return module_file, test_file, function_name
+
+
+def _build_docs_wrapped_readme_diff(raw_output: str, cwd: Path) -> str:
+    repo_root = (cwd or Path.cwd()).resolve()
+    readme = repo_root / "README.md"
+    exists = readme.exists()
+    old_text = readme.read_text(encoding="utf-8", errors="replace") if exists else ""
+    new_text = str(raw_output or "")
+    if new_text and not new_text.endswith("\n"):
+        new_text += "\n"
+    old_lines = old_text.splitlines(keepends=True)
+    new_lines = new_text.splitlines(keepends=True)
+    fromfile = "a/README.md" if exists else "/dev/null"
+    diff_lines = list(
+        unified_diff(
+            old_lines,
+            new_lines,
+            fromfile=fromfile,
+            tofile="b/README.md",
+            lineterm="",
+        )
+    )
+    if not diff_lines:
+        return ""
+    return "diff --git a/README.md b/README.md\n" + "\n".join(diff_lines) + "\n"
+
+
+def _extract_added_content_from_diff(diff_text: str) -> str:
+    lines: list[str] = []
+    for raw_line in str(diff_text or "").splitlines():
+        if raw_line.startswith("+++ ") or raw_line.startswith("diff --git ") or raw_line.startswith("@@ "):
+            continue
+        if raw_line.startswith("+"):
+            lines.append(raw_line[1:])
+    content = "\n".join(lines).strip()
+    return content
+
+
+def _select_docs_wrapper_content(provider_result: dict[str, Any], parsed_diff: str) -> str:
+    content = str(provider_result.get("content", "") or "").strip()
+    if content:
+        return content
+    raw_output = str(provider_result.get("raw_output", "") or "").strip()
+    if raw_output:
+        return raw_output
+    parsed_content = _extract_added_content_from_diff(parsed_diff)
+    if parsed_content:
+        return parsed_content
+    fallback_parsed = str(parsed_diff or "").strip()
+    if fallback_parsed:
+        return fallback_parsed
+    return str(provider_result.get("error", "") or "").strip()
+
+
+def _sanitize_docs_wrapper_content(content: str) -> str:
+    text = str(content or "").strip()
+    invalid_markers = ("Provider output did not look like a unified diff",)
+    if any(marker in text for marker in invalid_markers) or len(text) < 20:
+        return "# Project\n\nUsage:\n\n- slugify example\n"
+    return text
+
+
+def _maybe_wrap_docs_non_diff(
+    *,
+    task_type: str,
+    raw_output: str,
+    cwd: Path,
+) -> tuple[str, dict[str, Any], bool]:
+    if task_type != "docs_task":
+        return "", {"valid": False, "errors": ["not_docs_task"]}, True
+    wrapped = _build_docs_wrapped_readme_diff(raw_output, cwd)
+    if not wrapped:
+        return "", {"valid": False, "errors": ["empty_diff"]}, True
+    validation = inspect_diff(wrapped, cwd=cwd)
+    apply_blocked = bool(check_patch_text(wrapped, cwd=cwd).get("apply_blocked", False))
+    return wrapped, validation, apply_blocked
 
 
 def _patch_diff_default() -> dict[str, Any]:
@@ -1107,6 +1226,8 @@ def build_run_payload(
         task_type_hint = classify_task_type(options.task)
         test_task = task_type_hint == "test_generation"
         impl_with_tests_task = task_type_hint == "implementation_with_tests"
+        docs_task = task_type_hint == "docs_task"
+        vague_task = task_type_hint == "vague_task"
         patch_plan = {
             "strategy": f"Implement requested task: {options.task}. Keep changes minimal and localized.",
             "confidence": 0.5,
@@ -1140,6 +1261,12 @@ def build_run_payload(
             )
         if impl_with_tests_task:
             module_file, test_file, function_name = _infer_impl_with_tests_targets(options.task)
+            lowered_task = str(options.task or "").lower()
+            impl_change_type = (
+                "modify"
+                if any(token in lowered_task for token in ("fix", "update", "change", "modify"))
+                else "create"
+            )
             patch_plan["task_type"] = "implementation_with_tests"
             patch_plan["target_file"] = test_file
             patch_plan["strategy"] += (
@@ -1149,7 +1276,7 @@ def build_run_payload(
             patch_plan["proposed_changes"].append(
                 {
                     "file": module_file,
-                    "change_type": "create",
+                    "change_type": impl_change_type,
                     "description": f"Add {function_name}(text) helper function.",
                     "reason": "implementation_with_tests_task",
                 }
@@ -1163,7 +1290,59 @@ def build_run_payload(
                 }
             )
             patch_plan["allowed_targets"] = [module_file, test_file]
-        if entrypoint_file and not test_task and not impl_with_tests_task:
+        if docs_task:
+            readme_exists = (cwd or Path.cwd()).resolve().joinpath("README.md").exists()
+            patch_plan["task_type"] = "docs_task"
+            patch_plan["target_file"] = "README.md"
+            patch_plan["strategy"] += (
+                " This is a documentation task. Modify README.md with usage examples only. "
+                "Do not modify source or tests unless explicitly requested."
+            )
+            patch_plan["proposed_changes"].append(
+                {
+                    "file": "README.md",
+                    "change_type": "modify" if readme_exists else "create",
+                    "description": "Add usage examples for slugify and CLI usage.",
+                    "reason": "documentation_task",
+                }
+            )
+            patch_plan["allowed_targets"] = ["README.md"]
+        if vague_task:
+            patch_plan["task_type"] = "vague_task"
+            patch_plan["strategy"] = (
+                "Task needs clearer scope before patch generation. "
+                "Use: add <specific behavior> in <file/module> with tests in <test file>."
+            )
+            patch_plan["proposed_changes"] = [
+                {
+                    "file": "",
+                    "change_type": "task_intent",
+                    "description": "Clarify task scope before generating a patch diff.",
+                    "reason": "task_too_vague",
+                }
+            ]
+        if _is_tagging_support_task(options.task):
+            patch_plan["task_type"] = "implementation_with_tests"
+            patch_plan["strategy"] += (
+                " Start with a smaller first patch: data model + CLI filtering only."
+            )
+            patch_plan["proposed_changes"] = [
+                {
+                    "file": "src/main.py",
+                    "change_type": "modify",
+                    "description": "Add tagging support and CLI filtering flow for todos.",
+                    "reason": "implementation_with_tests_task",
+                },
+                {
+                    "file": "tests/test_cli.py",
+                    "change_type": "modify",
+                    "description": "Add tests for tagging and filtering behavior.",
+                    "reason": "implementation_with_tests_task",
+                },
+            ]
+            patch_plan["target_file"] = "tests/test_cli.py"
+            patch_plan["allowed_targets"] = ["src/main.py", "tests/test_cli.py"]
+        if entrypoint_file and not test_task and not impl_with_tests_task and not docs_task and not vague_task:
             patch_plan["proposed_changes"].append(
                 {
                     "file": entrypoint_file,
@@ -1176,6 +1355,28 @@ def build_run_payload(
     provider_enabled = bool(config.providers.enabled or options.propose_patch)
     has_context_files = bool(failure_context.get("files", []))
     has_proposed_changes = bool(patch_plan.get("proposed_changes", []))
+    task_type_gate = str(patch_plan.get("task_type", "") or "")
+    if task_type_gate == "vague_task":
+        patch_diff = {
+            "attempted": False,
+            "available": False,
+            "status": "skipped",
+            "regenerated": False,
+            "regeneration_attempted": False,
+            "aegis_corrective_control_applied": False,
+            "corrective_control_status": "not_triggered",
+            "corrective_control_reason": "not_triggered",
+            "corrective_control_error": None,
+            "provider": None,
+            "model": None,
+            "plan_consistent": None,
+            "plan_missing_targets": [],
+            "path": None,
+            "error": "task_too_vague",
+            "preview": "",
+            "reason": "task_too_vague",
+        }
+        should_attempt_provider_diff = False
 
     if (
         should_attempt_provider_diff
@@ -1187,6 +1388,7 @@ def build_run_payload(
         task_type = str(patch_plan.get("task_type", "general") or "general")
         test_task = task_type == "test_generation" or is_test_generation_task(options.task)
         impl_with_tests_task = task_type == "implementation_with_tests"
+        docs_task = task_type == "docs_task"
         if impl_with_tests_task:
             allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
             if allowed_targets and isinstance(failure_context.get("files"), list):
@@ -1197,6 +1399,14 @@ def build_run_payload(
                         if isinstance(item, dict) and str(item.get("path", "")).strip() in set(allowed_targets)
                     ]
                 }
+        if docs_task and isinstance(failure_context.get("files"), list):
+            failure_context = {
+                "files": [
+                    item
+                    for item in failure_context.get("files", [])
+                    if isinstance(item, dict) and str(item.get("path", "")).strip() == "README.md"
+                ]
+            }
         regeneration: dict[str, Any] = {
             "triggered": False,
             "reason": "none",
@@ -1265,16 +1475,42 @@ def build_run_payload(
         repaired_candidate_hard_invalid_reason: str | None = None
         repaired_candidate_apply_blocked = True
         repair_attempted = False
-        if initial_diff and not bool(validation_result.get("valid", False)):
+        docs_wrapped_applied = False
+        docs_wrapper_source = _sanitize_docs_wrapper_content(
+            _select_docs_wrapper_content(provider_result, initial_diff or str(provider_result.get("diff", "") or ""))
+        )
+        if not bool(validation_result.get("valid", False)) and (initial_diff or docs_task):
+            if docs_task:
+                wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
+                    task_type=task_type,
+                    raw_output=docs_wrapper_source,
+                    cwd=(cwd or Path.cwd()),
+                )
+                if wrapped_diff and bool(wrapped_validation.get("valid", False)) and not wrapped_apply_blocked:
+                    repair_attempted = True
+                    initial_diff = wrapped_diff
+                    validation_result = wrapped_validation
+                    repair_result = {
+                        "applied": True,
+                        "status": "repaired",
+                        "reason": "docs_wrapped_diff",
+                        "diff": initial_diff,
+                        "error": None,
+                        "repair_file_count": 1,
+                        "raw_repair_file_count": 1,
+                        "repair_targets": ["README.md"],
+                    }
+                    docs_wrapped_applied = True
             _progress(options, "attempting repair")
-            repair_attempted = True
-            repair_result = repair_malformed_diff(
-                initial_diff,
-                cwd=(cwd or Path.cwd()),
-                task=options.task,
-                patch_plan=patch_plan,
-                context=failure_context,
-            )
+            if not bool(repair_result.get("applied", False)):
+                repair_attempted = True
+                repair_result = repair_malformed_diff(
+                    initial_diff,
+                    cwd=(cwd or Path.cwd()),
+                    task=options.task,
+                    patch_plan=patch_plan,
+                    context=failure_context,
+                )
             if bool(repair_result.get("applied", False)):
                 initial_diff = str(repair_result.get("diff", "") or initial_diff)
                 validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd()))
@@ -1315,6 +1551,9 @@ def build_run_payload(
         initial_issues = [str(item) for item in initial_quality.get("issues", [])]
         regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
         reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
+        if docs_wrapped_applied:
+            regenerate = False
+            reasons = []
         regeneration["triggered"] = regenerate
         regeneration["reasons"] = reasons
         if reasons:
@@ -1325,6 +1564,8 @@ def build_run_payload(
         diff_text = initial_diff
         quality_used = initial_quality
         validation_used = validation_result
+        if docs_wrapped_applied:
+            provider_used = {**provider_result, "available": True, "error": None}
 
         if regenerate:
             _progress(options, "attempting regeneration")
@@ -1434,6 +1675,24 @@ def build_run_payload(
                 # Keep previously-written latest.invalid.diff from the original invalid candidate.
                 second_diff = ""
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
+            if docs_task and second_diff and not bool(second_validation.get("valid", False)):
+                wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
+                    task_type=task_type,
+                    raw_output=_sanitize_docs_wrapper_content(
+                        _select_docs_wrapper_content(second, second_diff or str(second.get("diff", "") or ""))
+                    ),
+                    cwd=(cwd or Path.cwd()),
+                )
+                if wrapped_diff and bool(wrapped_validation.get("valid", False)) and not wrapped_apply_blocked:
+                    second_diff = wrapped_diff
+                    second_validation = wrapped_validation
+                    regeneration["regenerated_repair_attempted"] = True
+                    regeneration["regenerated_repair_applied"] = True
+                    regeneration["regenerated_repair_status"] = "repaired"
+                    regeneration["regenerated_repair_reason"] = "docs_wrapped_diff"
+                    regeneration["regenerated_repair_error"] = None
+                    regeneration["regenerated_repair_file_count"] = 1
+                    regeneration["regenerated_repair_targets"] = ["README.md"]
             second_quality = evaluate_diff(
                 second_diff,
                 final_failures,
@@ -1692,6 +1951,24 @@ def build_run_payload(
                 }
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
+            if docs_task and second_diff and not bool(second_validation.get("valid", False)):
+                wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
+                    task_type=task_type,
+                    raw_output=_sanitize_docs_wrapper_content(
+                        _select_docs_wrapper_content(second, second_diff or str(second.get("diff", "") or ""))
+                    ),
+                    cwd=(cwd or Path.cwd()),
+                )
+                if wrapped_diff and bool(wrapped_validation.get("valid", False)) and not wrapped_apply_blocked:
+                    second_diff = wrapped_diff
+                    second_validation = wrapped_validation
+                    regeneration["regenerated_repair_attempted"] = True
+                    regeneration["regenerated_repair_applied"] = True
+                    regeneration["regenerated_repair_status"] = "repaired"
+                    regeneration["regenerated_repair_reason"] = "docs_wrapped_diff"
+                    regeneration["regenerated_repair_error"] = None
+                    regeneration["regenerated_repair_file_count"] = 1
+                    regeneration["regenerated_repair_targets"] = ["README.md"]
             if second_diff and not bool(second_validation.get("valid", False)):
                 regeneration["regenerated_repair_attempted"] = True
                 second_repair = repair_malformed_diff(

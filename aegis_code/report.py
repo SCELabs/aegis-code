@@ -293,7 +293,13 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         ]
     )
 
-    if not patch_diff.get("attempted", False):
+    if str(patch_diff.get("status", "")) == "skipped":
+        lines.append("- Status: `skipped`")
+        if patch_diff.get("error"):
+            lines.append(f"- Error: `{patch_diff.get('error')}`")
+        if str(patch_diff.get("error", "")) == "task_too_vague" or str(patch_diff.get("reason", "")) == "task_too_vague":
+            lines.append("- Task needs clearer scope before patch generation.")
+    elif not patch_diff.get("attempted", False):
         lines.append("- Not attempted")
     elif str(patch_diff.get("status", "")) == "generated":
         lines.append("- Status: `generated`")
@@ -323,7 +329,8 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             lines.append(f"- Invalid diff path: `{patch_diff.get('invalid_diff_path')}`")
         lines.append("- Note: Diff failed validation and cannot be applied.")
     else:
-        lines.append("- Status: `unavailable`")
+        status_value = str(patch_diff.get("status", "unavailable") or "unavailable")
+        lines.append(f"- Status: `{status_value}`")
         if patch_diff.get("provider"):
             lines.append(f"- Provider: `{patch_diff.get('provider')}`")
         if patch_diff.get("model"):
@@ -332,6 +339,8 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Aegis corrective control: `{patch_diff.get('corrective_control_status', 'not_triggered')}`")
         if patch_diff.get("error"):
             lines.append(f"- Error: `{patch_diff.get('error')}`")
+        if str(patch_diff.get("error", "")) == "task_too_vague" or str(patch_diff.get("reason", "")) == "task_too_vague":
+            lines.append("- Task needs clearer scope before patch generation.")
     if patch_diff.get("attempted", False):
         lines.append(f"- Repair attempted: `{bool(patch_diff.get('repair_attempted', False))}`")
         lines.append(f"- Repair applied: `{bool(patch_diff.get('repair_applied', False))}`")

@@ -3,6 +3,21 @@ from __future__ import annotations
 from typing import Any
 
 
+def _is_docs_task(task: str, patch_plan: dict[str, Any]) -> bool:
+    lowered = str(task or "").lower()
+    if any(token in lowered for token in ("readme", "docs", "documentation")):
+        return True
+    proposed = patch_plan.get("proposed_changes", [])
+    if isinstance(proposed, list):
+        for item in proposed:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("file", "")).strip().lower().replace("\\", "/")
+            if path == "readme.md" or path.startswith("docs/"):
+                return True
+    return False
+
+
 def _strip_provider_prefix(model: str) -> str:
     if ":" not in model:
         return model
@@ -79,6 +94,38 @@ def build_diff_prompt(
         allowed_targets = patch_plan.get("allowed_targets", [])
         if isinstance(allowed_targets, list) and allowed_targets:
             test_constraints.append(f"- Allowed targets: {', '.join(str(item) for item in allowed_targets)}")
+    if _is_docs_task(task, patch_plan):
+        docs_constraints = [
+            "Documentation-task guidance:",
+            "- Return ONLY a valid unified diff.",
+            "- Target README.md.",
+            "- Do not output explanation.",
+            "- Do not modify source or tests unless explicitly requested.",
+            "- Ensure the diff uses unified git format.",
+            "- Use headers:",
+            "  diff --git a/README.md b/README.md",
+            "  --- a/README.md",
+            "  +++ b/README.md",
+            "- If README.md does not exist, use:",
+            "  --- /dev/null",
+            "  +++ b/README.md",
+        ]
+        test_constraints.extend(docs_constraints)
+        if not any("Return ONLY a valid unified diff" in item for item in regen_constraints):
+            regen_constraints.append("- Return ONLY a valid unified diff.")
+        if not any("Modify README.md" in item for item in regen_constraints):
+            regen_constraints.append("- Modify README.md.")
+        if not any("Do not output explanation" in item for item in regen_constraints):
+            regen_constraints.append("- Do not output explanation.")
+    allowed_targets = patch_plan.get("allowed_targets", [])
+    if isinstance(allowed_targets, list) and allowed_targets:
+        test_constraints.extend(
+            [
+                "Allowed-target guidance:",
+                f"- Modify only these files: {', '.join(str(item) for item in allowed_targets)}",
+                "- Do not modify files outside allowed targets.",
+            ]
+        )
     return (
         "You generate a unified git diff only.\n"
         "Do not output markdown fences or explanations.\n"

@@ -41,3 +41,22 @@ def test_build_diff_prompt_adds_regeneration_constraints() -> None:
     )
     assert "Regeneration constraints:" in prompt
     assert "- Produce valid diff" in prompt
+
+
+def test_build_diff_prompt_adds_docs_guidance_for_readme_tasks() -> None:
+    prompt = build_diff_prompt(
+        task="update README with examples for cli usage",
+        failures={},
+        context={"files": []},
+        patch_plan={"task_type": "general", "proposed_changes": [{"file": "README.md", "change_type": "modify"}]},
+        aegis_execution={},
+    )
+    assert "Return ONLY a valid unified diff." in prompt
+    assert "Target README.md." in prompt
+    assert "Do not output explanation." in prompt
+    assert "Do not modify source or tests unless explicitly requested." in prompt
+    assert "diff --git a/README.md b/README.md" in prompt
+    assert "--- a/README.md" in prompt
+    assert "+++ b/README.md" in prompt
+    assert "--- /dev/null" in prompt
+    assert "+++ b/README.md" in prompt

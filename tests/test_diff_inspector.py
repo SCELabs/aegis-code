@@ -125,3 +125,48 @@ def test_inspect_diff_large_warns(tmp_path: Path) -> None:
     )
     result = inspect_diff(diff, cwd=tmp_path)
     assert "very_large_diff" in result["warnings"]
+
+
+def test_inspect_diff_invalid_when_files_present_but_zero_hunks() -> None:
+    diff = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+    )
+    result = inspect_diff(diff)
+    assert result["valid"] is False
+    assert "no_hunks" in result["errors"]
+
+
+def test_inspect_diff_invalid_malformed_hunk_header() -> None:
+    diff = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ ... @@\n"
+        "-a\n"
+        "+b\n"
+    )
+    result = inspect_diff(diff)
+    assert result["valid"] is False
+    assert "malformed_hunk_header" in result["errors"]
+
+
+def test_inspect_diff_invalid_duplicate_file_blocks() -> None:
+    diff = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-b\n"
+        "+c\n"
+    )
+    result = inspect_diff(diff)
+    assert result["valid"] is False
+    assert "duplicate_file_targets" in result["errors"]

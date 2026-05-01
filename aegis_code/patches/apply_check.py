@@ -10,6 +10,8 @@ def check_patch_text(diff_text: str, cwd: Path | None = None) -> dict[str, Any]:
     result = inspect_diff(diff_text, cwd=cwd)
     warnings = result.get("warnings", [])
     blockers = []
+    if not bool(result.get("valid", False)) or bool(result.get("errors", [])):
+        blockers.append("invalid_diff")
     severe_prefixes = ("unsafe_absolute_path", "unsafe_parent_traversal", "internal_or_generated_path")
     if any(str(item).startswith(severe_prefixes) for item in warnings):
         blockers.append("unsafe_paths")

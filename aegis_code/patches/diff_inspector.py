@@ -144,6 +144,10 @@ def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
             hunk_old_seen = 0
             hunk_new_seen = 0
             continue
+        if line.startswith("@@"):
+            _finalize_hunk_if_open()
+            errors.append("malformed_hunk_header")
+            continue
 
         if line.startswith("--- "):
             _finalize_hunk_if_open()
@@ -177,6 +181,13 @@ def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
 
     if not files:
         errors.append("no_file_targets")
+    targets: list[str] = []
+    for item in files:
+        candidate = item.get("new_path") or item.get("old_path")
+        if isinstance(candidate, str) and candidate:
+            targets.append(candidate)
+    if len(set(targets)) != len(targets):
+        errors.append("duplicate_file_targets")
     total_hunks = sum(int(item["hunk_count"]) for item in files)
     total_additions = sum(int(item["additions"]) for item in files)
     total_deletions = sum(int(item["deletions"]) for item in files)
@@ -191,6 +202,8 @@ def inspect_diff(diff: str, cwd: Path | None = None) -> dict[str, Any]:
         or ("binary files" in lower_text and " differ" in lower_text)
     ):
         warnings.append("binary_diff_detected")
+    if files and total_hunks == 0:
+        errors.append("no_hunks")
     if any(item["hunk_count"] == 0 and (item["additions"] + item["deletions"] > 0) for item in files):
         warnings.append("malformed_hunks")
 

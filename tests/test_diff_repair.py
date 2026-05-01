@@ -321,7 +321,10 @@ def test_repaired_multi_file_create_diff_check_and_apply_consistent(tmp_path: Pa
     diff_file.write_text(repaired, encoding="utf-8")
     apply_result = apply_patch_file(diff_file, cwd=tmp_path)
     assert apply_result["applied"] is True
-    assert sorted(str(item) for item in apply_result["files_changed"]) == ["src/helpers.py", "tests/test_helpers.py"]
+    assert sorted(str(item.get("path", "")) for item in apply_result["files_changed"]) == [
+        "src/helpers.py",
+        "tests/test_helpers.py",
+    ]
 
 
 def test_incidental_triple_plus_minus_in_code_not_new_block(tmp_path: Path) -> None:
@@ -387,6 +390,67 @@ def test_duplicate_blocks_dedup_by_target_repairs(tmp_path: Path) -> None:
     assert result["raw_repair_file_count"] == 4
     assert result["repair_file_count"] == 2
     assert sorted(result["repair_targets"]) == ["src/helpers.py", "tests/test_helpers.py"]
+
+
+def test_duplicate_file_targets_merge_repair_single_block_per_file(tmp_path: Path) -> None:
+    main = tmp_path / "src" / "main.py"
+    main.parent.mkdir(parents=True, exist_ok=True)
+    main.write_text("a\n", encoding="utf-8")
+    malformed = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-b\n"
+        "+c\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="implement feature",
+        patch_plan={"task_type": "general", "proposed_changes": [{"file": "src/main.py"}]},
+        context={"files": [{"path": "src/main.py", "content": "a\n"}]},
+    )
+    assert result["applied"] is True
+    assert result["reason"] == "duplicate_targets_merged"
+    repaired = str(result["diff"])
+    assert repaired.count("diff --git a/src/main.py b/src/main.py") == 1
+    assert repaired.count("@@ -1 +1 @@") == 2
+    checked = check_patch_text(repaired, cwd=tmp_path)
+    assert checked["valid"] is True
+    assert checked["apply_blocked"] is False
+
+
+def test_duplicate_file_targets_merge_invalid_still_rejected(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ ... @@\n"
+        "-a\n"
+        "+b\n"
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ ... @@\n"
+        "-b\n"
+        "+c\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="implement feature",
+        patch_plan={"task_type": "general", "proposed_changes": [{"file": "src/main.py"}]},
+        context={"files": []},
+    )
+    assert result["applied"] is False
+    assert result["status"] in {"failed", "skipped"}
 
 
 def test_impl_with_tests_mixed_create_modify_repaired(tmp_path: Path) -> None:

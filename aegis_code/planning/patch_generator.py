@@ -5,6 +5,10 @@ from typing import Any
 def _has_implementation_intent(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     impl_phrases = (
+        "fix",
+        "update",
+        "change",
+        "modify",
         "add a module",
         "create a module",
         "add a helpers module",
@@ -32,10 +36,22 @@ def _is_explicit_tests_only_task(task: str) -> bool:
     )
 
 
+def _is_docs_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    return any(
+        phrase in lowered
+        for phrase in ("readme", "docs", "documentation", "usage examples", "setup instructions")
+    )
+
+
 def _classify_task_type(task: str) -> str:
     lowered = str(task or "").lower().strip()
     if not lowered:
         return "general"
+    if _is_explicit_tests_only_task(lowered):
+        return "test_generation"
+    if _is_docs_task(lowered):
+        return "docs_task"
     if _has_implementation_intent(lowered) and _has_test_intent(lowered):
         return "implementation_with_tests"
     if _is_test_generation_task(lowered):

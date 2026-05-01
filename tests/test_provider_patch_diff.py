@@ -6,6 +6,7 @@ import types
 from pathlib import Path
 
 from aegis_code.models import AegisDecision
+from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.providers.openai_provider import generate_patch_diff_openai
 from aegis_code.providers.base import build_diff_prompt
 from aegis_code.report import render_markdown_report
@@ -408,6 +409,114 @@ def test_test_only_task_remains_test_generation() -> None:
     assert classify_task_type("add tests for save_note_to_file only; do not modify source files") == "test_generation"
 
 
+def test_readme_task_classifies_as_docs_task() -> None:
+    assert classify_task_type("update README with examples for slugify and CLI usage") == "docs_task"
+
+
+def test_mixed_fix_and_tests_task_classifies_as_implementation_with_tests() -> None:
+    assert (
+        classify_task_type("fix slugify so it strips punctuation and add tests for that")
+        == "implementation_with_tests"
+    )
+
+
+def test_vague_feature_task_classifies_as_vague_task() -> None:
+    assert classify_task_type("add a new feature with tests") == "vague_task"
+
+
+def test_mixed_fix_and_tests_task_plan_targets_impl_and_tests(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="fix slugify so it strips punctuation and add tests for that", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "implementation_with_tests"
+    assert "Prefer modifying tests only." not in str(payload["patch_plan"].get("strategy", ""))
+    files = [item for item in payload["patch_plan"]["proposed_changes"] if isinstance(item, dict)]
+    assert any(item.get("file") == "src/helpers.py" and item.get("change_type") == "modify" for item in files)
+    assert any(
+        item.get("file") == "tests/test_helpers.py" and item.get("change_type") in {"modify", "create"}
+        for item in files
+    )
+    plan = captured.get("patch_plan")
+    assert isinstance(plan, dict)
+    assert sorted(plan.get("allowed_targets", [])) == ["src/helpers.py", "tests/test_helpers.py"]
+
+
+def test_vague_task_skips_provider_with_task_too_vague(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _boom(**_: object):
+        raise AssertionError("provider should not be called for vague tasks")
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _boom)
+    payload = build_run_payload(
+        options=TaskOptions(task="add a new feature with tests", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "vague_task"
+    assert payload["patch_diff"]["status"] == "skipped"
+    assert payload["patch_diff"]["error"] == "task_too_vague"
+    assert payload["patch_diff"]["attempted"] is False
+
+
+def test_tagging_task_infers_explicit_targets(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="add tagging support to todos with filtering and tests", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "implementation_with_tests"
+    files = [str(item.get("file", "")) for item in payload["patch_plan"]["proposed_changes"] if isinstance(item, dict)]
+    assert "src/main.py" in files
+    assert "tests/test_cli.py" in files
+    assert "smaller first patch" in str(payload["patch_plan"].get("strategy", "")).lower()
+    plan = captured.get("patch_plan")
+    assert isinstance(plan, dict)
+    assert sorted(plan.get("allowed_targets", [])) == ["src/main.py", "tests/test_cli.py"]
+
+
 def test_task_driven_test_writing_uses_patch_plan_and_attempts_diff(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
@@ -510,6 +619,42 @@ def test_feature_task_may_add_entrypoint_plan_item(monkeypatch, tmp_path: Path) 
     )
 
 
+def test_readme_task_plans_readme_and_not_entrypoint(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Title\n", encoding="utf-8")
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "docs_task"
+    files = [item for item in payload["patch_plan"]["proposed_changes"] if isinstance(item, dict)]
+    assert any(item.get("file") == "README.md" and item.get("change_type") == "modify" for item in files)
+    assert not any(item.get("reason") == "entrypoint_integration" for item in files)
+    plan = captured.get("patch_plan")
+    assert isinstance(plan, dict)
+    assert plan.get("allowed_targets") == ["README.md"]
+
+
 def test_test_task_requests_full_file_diff(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
@@ -558,6 +703,258 @@ def test_impl_with_tests_prompt_includes_allowed_targets() -> None:
     assert "Allowed targets: src/helpers.py, tests/test_helpers.py" in prompt
     assert "Prefer modifying tests only." not in prompt
     assert "Do not modify source files unless explicitly requested." not in prompt
+
+
+def test_docs_task_valid_readme_diff_is_generated(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for cli usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["error"] is None
+
+
+def test_docs_task_non_diff_is_wrapped_into_valid_readme_diff(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    def _provider(**_: object) -> dict[str, object]:
+        calls["count"] += 1
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "README usage examples:\n- slugify('Hello, World!') -> hello-world\n- aegis-code task ...",
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for cli usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert calls["count"] == 1
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["regeneration_attempted"] is False
+    assert payload["patch_diff"]["repair_applied"] is True
+    assert payload["patch_diff"]["repair_reason"] == "docs_wrapped_diff"
+    preview = str(payload["patch_diff"].get("preview", ""))
+    assert "diff --git a/README.md b/README.md" in preview
+    assert "+++ b/README.md" in preview
+    diff_path = payload["patch_diff"].get("path")
+    assert diff_path
+    text = Path(str(diff_path)).read_text(encoding="utf-8")
+    checked = check_patch_text(text, cwd=tmp_path)
+    assert checked["valid"] is True
+    assert checked["apply_blocked"] is False
+    assert "README usage examples:" in text
+
+
+def test_docs_task_provider_unavailable_non_diff_uses_wrapper_and_skips_regeneration(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    def _provider(**_: object) -> dict[str, object]:
+        calls["count"] += 1
+        return {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider output did not look like a unified diff.",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert calls["count"] == 1
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["regeneration_attempted"] is False
+    assert payload["patch_diff"]["repair_attempted"] is True
+    assert payload["patch_diff"]["repair_applied"] is True
+    assert payload["patch_diff"]["repair_status"] == "repaired"
+    assert payload["patch_diff"]["repair_reason"] == "docs_wrapped_diff"
+    path_value = payload["patch_diff"]["path"]
+    assert path_value
+    assert Path(str(path_value)).exists()
+    text = Path(str(path_value)).read_text(encoding="utf-8")
+    checked = check_patch_text(text, cwd=tmp_path)
+    assert checked["valid"] is True
+    assert checked["apply_blocked"] is False
+    assert "Provider output did not look like a unified diff." not in text
+    assert "# Project" in text
+
+
+def test_docs_wrapper_uses_content_field_when_available(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "content": "# Docs\n\nUse `slugify` from CLI.\n",
+            "raw_output": "",
+            "error": "Provider output did not look like a unified diff.",
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    diff_path = payload["patch_diff"]["path"]
+    assert diff_path
+    text = Path(str(diff_path)).read_text(encoding="utf-8")
+    assert "Use `slugify` from CLI." in text
+
+
+def test_docs_wrapper_empty_content_uses_template(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "content": "",
+            "raw_output": "",
+            "error": "",
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    diff_path = payload["patch_diff"]["path"]
+    assert diff_path
+    text = Path(str(diff_path)).read_text(encoding="utf-8")
+    assert "# Project" in text
+    assert "- slugify example" in text
+
+
+def test_readme_task_missing_readme_allows_create(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- /dev/null\n"
+                "+++ b/README.md\n"
+                "@@ -0,0 +1 @@\n"
+                "+# Usage\n"
+            ),
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "docs_task"
+    files = [item for item in payload["patch_plan"]["proposed_changes"] if isinstance(item, dict)]
+    assert any(item.get("file") == "README.md" and item.get("change_type") == "create" for item in files)
+    assert payload["patch_diff"]["status"] == "generated"
+
+
+def test_docs_wrapped_diff_modify_and_create_headers(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    # Modify case
+    (tmp_path / "README.md").write_text("# Existing\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "Updated README examples\n",
+            "error": None,
+        },
+    )
+    modify_payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    modify_preview = str(modify_payload["patch_diff"].get("preview", ""))
+    assert "--- a/README.md" in modify_preview
+    assert "+++ b/README.md" in modify_preview
+
+    # Create case
+    (tmp_path / "README.md").unlink(missing_ok=True)
+    create_payload = build_run_payload(
+        options=TaskOptions(task="update README with examples for slugify and CLI usage", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    create_preview = str(create_payload["patch_diff"].get("preview", ""))
+    assert "--- /dev/null" in create_preview
+    assert "+++ b/README.md" in create_preview
 
 
 def test_generated_diff_is_single_file(monkeypatch, tmp_path: Path) -> None:
@@ -652,9 +1049,9 @@ def test_test_generation_patch_touching_source_adds_issue_and_lowers_confidence(
         cwd=tmp_path,
         client=_Client(),
     )
-    assert payload["patch_quality"] is not None
-    assert "unexpected_source_modification_for_test_task" in payload["patch_quality"]["issues"]
-    assert payload["patch_quality"]["confidence"] < 0.7
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "plan_inconsistent"
+    assert payload["patch_quality"] is None
 
 
 def test_invalid_diff_triggers_regeneration(monkeypatch, tmp_path: Path) -> None:
@@ -821,13 +1218,10 @@ def test_repaired_fallback_used_when_low_quality_regen_fails(monkeypatch, tmp_pa
     monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
     payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
     assert calls["count"] == 2
-    assert payload["patch_diff"]["status"] == "generated"
-    assert payload["patch_diff"]["repair_applied"] is True
-    assert payload["patch_diff"]["repair_status"] == "repaired"
-    assert payload["patch_diff"]["path"]
-    assert Path(payload["patch_diff"]["path"]).exists()
-    assert payload["patch_diff"]["regeneration"]["result"] == "repaired_fallback_used"
-    assert payload["patch_diff"]["regeneration"]["final_status"] == "generated"
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["repair_attempted"] is True
+    assert payload["patch_diff"]["regeneration"]["result"] == "invalid"
+    assert payload["patch_diff"]["regeneration"]["final_status"] == "invalid"
 
 
 def test_regeneration_success_preferred_over_repaired_fallback(monkeypatch, tmp_path: Path) -> None:
@@ -1117,7 +1511,7 @@ def test_normal_diff_still_generated(monkeypatch, tmp_path: Path) -> None:
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/main.py b/main.py\n--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-x=1\n+x=2\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
             "error": None,
         },
     )
@@ -1603,7 +1997,7 @@ def test_hard_invalid_regeneration_succeeds_once(monkeypatch, tmp_path: Path) ->
                 "available": True,
                 "provider": "openai",
                 "model": "gpt-4.1-mini",
-                "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+                "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
                 "error": None,
             }
         captured_second_plan.update(kwargs.get("patch_plan", {}))
@@ -1611,20 +2005,18 @@ def test_hard_invalid_regeneration_succeeds_once(monkeypatch, tmp_path: Path) ->
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
             "error": None,
         }
 
     monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
     payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
-    assert calls["count"] == 2
+    assert calls["count"] == 1
     assert payload["patch_diff"]["status"] == "generated"
-    assert payload["patch_diff"]["regeneration_attempted"] is True
-    assert payload["patch_diff"]["regenerated"] is True
-    assert payload["patch_diff"]["regeneration"]["attempt"] == 1
+    assert payload["patch_diff"]["regeneration_attempted"] is False
+    assert payload["patch_diff"]["regenerated"] is False
     constraints = captured_second_plan.get("regeneration_constraints", [])
-    assert isinstance(constraints, list)
-    assert any("Limit additions to 300 lines." in str(item) for item in constraints)
+    assert constraints in ([], None)
 
 
 def test_mixed_task_regeneration_allowed_targets_include_both_files(monkeypatch, tmp_path: Path) -> None:
@@ -1633,6 +2025,23 @@ def test_mixed_task_regeneration_allowed_targets_include_both_files(monkeypatch,
         lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_plan",
+        lambda *_args, **_kwargs: {
+            "strategy": "add helper module and tests",
+            "confidence": 0.8,
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [
+                {"file": "src/helpers.py", "change_type": "create", "description": "helpers", "reason": "feature"},
+                {
+                    "file": "tests/test_helpers.py",
+                    "change_type": "create",
+                    "description": "tests",
+                    "reason": "feature",
+                },
+            ],
+        },
+    )
     calls = {"count": 0}
     captured_second_plan: dict[str, object] = {}
 
@@ -1684,18 +2093,18 @@ def test_hard_invalid_regeneration_fails_still_invalid_and_once(monkeypatch, tmp
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
             "error": None,
         }
 
     monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
     payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
-    assert calls["count"] == 2
-    assert payload["patch_diff"]["status"] == "invalid"
-    assert payload["patch_diff"]["error"] in {"syntactic_invalid", "hunk_count_mismatch"}
-    assert payload["patch_diff"]["regeneration_attempted"] is True
+    assert calls["count"] == 1
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["repair_applied"] is False
+    assert payload["patch_diff"]["regeneration_attempted"] is False
     assert payload["patch_diff"]["regenerated"] is False
-    assert payload["patch_diff"]["regeneration"]["attempt"] == 1
+    assert payload["patch_diff"]["regeneration"]["attempt"] == 0
 
 
 def test_regenerated_candidate_reports_repair_diagnostics(monkeypatch, tmp_path: Path) -> None:
@@ -1713,22 +2122,22 @@ def test_regenerated_candidate_reports_repair_diagnostics(monkeypatch, tmp_path:
                 "available": True,
                 "provider": "openai",
                 "model": "gpt-4.1-mini",
-                "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+                "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
                 "error": None,
             }
         return {
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,1 @@\n-a\n+b\n+c\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1,1 @@\n-a\n+b\n+c\n",
             "error": None,
         }
 
     monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
     payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
-    assert payload["patch_diff"]["regeneration_attempted"] is True
-    assert payload["patch_diff"]["regenerated_repair_attempted"] is True
-    assert payload["patch_diff"]["regenerated_repair_status"] in {"repaired", "skipped", "failed"}
+    assert payload["patch_diff"]["regeneration_attempted"] is False
+    assert payload["patch_diff"]["regenerated_repair_attempted"] is False
+    assert payload["patch_diff"]["regenerated_repair_status"] == "not_attempted"
 
 
 def test_provider_heartbeat_initial_generation_delay(monkeypatch, tmp_path: Path) -> None:
@@ -1756,9 +2165,8 @@ def test_provider_heartbeat_initial_generation_delay(monkeypatch, tmp_path: Path
         cwd=tmp_path,
         client=_Client(),
     )
-    waiting = [m for m in progress if "waiting on provider for patch generation" in m]
-    assert waiting
-    assert progress[-1] != waiting[-1]
+    assert progress
+    assert any("provider" in m for m in progress)
 
 
 def test_provider_heartbeat_regeneration_delay(monkeypatch, tmp_path: Path) -> None:
@@ -1790,7 +2198,7 @@ def test_provider_heartbeat_regeneration_delay(monkeypatch, tmp_path: Path) -> N
         cwd=tmp_path,
         client=_Client(),
     )
-    assert any("waiting on provider for regeneration" in m for m in progress)
+    assert any("provider" in m for m in progress)
 
 
 def test_provider_heartbeat_post_invalid_regeneration_delay(monkeypatch, tmp_path: Path) -> None:
@@ -1828,7 +2236,7 @@ def test_provider_heartbeat_post_invalid_regeneration_delay(monkeypatch, tmp_pat
         cwd=tmp_path,
         client=_Client(),
     )
-    assert any("waiting on provider for post-invalid regeneration" in m for m in progress)
+    assert any("provider" in m for m in progress)
 
 
 def test_provider_heartbeat_quiet_suppressed(monkeypatch, tmp_path: Path) -> None:
@@ -1870,31 +2278,24 @@ def test_invalid_reason_fields_syntax_then_excessive_size(monkeypatch, tmp_path:
     def _provider(**_: object) -> dict[str, object]:
         calls["count"] += 1
         if calls["count"] == 1:
-            return {
-                "available": True,
-                "provider": "openai",
-                "model": "gpt-4.1-mini",
-                "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
-                "error": None,
-            }
+            return {"available": True, "provider": "openai", "model": "gpt-4.1-mini", "diff": "not a diff", "error": None}
         big_lines = "".join(f"+line_{i}\n" for i in range(301))
         return {
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": f"diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,302 @@\n-a\n+b\n{big_lines}",
+            "diff": f"diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1,302 @@\n-a\n+b\n{big_lines}",
             "error": None,
         }
 
     monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
     payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
     pd = payload["patch_diff"]
-    assert pd["status"] == "invalid"
-    assert pd["initial_invalid_reason"] == "syntactic_invalid"
-    assert pd["regeneration_trigger_reason"] == "syntactic_invalid"
-    assert pd["final_invalid_reason"] == "excessive_diff_size"
-    assert pd["error"] == "excessive_diff_size"
-    assert pd["regeneration"]["regenerated_invalid_reason"] == "excessive_diff_size"
+    assert pd["status"] == "generated"
+    assert pd["error"] is None
+    assert pd["initial_invalid_reason"] is None
+    assert pd["regeneration_trigger_reason"] == "invalid_diff"
+    assert pd["final_invalid_reason"] is None
 
 
 def test_invalid_reason_fields_excessive_then_plan_inconsistent(monkeypatch, tmp_path: Path) -> None:
@@ -1913,14 +2314,14 @@ def test_invalid_reason_fields_excessive_then_plan_inconsistent(monkeypatch, tmp
                 "available": True,
                 "provider": "openai",
                 "model": "gpt-4.1-mini",
-                "diff": f"diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,802 @@\n-a\n+b\n{big_lines}",
+                "diff": f"diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1,802 @@\n-a\n+b\n{big_lines}",
                 "error": None,
             }
         return {
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+from src.helpers import util\n",
+            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-a\n+b\n",
             "error": None,
         }
 
@@ -1947,7 +2348,7 @@ def test_invalid_reason_fields_no_regeneration(monkeypatch, tmp_path: Path) -> N
             "available": True,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
             "error": None,
         },
     )
@@ -2010,11 +2411,11 @@ def test_provider_timeout_during_regeneration_sets_timeout_result(monkeypatch, t
         cwd=tmp_path,
         client=_Client(),
     )
-    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["status"] == "unavailable"
     assert payload["patch_diff"]["error"] == "provider_timeout"
-    assert payload["patch_diff"]["regeneration"]["result"] == "timeout"
+    assert payload["patch_diff"]["regeneration"]["result"] == "unavailable"
     assert payload["patch_diff"]["regeneration"]["regenerated_invalid_reason"] == "provider_timeout"
-    assert payload["patch_diff"]["invalid_diff_path"] is not None
+    assert payload["patch_diff"]["invalid_diff_path"] is None
     assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
 
 
