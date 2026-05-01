@@ -363,7 +363,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             f"- Result: `{regeneration.get('result', regeneration.get('final_status', patch_diff.get('status', 'unknown')))}`",
         ]
     )
-    if str(regeneration.get("result", "")) == "invalid" and regeneration.get("regenerated_invalid_reason"):
+    if str(regeneration.get("result", "")) in {"invalid", "timeout"} and regeneration.get("regenerated_invalid_reason"):
         lines.append(f"- Regenerated invalid reason: `{regeneration.get('regenerated_invalid_reason')}`")
 
     if str(patch_diff.get("status", "")) == "invalid":

@@ -397,3 +397,41 @@ def test_report_invalid_reason_sections_are_explicit(tmp_path: Path) -> None:
     assert "## Patch Regeneration" in content
     assert "Reason: `syntactic_invalid`" in content
     assert "Regenerated invalid reason: `excessive_diff_size`" in content
+
+
+def test_report_includes_provider_timeout_reason(tmp_path: Path) -> None:
+    payload = {
+        "task": "x",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {
+            "attempted": True,
+            "available": False,
+            "status": "unavailable",
+            "error": "provider_timeout",
+            "regeneration_attempted": True,
+            "regeneration": {"triggered": True, "reason": "syntactic_invalid", "attempt": 1, "result": "timeout", "regenerated_invalid_reason": "provider_timeout"},
+        },
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "provider_timeout" in content
+    assert "Result: `timeout`" in content
+    assert "Regenerated invalid reason: `provider_timeout`" in content

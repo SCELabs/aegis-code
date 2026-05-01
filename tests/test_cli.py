@@ -497,6 +497,43 @@ def test_provider_heartbeat_completion_emits_newline(tmp_path: Path, monkeypatch
     assert "\nAegis Code: controlled execution" in out
 
 
+def test_provider_slow_warning_uses_override_timeout_value(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        cb = getattr(options, "progress_callback", None)
+        if callable(cb):
+            cb("generating provider diff with openai:gpt-4.1-mini")
+            cb("  provider is slow; timeout at 30s")
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_passed",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False, "status": "skipped"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--provider-timeout", "30"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "provider is slow; timeout at 30s" in out
+
+
 def test_quiet_suppresses_progress_messages(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -571,3 +608,38 @@ def test_progress_output_has_no_secret_values(tmp_path: Path, monkeypatch, capsy
     out = capsys.readouterr().out
     assert exit_code == 0
     assert secret not in out
+
+
+def test_cli_provider_timeout_override_passed_to_task_options(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_run_task(**kwargs: object):
+        captured["options"] = kwargs["options"]
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_passed",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False, "status": "skipped"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--provider-timeout", "42"])
+    assert exit_code == 0
+    options = captured.get("options")
+    assert options is not None
+    assert getattr(options, "provider_timeout_seconds", None) == 42

@@ -28,6 +28,7 @@ class ProvidersConfig:
     enabled: bool = False
     provider: str = "openai"
     api_key_env: str = "OPENAI_API_KEY"
+    timeout_seconds: int = 60
 
 
 @dataclass(slots=True)

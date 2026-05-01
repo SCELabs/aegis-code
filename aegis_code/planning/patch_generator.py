@@ -7,12 +7,14 @@ def _has_implementation_intent(task: str) -> bool:
     impl_phrases = (
         "add a module",
         "create a module",
+        "add a helpers module",
         "add helpers module",
         "add helper",
         "create helper",
         "add function",
         "create function",
         "implement",
+        "helpers module",
     )
     return any(phrase in lowered for phrase in impl_phrases)
 

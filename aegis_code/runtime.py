@@ -56,6 +56,7 @@ class TaskOptions:
     runtime_policy: dict[str, Any] | None = None
     aegis_guidance: dict[str, Any] | None = None
     progress_callback: Any | None = None
+    provider_timeout_seconds: int | None = None
 
 
 def _progress(options: TaskOptions, message: str) -> None:
@@ -67,28 +68,48 @@ def _progress(options: TaskOptions, message: str) -> None:
             pass
 
 
-def _run_with_provider_heartbeat(options: TaskOptions, label: str, fn: Any) -> Any:
+def _run_with_provider_heartbeat(options: TaskOptions, label: str, fn: Any, timeout_seconds: int) -> tuple[Any, bool]:
     callback = getattr(options, "progress_callback", None)
-    if not callable(callback):
-        return fn()
-
-    stop_event = threading.Event()
+    result_holder: dict[str, Any] = {"result": None, "error": None}
+    done_event = threading.Event()
     start = time.monotonic()
 
-    def _ticker() -> None:
-        while not stop_event.wait(_PROVIDER_HEARTBEAT_SECONDS):
-            elapsed = int(max(0.0, time.monotonic() - start))
-            try:
-                callback(f"  waiting on provider for {label}... ({elapsed}s)")
-            except Exception:
-                pass
+    def _runner() -> None:
+        try:
+            result_holder["result"] = fn()
+        except Exception as exc:
+            result_holder["error"] = exc
+        finally:
+            done_event.set()
 
-    thread = threading.Thread(target=_ticker, daemon=True)
+    thread = threading.Thread(target=_runner, daemon=True)
     thread.start()
+    warned_slow = False
+    last_heartbeat_elapsed = -1
     try:
-        return fn()
+        while True:
+            if done_event.wait(timeout=0.1):
+                if result_holder["error"] is not None:
+                    raise result_holder["error"]
+                return result_holder["result"], False
+            elapsed = int(max(0.0, time.monotonic() - start))
+            if callable(callback):
+                interval = max(1, int(_PROVIDER_HEARTBEAT_SECONDS))
+                if elapsed > 0 and elapsed % interval == 0 and elapsed != last_heartbeat_elapsed:
+                    last_heartbeat_elapsed = elapsed
+                    try:
+                        callback(f"  waiting on provider for {label}... ({elapsed}s)")
+                    except Exception:
+                        pass
+                if elapsed >= 30 and not warned_slow:
+                    warned_slow = True
+                    try:
+                        callback(f"  provider is slow; timeout at {timeout_seconds}s")
+                    except Exception:
+                        pass
+            if elapsed >= max(1, int(timeout_seconds)):
+                return None, True
     finally:
-        stop_event.set()
         thread.join(timeout=0.05)
 
 
@@ -123,12 +144,14 @@ def _has_implementation_intent(task: str) -> bool:
     impl_phrases = (
         "add a module",
         "create a module",
+        "add a helpers module",
         "add helpers module",
         "add helper",
         "create helper",
         "add function",
         "create function",
         "implement",
+        "helpers module",
     )
     return any(phrase in lowered for phrase in impl_phrases)
 
@@ -779,6 +802,11 @@ def build_run_payload(
 ) -> dict[str, Any]:
     _progress(options, "loading config")
     config = load_config(cwd)
+    provider_timeout_seconds = int(
+        options.provider_timeout_seconds
+        if options.provider_timeout_seconds is not None
+        else getattr(config.providers, "timeout_seconds", 60)
+    )
     _progress(options, "resolving keys")
     apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=config.aegis.base_url)
     guidance = options.aegis_guidance or {}
@@ -1181,7 +1209,7 @@ def build_run_payload(
             "corrective_control_error": None,
         }
         _progress(options, f"generating provider diff with {selected_model}")
-        provider_result = _run_with_provider_heartbeat(
+        provider_result, provider_timed_out = _run_with_provider_heartbeat(
             options,
             "patch generation",
             lambda: generate_patch_diff(
@@ -1195,7 +1223,16 @@ def build_run_payload(
                 api_key_env=config.providers.api_key_env,
                 max_context_chars=int(config.patches.max_context_chars),
             ),
+            timeout_seconds=provider_timeout_seconds,
         )
+        if provider_timed_out:
+            provider_result = {
+                "available": False,
+                "provider": config.providers.provider,
+                "model": selected_model,
+                "diff": "",
+                "error": "provider_timeout",
+            }
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
         _progress(options, "validating diff")
         validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd())) if initial_diff else {"valid": False, "errors": ["empty_diff"]}
@@ -1311,7 +1348,7 @@ def build_run_payload(
                 regeneration["corrective_control_reason"] = "disabled_by_config"
             enhanced_patch_plan["regeneration_constraints"] = sorted(set(enhanced_constraints))
 
-            second = _run_with_provider_heartbeat(
+            second, second_timed_out = _run_with_provider_heartbeat(
                 options,
                 "regeneration",
                 lambda: generate_patch_diff(
@@ -1325,8 +1362,33 @@ def build_run_payload(
                     api_key_env=config.providers.api_key_env,
                     max_context_chars=int(config.patches.max_context_chars),
                 ),
+                timeout_seconds=provider_timeout_seconds,
             )
+            if second_timed_out:
+                second = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": "provider_timeout",
+                }
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
+            if second_timed_out:
+                patch_quality = None
+                patch_diff.update(
+                    {
+                        "available": False,
+                        "status": "invalid",
+                        "error": "provider_timeout",
+                        "provider": second.get("provider"),
+                        "model": second.get("model"),
+                    }
+                )
+                regeneration["final_status"] = "invalid"
+                regeneration["result"] = "timeout"
+                regeneration["regenerated_invalid_reason"] = "provider_timeout"
+                # Keep previously-written latest.invalid.diff from the original invalid candidate.
+                second_diff = ""
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
             second_quality = evaluate_diff(
                 second_diff,
@@ -1511,7 +1573,7 @@ def build_run_payload(
                 regeneration["corrective_control_reason"] = "disabled_by_config"
 
             regen_plan["regeneration_constraints"] = sorted(set(regen_constraints))
-            second = _run_with_provider_heartbeat(
+            second, second_timed_out = _run_with_provider_heartbeat(
                 options,
                 "post-invalid regeneration",
                 lambda: generate_patch_diff(
@@ -1525,7 +1587,16 @@ def build_run_payload(
                     api_key_env=config.providers.api_key_env,
                     max_context_chars=int(config.patches.max_context_chars),
                 ),
+                timeout_seconds=provider_timeout_seconds,
             )
+            if second_timed_out:
+                second = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": "provider_timeout",
+                }
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
             if second_diff and not bool(second_validation.get("valid", False)):
@@ -1632,6 +1703,15 @@ def build_run_payload(
                 regeneration["final_status"] = "invalid"
                 regeneration["result"] = "invalid"
                 regeneration["regenerated_invalid_reason"] = final_error
+            if second_timed_out:
+                patch_quality = None
+                patch_diff["available"] = False
+                patch_diff["status"] = "invalid"
+                patch_diff["error"] = "provider_timeout"
+                patch_diff["path"] = None
+                regeneration["final_status"] = "invalid"
+                regeneration["result"] = "timeout"
+                regeneration["regenerated_invalid_reason"] = "provider_timeout"
 
         # Keep top-level summary flags aligned with the final regeneration state,
         # including post-invalid regeneration paths.

@@ -556,6 +556,8 @@ def test_impl_with_tests_prompt_includes_allowed_targets() -> None:
     )
     assert "Create or modify only the planned files." in prompt
     assert "Allowed targets: src/helpers.py, tests/test_helpers.py" in prompt
+    assert "Prefer modifying tests only." not in prompt
+    assert "Do not modify source files unless explicitly requested." not in prompt
 
 
 def test_generated_diff_is_single_file(monkeypatch, tmp_path: Path) -> None:
@@ -1806,3 +1808,107 @@ def test_invalid_reason_fields_no_regeneration(monkeypatch, tmp_path: Path) -> N
     assert pd["initial_invalid_reason"] is None
     assert pd["regeneration_trigger_reason"] is None
     assert pd["final_invalid_reason"] is None
+
+
+def test_provider_timeout_during_initial_generation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _provider(**_: object) -> dict[str, object]:
+        time.sleep(1.2)
+        return {"available": True, "provider": "openai", "model": "gpt-4.1-mini", "diff": "x", "error": None}
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="add feature", propose_patch=True, provider_timeout_seconds=1),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "unavailable"
+    assert payload["patch_diff"]["error"] == "provider_timeout"
+    assert payload["patch_diff"]["path"] is None
+    assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
+
+
+def test_provider_timeout_during_regeneration_sets_timeout_result(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("aegis_code.runtime._PROVIDER_HEARTBEAT_SECONDS", 1)
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    def _provider(**_: object) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "available": True,
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+                "error": None,
+            }
+        time.sleep(1.2)
+        return {"available": True, "provider": "openai", "model": "gpt-4.1-mini", "diff": "", "error": None}
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="add feature", propose_patch=True, provider_timeout_seconds=1),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "provider_timeout"
+    assert payload["patch_diff"]["regeneration"]["result"] == "timeout"
+    assert payload["patch_diff"]["regeneration"]["regenerated_invalid_reason"] == "provider_timeout"
+    assert payload["patch_diff"]["invalid_diff_path"] is not None
+    assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
+
+
+def test_provider_timeout_uses_configurable_value(monkeypatch, tmp_path: Path) -> None:
+    aegis_dir = tmp_path / ".aegis"
+    aegis_dir.mkdir(parents=True, exist_ok=True)
+    (aegis_dir / "aegis-code.yml").write_text("providers:\n  enabled: true\n  timeout_seconds: 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _provider(**_: object) -> dict[str, object]:
+        time.sleep(1.2)
+        return {"available": True, "provider": "openai", "model": "gpt-4.1-mini", "diff": "x", "error": None}
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="add feature", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["error"] == "provider_timeout"
+
+
+def test_provider_timeout_cli_override_is_used_by_provider_calls(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, int] = {}
+
+    def _hb(options: object, label: str, fn: object, timeout_seconds: int):
+        captured[label] = int(timeout_seconds)
+        return {"available": False, "provider": "openai", "model": "gpt-4.1-mini", "diff": "", "error": "provider_timeout"}, True
+
+    monkeypatch.setattr("aegis_code.runtime._run_with_provider_heartbeat", _hb)
+    payload = build_run_payload(
+        options=TaskOptions(task="add feature", propose_patch=True, provider_timeout_seconds=30),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["error"] == "provider_timeout"
+    assert captured.get("patch generation") == 30

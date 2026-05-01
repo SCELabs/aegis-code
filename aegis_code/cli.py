@@ -340,6 +340,7 @@ def _build_task_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session", default=None, help="Optional session id/name.")
     parser.add_argument("--no-report", action="store_true", help="Skip writing latest report files.")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress updates.")
+    parser.add_argument("--provider-timeout", type=int, default=None, help="Provider call timeout in seconds.")
     return parser
 
 
@@ -1191,6 +1192,9 @@ def handle_task(argv: Sequence[str]) -> int:
                 print(f"[{step}/{total}] {stage}... waiting {elapsed}s")
                 heartbeat_state["last_non_tty_elapsed"] = elapsed
             return
+        if text.startswith("  provider is slow; timeout at"):
+            print(text)
+            return
         if heartbeat_state["active"]:
             print("")
             heartbeat_state["active"] = False
@@ -1214,6 +1218,7 @@ def handle_task(argv: Sequence[str]) -> int:
         budget_state=budget_state,
         runtime_policy=runtime_policy,
         progress_callback=_progress_cb,
+        provider_timeout_seconds=args.provider_timeout,
     )
     payload = run_task(options=options, cwd=cwd)
     if heartbeat_state["active"] and not args.quiet:

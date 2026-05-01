@@ -21,6 +21,7 @@ def test_load_config_uses_defaults_when_missing(tmp_path: Path) -> None:
     assert cfg.models.mid == "openai:gpt-4.1-mini"
     assert cfg.commands.test == "pytest -q"
     assert cfg.providers.enabled is False
+    assert cfg.providers.timeout_seconds == 60
     assert cfg.patches.generate_diff is False
     assert cfg.aegis.control_enabled == "auto"
 
