@@ -467,6 +467,9 @@ def test_report_renders_repair_diagnostics(tmp_path: Path) -> None:
             "repair_status": "skipped",
             "repair_reason": "target_not_in_plan",
             "repair_error": None,
+            "raw_repair_file_count": 4,
+            "repair_file_count": 2,
+            "repair_targets": ["src/helpers.py", "tests/test_helpers.py"],
         },
         "patch_quality": None,
         "status": "completed_tests_failed",
@@ -476,3 +479,6 @@ def test_report_renders_repair_diagnostics(tmp_path: Path) -> None:
     assert "Repair attempted: `True`" in content
     assert "Repair status: `skipped`" in content
     assert "Repair reason: `target_not_in_plan`" in content
+    assert "Raw repair file count: `4`" in content
+    assert "Repair file count: `2`" in content
+    assert "Repair targets: `src/helpers.py, tests/test_helpers.py`" in content

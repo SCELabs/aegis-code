@@ -253,6 +253,9 @@ def _patch_diff_default() -> dict[str, Any]:
         "repair_status": "not_attempted",
         "repair_reason": "not_attempted",
         "repair_error": None,
+        "repair_file_count": 0,
+        "raw_repair_file_count": 0,
+        "repair_targets": [],
         "syntactic_valid": None,
         "syntactic_error": None,
         "corrective_control_status": "not_triggered",
@@ -1209,6 +1212,8 @@ def build_run_payload(
             "regenerated_repair_status": "not_attempted",
             "regenerated_repair_reason": "not_attempted",
             "regenerated_repair_error": None,
+            "regenerated_repair_file_count": 0,
+            "regenerated_repair_targets": [],
             "corrective_control_status": "not_triggered",
             "corrective_control_reason": "not_triggered",
             "corrective_control_error": None,
@@ -1247,6 +1252,9 @@ def build_run_payload(
             "reason": "not_attempted",
             "diff": initial_diff,
             "error": None,
+            "repair_file_count": 0,
+            "raw_repair_file_count": 0,
+            "repair_targets": [],
         }
         repair_attempted = False
         if initial_diff and not bool(validation_result.get("valid", False)):
@@ -1466,6 +1474,9 @@ def build_run_payload(
             "repair_status": str(repair_result.get("status", "skipped")),
             "repair_reason": str(repair_result.get("reason", "unknown")),
             "repair_error": repair_result.get("error"),
+            "repair_file_count": int(repair_result.get("repair_file_count", 0) or 0),
+            "raw_repair_file_count": int(repair_result.get("raw_repair_file_count", 0) or 0),
+            "repair_targets": list(repair_result.get("repair_targets", [])) if isinstance(repair_result.get("repair_targets", []), list) else [],
             "regenerated_repair_attempted": bool(regeneration.get("regenerated_repair_attempted", False)),
             "regenerated_repair_applied": bool(regeneration.get("regenerated_repair_applied", False)),
             "regenerated_repair_status": str(regeneration.get("regenerated_repair_status", "not_attempted")),
@@ -1622,6 +1633,8 @@ def build_run_payload(
                 regeneration["regenerated_repair_status"] = str(second_repair.get("status", "skipped"))
                 regeneration["regenerated_repair_reason"] = str(second_repair.get("reason", "unknown"))
                 regeneration["regenerated_repair_error"] = second_repair.get("error")
+                regeneration["regenerated_repair_file_count"] = int(second_repair.get("repair_file_count", 0) or 0)
+                regeneration["regenerated_repair_targets"] = list(second_repair.get("repair_targets", [])) if isinstance(second_repair.get("repair_targets", []), list) else []
                 if bool(second_repair.get("applied", False)):
                     second_diff = str(second_repair.get("diff", "") or second_diff)
                     second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd()))
@@ -1739,6 +1752,8 @@ def build_run_payload(
         patch_diff["regenerated_repair_status"] = str(regeneration.get("regenerated_repair_status", "not_attempted"))
         patch_diff["regenerated_repair_reason"] = str(regeneration.get("regenerated_repair_reason", "not_attempted"))
         patch_diff["regenerated_repair_error"] = regeneration.get("regenerated_repair_error")
+        patch_diff["regenerated_repair_file_count"] = int(regeneration.get("regenerated_repair_file_count", 0) or 0)
+        patch_diff["regenerated_repair_targets"] = list(regeneration.get("regenerated_repair_targets", [])) if isinstance(regeneration.get("regenerated_repair_targets", []), list) else []
         patch_diff["regeneration_attempted"] = bool(regeneration.get("attempted", False))
         patch_diff["regenerated"] = bool(
             regeneration.get("attempted", False) and patch_diff.get("status") == "generated"

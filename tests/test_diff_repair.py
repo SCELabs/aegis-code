@@ -211,10 +211,77 @@ def test_impl_with_tests_multi_file_create_repaired(tmp_path: Path) -> None:
         context={"files": []},
     )
     assert result["applied"] is True
+    assert result["repair_file_count"] == 2
+    assert sorted(result["repair_targets"]) == ["src/helpers.py", "tests/test_helpers.py"]
     repaired = str(result["diff"])
     assert "diff --git a/src/helpers.py b/src/helpers.py" in repaired
     assert "diff --git a/tests/test_helpers.py b/tests/test_helpers.py" in repaired
     assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
+
+
+def test_incidental_triple_plus_minus_in_code_not_new_block(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+TEXT = '--- not a header and +++ not a header'\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def test_text():\n"
+        "+    assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}]},
+        context={"files": []},
+    )
+    assert result["repair_file_count"] == 2
+    assert result["raw_repair_file_count"] == 2
+
+
+def test_duplicate_blocks_dedup_by_target_repairs(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def test_slugify():\n"
+        "+    assert True\n"
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text.strip()\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def test_slugify_spaces():\n"
+        "+    assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}]},
+        context={"files": []},
+    )
+    assert result["applied"] is True
+    assert result["raw_repair_file_count"] == 4
+    assert result["repair_file_count"] == 2
+    assert sorted(result["repair_targets"]) == ["src/helpers.py", "tests/test_helpers.py"]
 
 
 def test_impl_with_tests_mixed_create_modify_repaired(tmp_path: Path) -> None:
@@ -271,6 +338,32 @@ def test_impl_with_tests_out_of_scope_file_count_skipped(tmp_path: Path) -> None
     assert result["applied"] is False
     assert result["status"] == "skipped"
     assert result["reason"] == "file_count_out_of_scope"
+    assert result["repair_file_count"] == 4
+
+
+def test_impl_with_tests_two_file_hunk_mismatch_not_file_count_skip(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def test_slugify():\n"
+        "+    assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}]},
+        context={"files": []},
+    )
+    assert result["reason"] != "file_count_out_of_scope"
 
 
 def test_impl_with_tests_skipped_when_target_not_in_plan(tmp_path: Path) -> None:
@@ -296,6 +389,37 @@ def test_impl_with_tests_skipped_when_target_not_in_plan(tmp_path: Path) -> None
         context={"files": []},
     )
     assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "target_not_in_plan"
+
+
+def test_duplicate_block_target_not_in_plan_fails(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text\n"
+        "diff --git a/src/other.py b/src/other.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/other.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+x = 1\n"
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text.strip()\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper and tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}]},
+        context={"files": []},
+    )
     assert result["status"] == "skipped"
     assert result["reason"] == "target_not_in_plan"
 

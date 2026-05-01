@@ -1582,6 +1582,39 @@ def test_hard_invalid_regeneration_fails_still_invalid_and_once(monkeypatch, tmp
     assert payload["patch_diff"]["regeneration"]["attempt"] == 1
 
 
+def test_regenerated_candidate_reports_repair_diagnostics(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    def _provider(**_: object) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "available": True,
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,2 @@\n-a\n+b\n+def broken(:\n",
+                "error": None,
+            }
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/src/main.py b/src/main.py\n--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1,1 @@\n-a\n+b\n+c\n",
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["regeneration_attempted"] is True
+    assert payload["patch_diff"]["regenerated_repair_attempted"] is True
+    assert payload["patch_diff"]["regenerated_repair_status"] in {"repaired", "skipped", "failed"}
+
+
 def test_provider_heartbeat_initial_generation_delay(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("aegis_code.runtime._PROVIDER_HEARTBEAT_SECONDS", 0.01)
     monkeypatch.setattr(

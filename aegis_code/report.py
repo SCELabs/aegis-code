@@ -337,6 +337,11 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Repair applied: `{bool(patch_diff.get('repair_applied', False))}`")
         lines.append(f"- Repair status: `{patch_diff.get('repair_status', 'not_attempted')}`")
         lines.append(f"- Repair reason: `{patch_diff.get('repair_reason', 'not_attempted')}`")
+        lines.append(f"- Raw repair file count: `{int(patch_diff.get('raw_repair_file_count', 0) or 0)}`")
+        lines.append(f"- Repair file count: `{int(patch_diff.get('repair_file_count', 0) or 0)}`")
+        repair_targets = patch_diff.get("repair_targets", [])
+        if isinstance(repair_targets, list) and repair_targets:
+            lines.append(f"- Repair targets: `{', '.join(str(item) for item in repair_targets)}`")
         if patch_diff.get("repair_error"):
             lines.append(f"- Repair error: `{patch_diff.get('repair_error')}`")
 
@@ -377,6 +382,10 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append(f"- Regenerated repair applied: `{bool(regeneration.get('regenerated_repair_applied', False))}`")
         lines.append(f"- Regenerated repair status: `{regeneration.get('regenerated_repair_status', 'not_attempted')}`")
         lines.append(f"- Regenerated repair reason: `{regeneration.get('regenerated_repair_reason', 'not_attempted')}`")
+        lines.append(f"- Regenerated repair file count: `{int(regeneration.get('regenerated_repair_file_count', 0) or 0)}`")
+        regenerated_targets = regeneration.get("regenerated_repair_targets", [])
+        if isinstance(regenerated_targets, list) and regenerated_targets:
+            lines.append(f"- Regenerated repair targets: `{', '.join(str(item) for item in regenerated_targets)}`")
         if regeneration.get("regenerated_repair_error"):
             lines.append(f"- Regenerated repair error: `{regeneration.get('regenerated_repair_error')}`")
 

@@ -149,51 +149,170 @@ def repair_malformed_diff(
     files = inspection.get("files", [])
     warnings = [str(item) for item in inspection.get("warnings", [])]
 
+    blocks = _split_file_blocks(source)
+    raw_repair_file_count = len(blocks)
+    deduped_by_target: dict[str, list[str]] = {}
+    for block in blocks:
+        old_path, new_path = _parse_block_paths(block)
+        target = new_path or old_path
+        if target:
+            deduped_by_target[target] = block
+    repair_targets = sorted(deduped_by_target.keys())
+    repair_file_count = len(repair_targets)
+
     if inspection.get("valid", False):
-        return {"applied": False, "status": "skipped", "reason": "already_valid", "diff": source, "error": None}
+        return {
+            "applied": False,
+            "status": "skipped",
+            "reason": "already_valid",
+            "diff": source,
+            "error": None,
+            "repair_file_count": repair_file_count,
+            "repair_targets": repair_targets,
+            "raw_repair_file_count": raw_repair_file_count,
+        }
     if "hunk_count_mismatch" not in errors:
-        return {"applied": False, "status": "skipped", "reason": "no_hunk_count_mismatch", "diff": source, "error": None}
+        return {
+            "applied": False,
+            "status": "skipped",
+            "reason": "no_hunk_count_mismatch",
+            "diff": source,
+            "error": None,
+            "repair_file_count": repair_file_count,
+            "repair_targets": repair_targets,
+            "raw_repair_file_count": raw_repair_file_count,
+        }
     if not isinstance(files, list) or not files:
-        return {"applied": False, "status": "failed", "reason": "parse_failed", "diff": source, "error": "parse_failed"}
+        return {
+            "applied": False,
+            "status": "failed",
+            "reason": "parse_failed",
+            "diff": source,
+            "error": "parse_failed",
+            "repair_file_count": repair_file_count,
+            "repair_targets": repair_targets,
+            "raw_repair_file_count": raw_repair_file_count,
+        }
     severe_prefixes = ("unsafe_absolute_path", "unsafe_parent_traversal", "internal_or_generated_path")
     if any(w.startswith(severe_prefixes) for w in warnings):
         return {"applied": False, "status": "skipped", "reason": "unsafe_or_internal_target", "diff": source, "error": None}
 
-    blocks = _split_file_blocks(source)
     if task_type == "implementation_with_tests":
-        if len(blocks) < 2 or len(blocks) > 3:
-            return {"applied": False, "status": "skipped", "reason": "file_count_out_of_scope", "diff": source, "error": None}
-    elif len(blocks) != 1:
-        return {"applied": False, "status": "skipped", "reason": "file_count_out_of_scope", "diff": source, "error": None}
+        if repair_file_count < 2 or repair_file_count > 3:
+            return {
+                "applied": False,
+                "status": "skipped",
+                "reason": "file_count_out_of_scope",
+                "diff": source,
+                "error": None,
+                "repair_file_count": repair_file_count,
+                "repair_targets": repair_targets,
+                "raw_repair_file_count": raw_repair_file_count,
+            }
+    elif repair_file_count != 1:
+        return {
+            "applied": False,
+            "status": "skipped",
+            "reason": "file_count_out_of_scope",
+            "diff": source,
+            "error": None,
+            "repair_file_count": repair_file_count,
+            "repair_targets": repair_targets,
+            "raw_repair_file_count": raw_repair_file_count,
+        }
 
     plan_files = _files_from_plan(patch_plan)
     context_files = _files_from_context(context)
     repaired_chunks: list[str] = []
 
-    for block in blocks:
+    for target in repair_targets:
+        block = deduped_by_target[target]
         old_path, new_path = _parse_block_paths(block)
         target = new_path or old_path
         if not target:
-            return {"applied": False, "status": "failed", "reason": "missing_target_path", "diff": source, "error": "missing_target_path"}
+            return {
+                "applied": False,
+                "status": "failed",
+                "reason": "missing_target_path",
+                "diff": source,
+                "error": "missing_target_path",
+                "repair_file_count": repair_file_count,
+                "repair_targets": repair_targets,
+                "raw_repair_file_count": raw_repair_file_count,
+            }
         if not _is_allowed_path(target):
-            return {"applied": False, "status": "skipped", "reason": "target_not_allowed_path", "diff": source, "error": None}
+            return {
+                "applied": False,
+                "status": "skipped",
+                "reason": "target_not_allowed_path",
+                "diff": source,
+                "error": None,
+                "repair_file_count": repair_file_count,
+                "repair_targets": repair_targets,
+                "raw_repair_file_count": raw_repair_file_count,
+            }
 
         if task_type == "test_generation":
             if not target.startswith("tests/"):
-                return {"applied": False, "status": "skipped", "reason": "target_not_test_file", "diff": source, "error": None}
+                return {
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": "target_not_test_file",
+                    "diff": source,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
         elif task_type == "implementation_with_tests":
             if target not in plan_files:
-                return {"applied": False, "status": "skipped", "reason": "target_not_in_plan", "diff": source, "error": None}
+                return {
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": "target_not_in_plan",
+                    "diff": source,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
         elif task_type not in {"general", ""}:
-            return {"applied": False, "status": "skipped", "reason": "unsupported_task_type", "diff": source, "error": None}
+            return {
+                "applied": False,
+                "status": "skipped",
+                "reason": "unsupported_task_type",
+                "diff": source,
+                "error": None,
+                "repair_file_count": repair_file_count,
+                "repair_targets": repair_targets,
+                "raw_repair_file_count": raw_repair_file_count,
+            }
         else:
             if target not in plan_files and target not in context_files and not _is_known_entrypoint(target):
-                return {"applied": False, "status": "skipped", "reason": "target_not_in_plan_or_context", "diff": source, "error": None}
+                return {
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": "target_not_in_plan_or_context",
+                    "diff": source,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
 
         target_file = cwd / target
         is_new_file = old_path is None or (not target_file.exists() and old_path is not None and task_type == "implementation_with_tests")
         if not target_file.exists() and old_path is not None and task_type != "implementation_with_tests":
-            return {"applied": False, "status": "skipped", "reason": "target_missing_for_repair", "diff": source, "error": None}
+            return {
+                "applied": False,
+                "status": "skipped",
+                "reason": "target_missing_for_repair",
+                "diff": source,
+                "error": None,
+                "repair_file_count": repair_file_count,
+                "repair_targets": repair_targets,
+                "raw_repair_file_count": raw_repair_file_count,
+            }
         current = target_file.read_text(encoding="utf-8") if target_file.exists() else ""
         intended = _extract_block_intended_content(block, is_new_file=is_new_file)
         file_diff_lines = list(
@@ -216,7 +335,16 @@ def repair_malformed_diff(
     repaired_inspection = inspect_diff(repaired, cwd=cwd)
     repaired_check = check_patch_text(repaired, cwd=cwd)
     if bool(repaired_inspection.get("valid", False)) and not bool(repaired_check.get("apply_blocked", False)):
-        return {"applied": True, "status": "repaired", "reason": "hunk_count_repaired", "diff": repaired, "error": None}
+        return {
+            "applied": True,
+            "status": "repaired",
+            "reason": "hunk_count_repaired",
+            "diff": repaired,
+            "error": None,
+            "repair_file_count": repair_file_count,
+            "repair_targets": repair_targets,
+            "raw_repair_file_count": raw_repair_file_count,
+        }
     if bool(repaired_check.get("apply_blocked", False)):
         return {
             "applied": False,
@@ -224,6 +352,9 @@ def repair_malformed_diff(
             "reason": "check_blocked",
             "diff": source,
             "error": str((repaired_check.get("errors") or ["check_blocked"])[0]),
+            "repair_file_count": repair_file_count,
+            "repair_targets": repair_targets,
+            "raw_repair_file_count": raw_repair_file_count,
         }
     repaired_errors = [str(item) for item in repaired_inspection.get("errors", [])]
     return {
@@ -232,4 +363,7 @@ def repair_malformed_diff(
         "reason": "validation_failed",
         "diff": source,
         "error": repaired_errors[0] if repaired_errors else "validation_failed",
+        "repair_file_count": repair_file_count,
+        "repair_targets": repair_targets,
+        "raw_repair_file_count": raw_repair_file_count,
     }
