@@ -18,6 +18,7 @@ from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
+from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
@@ -1256,6 +1257,13 @@ def build_run_payload(
             "raw_repair_file_count": 0,
             "repair_targets": [],
         }
+        repaired_candidate_diff: str | None = None
+        repaired_candidate_validation: dict[str, Any] | None = None
+        repaired_candidate_quality: dict[str, Any] | None = None
+        repaired_candidate_syntax: bool | None = None
+        repaired_candidate_plan_consistency: bool | None = None
+        repaired_candidate_hard_invalid_reason: str | None = None
+        repaired_candidate_apply_blocked = True
         repair_attempted = False
         if initial_diff and not bool(validation_result.get("valid", False)):
             _progress(options, "attempting repair")
@@ -1270,6 +1278,29 @@ def build_run_payload(
             if bool(repair_result.get("applied", False)):
                 initial_diff = str(repair_result.get("diff", "") or initial_diff)
                 validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd()))
+                repaired_candidate_diff = initial_diff
+                repaired_candidate_validation = validation_result
+                repaired_candidate_quality = evaluate_diff(
+                    initial_diff,
+                    final_failures,
+                    failure_context,
+                    test_generation_task=test_task,
+                )
+                repaired_candidate_plan_consistency, _ = _compute_plan_consistency(
+                    patch_plan,
+                    validation_result,
+                    initial_diff,
+                )
+                repaired_candidate_syntax, _ = _syntactic_python_check(initial_diff, cwd=(cwd or Path.cwd()))
+                repaired_candidate_apply_blocked = bool(check_patch_text(initial_diff, cwd=(cwd or Path.cwd())).get("apply_blocked", False))
+                repaired_additions = int((validation_result.get("summary", {}) or {}).get("additions", 0))
+                repaired_size_threshold = 500 if test_task else 800
+                repaired_candidate_hard_invalid_reason = _hard_invalid_reason(
+                    syntactic_valid=repaired_candidate_syntax,
+                    additions=repaired_additions,
+                    size_threshold=repaired_size_threshold,
+                    plan_consistent=bool(repaired_candidate_plan_consistency),
+                )
         initial_quality = evaluate_diff(
             initial_diff,
             final_failures,
@@ -1419,6 +1450,42 @@ def build_run_payload(
             validation_used = second_validation
             quality_used = second_quality
 
+            # Preserve a successful deterministic repair as a fallback when
+            # regeneration was triggered by quality issues but failed validation.
+            second_candidate_apply_blocked = bool(check_patch_text(second_diff, cwd=(cwd or Path.cwd())).get("apply_blocked", False)) if second_diff else True
+            second_candidate_plan_consistent, _ = _compute_plan_consistency(patch_plan, second_validation, second_diff)
+            second_candidate_syntax, _ = _syntactic_python_check(second_diff, cwd=(cwd or Path.cwd())) if (second_diff and bool(second_validation.get("valid", False))) else (None, None)
+            second_additions = int((second_validation.get("summary", {}) or {}).get("additions", 0))
+            second_size_threshold = 500 if test_task else 800
+            second_candidate_hard_invalid = _hard_invalid_reason(
+                syntactic_valid=second_candidate_syntax,
+                additions=second_additions,
+                size_threshold=second_size_threshold,
+                plan_consistent=second_candidate_plan_consistent,
+            )
+            second_candidate_failed = (
+                not bool(second_validation.get("valid", False))
+                or second_candidate_apply_blocked
+                or second_candidate_hard_invalid is not None
+            )
+            if (
+                repaired_candidate_diff
+                and repaired_candidate_validation
+                and repaired_candidate_quality
+                and repaired_candidate_plan_consistency is True
+                and bool(repaired_candidate_validation.get("valid", False))
+                and not repaired_candidate_apply_blocked
+                and repaired_candidate_hard_invalid_reason is None
+                and second_candidate_failed
+                and "low_quality" in reasons
+            ):
+                provider_used = provider_result
+                diff_text = repaired_candidate_diff
+                validation_used = repaired_candidate_validation
+                quality_used = repaired_candidate_quality
+                regeneration["result"] = "repaired_fallback_used"
+                regeneration["final_status"] = "generated"
+
         path_value: str | None = None
         invalid_path: str | None = None
         plan_consistent, plan_missing_targets = _compute_plan_consistency(patch_plan, validation_used, diff_text)
@@ -1477,6 +1544,11 @@ def build_run_payload(
             "repair_file_count": int(repair_result.get("repair_file_count", 0) or 0),
             "raw_repair_file_count": int(repair_result.get("raw_repair_file_count", 0) or 0),
             "repair_targets": list(repair_result.get("repair_targets", [])) if isinstance(repair_result.get("repair_targets", []), list) else [],
+            "repaired_candidate_diff": repaired_candidate_diff,
+            "repaired_candidate_validation": repaired_candidate_validation,
+            "repaired_candidate_quality": repaired_candidate_quality,
+            "repaired_candidate_syntax": repaired_candidate_syntax,
+            "repaired_candidate_plan_consistency": repaired_candidate_plan_consistency,
             "regenerated_repair_attempted": bool(regeneration.get("regenerated_repair_attempted", False)),
             "regenerated_repair_applied": bool(regeneration.get("regenerated_repair_applied", False)),
             "regenerated_repair_status": str(regeneration.get("regenerated_repair_status", "not_attempted")),

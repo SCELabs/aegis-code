@@ -55,3 +55,4 @@ def test_new_file_diff_normalized() -> None:
     )
     normalized = normalize_unified_diff(raw)
     assert normalized.startswith("diff --git a/src/helper.py b/src/helper.py\n")
+    assert "--- /dev/null\n+++ b/src/helper.py\n" in normalized

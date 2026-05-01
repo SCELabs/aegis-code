@@ -69,6 +69,17 @@ def _parse_block_paths(block: list[str]) -> tuple[str | None, str | None]:
     return old_path, new_path
 
 
+def _parse_block_git_target(block: list[str]) -> str | None:
+    for line in block:
+        if not line.startswith("diff --git "):
+            continue
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        return _normalize_patch_path(parts[3])
+    return None
+
+
 def _extract_block_intended_content(block: list[str], *, is_new_file: bool) -> str:
     out: list[str] = []
     in_hunk = False
@@ -153,8 +164,9 @@ def repair_malformed_diff(
     raw_repair_file_count = len(blocks)
     deduped_by_target: dict[str, list[str]] = {}
     for block in blocks:
+        git_target = _parse_block_git_target(block)
         old_path, new_path = _parse_block_paths(block)
-        target = new_path or old_path
+        target = git_target or new_path or old_path
         if target:
             deduped_by_target[target] = block
     repair_targets = sorted(deduped_by_target.keys())
@@ -227,8 +239,9 @@ def repair_malformed_diff(
 
     for target in repair_targets:
         block = deduped_by_target[target]
+        git_target = _parse_block_git_target(block)
         old_path, new_path = _parse_block_paths(block)
-        target = new_path or old_path
+        target = git_target or new_path or old_path
         if not target:
             return {
                 "applied": False,
@@ -325,7 +338,7 @@ def repair_malformed_diff(
             )
         )
         if is_new_file:
-            file_diff_lines = ["/dev/null" if line == f"--- a/{target}" else line for line in file_diff_lines]
+            file_diff_lines = ["--- /dev/null" if line == f"--- a/{target}" else line for line in file_diff_lines]
         if not file_diff_lines:
             continue
         repaired_chunks.append(f"diff --git a/{target} b/{target}\n" + "".join(line + "\n" for line in file_diff_lines))

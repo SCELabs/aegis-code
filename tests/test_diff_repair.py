@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import aegis_code.patches.diff_repair as diff_repair_module
+from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.diff_inspector import inspect_diff
+from aegis_code.patches.patch_applier import apply_patch_file
 from aegis_code.patches.diff_repair import repair_malformed_diff
 
 
@@ -217,6 +219,109 @@ def test_impl_with_tests_multi_file_create_repaired(tmp_path: Path) -> None:
     assert "diff --git a/src/helpers.py b/src/helpers.py" in repaired
     assert "diff --git a/tests/test_helpers.py b/tests/test_helpers.py" in repaired
     assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
+
+
+def test_impl_with_tests_repair_uses_diff_git_target_for_new_file_headers(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/test\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text.lower().replace(' ', '-')\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/test\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+from src.helpers import slugify\n"
+        "+\n"
+        "+def test_slugify_spaces():\n"
+        "+    assert slugify('Hello World') == 'hello-world'\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add a helpers module with a slugify(text) function and tests for it",
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}],
+        },
+        context={"files": []},
+    )
+    assert result["applied"] is True
+    repaired = str(result["diff"])
+    assert "+++ b/src/helpers.py" in repaired
+    assert "+++ b/tests/test_helpers.py" in repaired
+    assert "+++ b/test\n" not in repaired
+    assert sorted(result["repair_targets"]) == ["src/helpers.py", "tests/test_helpers.py"]
+    assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
+
+
+def test_repaired_new_file_diff_has_dev_null_header_prefix(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text.lower()\n"
+        "+\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add helper module",
+        patch_plan={"task_type": "general", "proposed_changes": [{"file": "src/helpers.py"}]},
+        context={"files": []},
+    )
+    assert result["applied"] is True
+    repaired = str(result["diff"])
+    assert "--- /dev/null\n+++ b/src/helpers.py" in repaired
+    assert "\n/dev/null\n+++ b/src/helpers.py" not in repaired
+
+
+def test_repaired_multi_file_create_diff_check_and_apply_consistent(tmp_path: Path) -> None:
+    malformed = (
+        "diff --git a/src/helpers.py b/src/helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+def slugify(text):\n"
+        "+    return text.lower().replace(' ', '-')\n"
+        "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n"
+        "--- /dev/null\n"
+        "+++ b/tests/test_helpers.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+from src.helpers import slugify\n"
+        "+\n"
+        "+def test_slugify_spaces():\n"
+        "+    assert slugify('Hello World') == 'hello-world'\n"
+    )
+    repaired_result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add a helpers module with tests",
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [{"file": "src/helpers.py"}, {"file": "tests/test_helpers.py"}],
+        },
+        context={"files": []},
+    )
+    assert repaired_result["applied"] is True
+    repaired = str(repaired_result["diff"])
+    assert "--- /dev/null\n+++ b/src/helpers.py" in repaired
+    assert "--- /dev/null\n+++ b/tests/test_helpers.py" in repaired
+    assert "\n/dev/null\n+++ b/" not in repaired
+
+    check_result = check_patch_text(repaired, cwd=tmp_path)
+    assert check_result["valid"] is True
+    assert check_result["apply_blocked"] is False
+
+    diff_file = tmp_path / "latest.diff"
+    diff_file.write_text(repaired, encoding="utf-8")
+    apply_result = apply_patch_file(diff_file, cwd=tmp_path)
+    assert apply_result["applied"] is True
+    assert sorted(str(item) for item in apply_result["files_changed"]) == ["src/helpers.py", "tests/test_helpers.py"]
 
 
 def test_incidental_triple_plus_minus_in_code_not_new_block(tmp_path: Path) -> None:
