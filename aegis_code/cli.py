@@ -4,6 +4,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -1157,6 +1158,7 @@ def handle_task(argv: Sequence[str]) -> int:
     if not args.quiet:
         print("Aegis Code: controlled execution...")
     progress_state = {"i": 0}
+    heartbeat_state = {"active": False, "last_non_tty_elapsed": -10, "current_message": ""}
     progress_labels = [
         "loading config",
         "resolving keys",
@@ -1174,13 +1176,30 @@ def handle_task(argv: Sequence[str]) -> int:
     def _progress_cb(message: str) -> None:
         if args.quiet:
             return
-        if str(message).startswith("  waiting on provider"):
-            print(str(message))
+        text = str(message)
+        if text.startswith("  waiting on provider"):
+            elapsed_match = re.search(r"\((\d+)s\)\s*$", text)
+            elapsed = int(elapsed_match.group(1)) if elapsed_match else 0
+            step = max(1, progress_state["i"])
+            total = len(progress_labels)
+            stage = heartbeat_state["current_message"] or "running provider call"
+            if sys.stdout.isatty():
+                sys.stdout.write(f"\r[{step}/{total}] {stage}... waiting {elapsed}s")
+                sys.stdout.flush()
+                heartbeat_state["active"] = True
+            elif elapsed - int(heartbeat_state["last_non_tty_elapsed"]) >= 10:
+                print(f"[{step}/{total}] {stage}... waiting {elapsed}s")
+                heartbeat_state["last_non_tty_elapsed"] = elapsed
             return
+        if heartbeat_state["active"]:
+            print("")
+            heartbeat_state["active"] = False
+        heartbeat_state["last_non_tty_elapsed"] = -10
         progress_state["i"] += 1
         step = progress_state["i"]
         total = len(progress_labels)
-        print(f"[{step}/{total}] {message}")
+        heartbeat_state["current_message"] = text
+        print(f"[{step}/{total}] {text}")
 
     options = TaskOptions(
         task=args.task,
@@ -1197,6 +1216,8 @@ def handle_task(argv: Sequence[str]) -> int:
         progress_callback=_progress_cb,
     )
     payload = run_task(options=options, cwd=cwd)
+    if heartbeat_state["active"] and not args.quiet:
+        print("")
 
     print("Aegis Code: controlled execution with proposal-only patch diffs and patch-quality scoring.")
     print(f"Task: {payload['task']}")

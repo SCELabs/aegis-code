@@ -7,11 +7,13 @@ from pathlib import Path
 
 from aegis_code.models import AegisDecision
 from aegis_code.providers.openai_provider import generate_patch_diff_openai
+from aegis_code.providers.base import build_diff_prompt
 from aegis_code.report import render_markdown_report
 from aegis_code.runtime import (
     TaskOptions,
     _aegis_corrective_control,
     build_run_payload,
+    classify_task_type,
     is_constructive_task,
     run_task,
 )
@@ -398,6 +400,14 @@ def test_is_constructive_task_test_generation_phrases() -> None:
     assert is_constructive_task("check tests") is False
 
 
+def test_mixed_task_classifies_as_implementation_with_tests() -> None:
+    assert classify_task_type("add a helpers module with a slugify(text) function and tests for it") == "implementation_with_tests"
+
+
+def test_test_only_task_remains_test_generation() -> None:
+    assert classify_task_type("add tests for save_note_to_file only; do not modify source files") == "test_generation"
+
+
 def test_task_driven_test_writing_uses_patch_plan_and_attempts_diff(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
@@ -436,6 +446,39 @@ def test_task_driven_test_writing_uses_patch_plan_and_attempts_diff(monkeypatch,
         for item in payload["patch_plan"]["proposed_changes"]
     )
     assert payload["patch_diff"]["attempted"] is True
+
+
+def test_mixed_task_patch_plan_includes_helpers_and_tests(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="add a helpers module with a slugify(text) function and tests for it", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "implementation_with_tests"
+    files = [str(item.get("file", "")) for item in payload["patch_plan"]["proposed_changes"] if isinstance(item, dict)]
+    assert "src/helpers.py" in files
+    assert "tests/test_helpers.py" in files
+    plan = captured.get("patch_plan")
+    assert isinstance(plan, dict)
+    assert sorted(plan.get("allowed_targets", [])) == ["src/helpers.py", "tests/test_helpers.py"]
 
 
 def test_feature_task_may_add_entrypoint_plan_item(monkeypatch, tmp_path: Path) -> None:
@@ -497,6 +540,22 @@ def test_test_task_requests_full_file_diff(monkeypatch, tmp_path: Path) -> None:
     plan = captured.get("patch_plan")
     assert isinstance(plan, dict)
     assert plan.get("target_file") == "tests/test_cli.py"
+
+
+def test_impl_with_tests_prompt_includes_allowed_targets() -> None:
+    prompt = build_diff_prompt(
+        task="add helpers module and tests",
+        failures={},
+        context={"files": []},
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "allowed_targets": ["src/helpers.py", "tests/test_helpers.py"],
+            "proposed_changes": [],
+        },
+        aegis_execution={},
+    )
+    assert "Create or modify only the planned files." in prompt
+    assert "Allowed targets: src/helpers.py, tests/test_helpers.py" in prompt
 
 
 def test_generated_diff_is_single_file(monkeypatch, tmp_path: Path) -> None:
@@ -1245,6 +1304,39 @@ def test_plan_consistency_partial_multifile_missing(monkeypatch, tmp_path: Path)
     assert payload["patch_diff"]["plan_missing_targets"] == ["src/helpers.py"]
 
 
+def test_plan_consistency_detects_missing_helpers_test_file(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_plan",
+        lambda *_args, **_kwargs: {
+            "strategy": "add helper module and tests",
+            "confidence": 0.7,
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [
+                {"file": "src/helpers.py", "change_type": "create", "description": "helpers", "reason": "feature"},
+                {"file": "tests/test_helpers.py", "change_type": "create", "description": "tests", "reason": "feature"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/src/helpers.py b/src/helpers.py\n--- /dev/null\n+++ b/src/helpers.py\n@@ -0,0 +1,2 @@\n+def slugify(text):\n+    return text\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="add feature", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["patch_diff"]["plan_consistent"] is False
+    assert "tests/test_helpers.py" in payload["patch_diff"]["plan_missing_targets"]
+
+
 def test_plan_consistency_detects_missing_inferred_helpers_from_import(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
@@ -1415,6 +1507,49 @@ def test_hard_invalid_regeneration_succeeds_once(monkeypatch, tmp_path: Path) ->
     constraints = captured_second_plan.get("regeneration_constraints", [])
     assert isinstance(constraints, list)
     assert any("Limit additions to 300 lines." in str(item) for item in constraints)
+
+
+def test_mixed_task_regeneration_allowed_targets_include_both_files(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+    captured_second_plan: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "available": True,
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "diff": "diff --git a/src/helpers.py b/src/helpers.py\n--- /dev/null\n+++ b/src/helpers.py\n@@ -0,0 +1,2 @@\n+def broken(:\n+    pass\n",
+                "error": None,
+            }
+        captured_second_plan.update(kwargs.get("patch_plan", {}))
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/helpers.py b/src/helpers.py\n--- /dev/null\n+++ b/src/helpers.py\n@@ -0,0 +1,2 @@\n+def slugify(text):\n+    return text\n"
+                "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\n--- /dev/null\n+++ b/tests/test_helpers.py\n@@ -0,0 +1,2 @@\n+def test_slugify():\n+    assert True\n"
+            ),
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(task="add a helpers module with a slugify(text) function and tests for it", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert calls["count"] == 2
+    assert payload["patch_diff"]["regeneration_attempted"] is True
+    allowed_targets = captured_second_plan.get("allowed_targets", [])
+    assert sorted(allowed_targets) == ["src/helpers.py", "tests/test_helpers.py"]
 
 
 def test_hard_invalid_regeneration_fails_still_invalid_and_once(monkeypatch, tmp_path: Path) -> None:

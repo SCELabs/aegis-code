@@ -66,6 +66,19 @@ def build_diff_prompt(
                     "- Do not touch any other files.",
                 ]
             )
+    elif task_type == "implementation_with_tests":
+        test_constraints = [
+            "Implementation-with-tests guidance:",
+            "- Create or modify only the planned files.",
+            "- Do not rewrite unrelated tests.",
+            "- Prefer small diffs.",
+            "- If creating a new module, include the module file and its tests.",
+            "- Do not place helper tests in tests/test_cli.py unless explicitly requested.",
+            "- Ensure unified diff hunk line counts match hunk headers.",
+        ]
+        allowed_targets = patch_plan.get("allowed_targets", [])
+        if isinstance(allowed_targets, list) and allowed_targets:
+            test_constraints.append(f"- Allowed targets: {', '.join(str(item) for item in allowed_targets)}")
     return (
         "You generate a unified git diff only.\n"
         "Do not output markdown fences or explanations.\n"

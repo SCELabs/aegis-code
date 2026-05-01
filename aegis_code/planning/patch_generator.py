@@ -2,13 +2,56 @@ from __future__ import annotations
 
 from typing import Any
 
+def _has_implementation_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    impl_phrases = (
+        "add a module",
+        "create a module",
+        "add helpers module",
+        "add helper",
+        "create helper",
+        "add function",
+        "create function",
+        "implement",
+    )
+    return any(phrase in lowered for phrase in impl_phrases)
+
+
+def _has_test_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    return any(phrase in lowered for phrase in ("test", "tests", "coverage"))
+
+
+def _is_explicit_tests_only_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    return any(
+        phrase in lowered
+        for phrase in ("tests only", "test only", "write tests only", "do not modify source files", "do not modify source")
+    )
+
+
+def _classify_task_type(task: str) -> str:
+    lowered = str(task or "").lower().strip()
+    if not lowered:
+        return "general"
+    if _has_implementation_intent(lowered) and _has_test_intent(lowered):
+        return "implementation_with_tests"
+    if _is_test_generation_task(lowered):
+        return "test_generation"
+    return "general"
+
+
 def _is_test_generation_task(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     if not lowered:
         return False
+    if _has_implementation_intent(lowered) and _has_test_intent(lowered) and not _is_explicit_tests_only_task(lowered):
+        return False
     verification_only = ("run tests", "execute tests", "check tests")
     if any(phrase in lowered for phrase in verification_only):
         return False
+    if _is_explicit_tests_only_task(lowered):
+        return True
     generation_phrases = (
         "add test",
         "add tests",
@@ -43,13 +86,14 @@ def generate_patch_plan(
     aegis_decision: dict[str, Any],
     sll_analysis: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    test_task = _is_test_generation_task(task)
+    task_type = _classify_task_type(task)
+    test_task = task_type == "test_generation"
     if not failures:
         return {
             "strategy": f"No failures detected for task '{task}'. No patch required.",
             "confidence": 0.95,
             "proposed_changes": [],
-            "task_type": "test_generation" if test_task else "general",
+            "task_type": task_type,
         }
 
     guidance = str(aegis_decision.get("context_mode", "balanced"))
@@ -102,7 +146,7 @@ def generate_patch_plan(
         "strategy": strategy,
         "confidence": round(confidence, 3),
         "proposed_changes": proposed_changes,
-        "task_type": "test_generation" if test_task else "general",
+        "task_type": task_type,
     }
     if test_task:
         target_file = next(

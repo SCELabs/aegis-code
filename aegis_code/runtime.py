@@ -118,14 +118,63 @@ def is_constructive_task(task: str) -> bool:
     return any(token in lowered for token in positive)
 
 
+def _has_implementation_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    impl_phrases = (
+        "add a module",
+        "create a module",
+        "add helpers module",
+        "add helper",
+        "create helper",
+        "add function",
+        "create function",
+        "implement",
+    )
+    return any(phrase in lowered for phrase in impl_phrases)
+
+
+def _has_test_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    test_phrases = ("test", "tests", "coverage")
+    return any(phrase in lowered for phrase in test_phrases)
+
+
+def _is_explicit_tests_only_task(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    tests_only_phrases = (
+        "tests only",
+        "test only",
+        "write tests only",
+        "add tests for",
+        "do not modify source files",
+        "do not modify source",
+    )
+    return any(phrase in lowered for phrase in tests_only_phrases)
+
+
+def classify_task_type(task: str) -> str:
+    lowered = str(task or "").lower().strip()
+    if not lowered:
+        return "general"
+    if _has_implementation_intent(lowered) and _has_test_intent(lowered):
+        return "implementation_with_tests"
+    if is_test_generation_task(lowered):
+        return "test_generation"
+    return "general"
+
+
 def is_test_generation_task(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     if not lowered:
+        return False
+    if _has_implementation_intent(lowered) and _has_test_intent(lowered) and not _is_explicit_tests_only_task(lowered):
         return False
     verification_only = ("run tests", "execute tests", "check tests")
     if any(phrase in lowered for phrase in verification_only):
         return False
 
+    if _is_explicit_tests_only_task(lowered):
+        return True
     generation_phrases = (
         "add test",
         "add tests",
@@ -157,6 +206,15 @@ def _test_hint_path(task: str, context: dict[str, Any]) -> str:
     ]
     base = tokens[0] if tokens else "task"
     return f"tests/test_{base}.py"
+
+
+def _infer_impl_with_tests_targets(task: str) -> tuple[str, str, str]:
+    lowered = str(task or "").lower()
+    module_name = "helpers" if "helper" in lowered else "module"
+    function_name = "slugify" if "slugify" in lowered else "helper_function"
+    module_file = f"src/{module_name}.py"
+    test_file = f"tests/test_{module_name}.py"
+    return module_file, test_file, function_name
 
 
 def _patch_diff_default() -> dict[str, Any]:
@@ -1014,7 +1072,9 @@ def build_run_payload(
                 if path in {"src/main.py", "main.py", "cli.py", "app.py"}:
                     entrypoint_file = path
                     break
-        test_task = is_test_generation_task(options.task)
+        task_type_hint = classify_task_type(options.task)
+        test_task = task_type_hint == "test_generation"
+        impl_with_tests_task = task_type_hint == "implementation_with_tests"
         patch_plan = {
             "strategy": f"Implement requested task: {options.task}. Keep changes minimal and localized.",
             "confidence": 0.5,
@@ -1046,7 +1106,32 @@ def build_run_payload(
                     "reason": "test_generation_task",
                 }
             )
-        if entrypoint_file and not test_task:
+        if impl_with_tests_task:
+            module_file, test_file, function_name = _infer_impl_with_tests_targets(options.task)
+            patch_plan["task_type"] = "implementation_with_tests"
+            patch_plan["target_file"] = test_file
+            patch_plan["strategy"] += (
+                " This task requires implementation and tests. "
+                "Create or modify only planned files, keep diffs small, and avoid unrelated test rewrites."
+            )
+            patch_plan["proposed_changes"].append(
+                {
+                    "file": module_file,
+                    "change_type": "create",
+                    "description": f"Add {function_name}(text) helper function.",
+                    "reason": "implementation_with_tests_task",
+                }
+            )
+            patch_plan["proposed_changes"].append(
+                {
+                    "file": test_file,
+                    "change_type": "create",
+                    "description": f"Add tests for {function_name}(text).",
+                    "reason": "implementation_with_tests_task",
+                }
+            )
+            patch_plan["allowed_targets"] = [module_file, test_file]
+        if entrypoint_file and not test_task and not impl_with_tests_task:
             patch_plan["proposed_changes"].append(
                 {
                     "file": entrypoint_file,
@@ -1069,6 +1154,17 @@ def build_run_payload(
     ):
         task_type = str(patch_plan.get("task_type", "general") or "general")
         test_task = task_type == "test_generation" or is_test_generation_task(options.task)
+        impl_with_tests_task = task_type == "implementation_with_tests"
+        if impl_with_tests_task:
+            allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+            if allowed_targets and isinstance(failure_context.get("files"), list):
+                failure_context = {
+                    "files": [
+                        item
+                        for item in failure_context.get("files", [])
+                        if isinstance(item, dict) and str(item.get("path", "")).strip() in set(allowed_targets)
+                    ]
+                }
         regeneration: dict[str, Any] = {
             "triggered": False,
             "reason": "none",
@@ -1170,6 +1266,20 @@ def build_run_payload(
                 enhanced_patch_plan["allowed_targets"] = [
                     path for path in _extract_context_paths(failure_context) if path.startswith("tests/")
                 ]
+            if impl_with_tests_task:
+                planned_targets = sorted(_collect_plan_targets(patch_plan))
+                if planned_targets:
+                    enhanced_patch_plan["allowed_targets"] = planned_targets
+                enhanced_constraints.extend(
+                    [
+                        "Create or modify only planned files.",
+                        "Do not rewrite unrelated tests.",
+                        "Prefer small diffs.",
+                        "If creating a new module, include the module file and its tests.",
+                        "Do not place helper tests in tests/test_cli.py unless explicitly requested.",
+                        "Ensure all planned targets are present in the diff.",
+                    ]
+                )
             if _control_requested(config, (cwd or Path.cwd()).resolve()):
                 corrective = _aegis_corrective_control(
                     task=options.task,
@@ -1369,6 +1479,7 @@ def build_run_payload(
                 "Do not create unplanned files.",
                 "Keep diff minimal and small.",
                 "Ensure patch aligns with patch plan targets.",
+                "Include every planned target file in the diff.",
             ]
             if planned_targets:
                 regen_plan["allowed_targets"] = planned_targets
