@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from difflib import unified_diff
 from pathlib import Path, PurePosixPath
+import re
 from typing import Any
 
 from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
+
+_VALID_HUNK_RE = re.compile(
+    r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
+)
 
 
 def _normalize_patch_path(path_text: str) -> str:
@@ -165,6 +170,69 @@ def _extract_block_intended_content(block: list[str], *, is_new_file: bool) -> s
     return "\n".join(out) + "\n"
 
 
+def _is_malformed_context_hunk_header(line: str) -> bool:
+    text = str(line or "").strip()
+    if not text.startswith("@@"):
+        return False
+    return _VALID_HUNK_RE.match(text) is None
+
+
+def _extract_removed_added_lines_after_malformed_hunk(block: list[str]) -> tuple[list[str], list[str]]:
+    removed: list[str] = []
+    added: list[str] = []
+    in_malformed = False
+    for line in block:
+        if _is_malformed_context_hunk_header(line):
+            in_malformed = True
+            continue
+        if not in_malformed:
+            continue
+        if line.startswith("diff --git "):
+            break
+        if line.startswith("--- ") or line.startswith("+++ "):
+            continue
+        if line.startswith("\\ No newline"):
+            continue
+        if line.startswith("-"):
+            removed.append(line[1:])
+            continue
+        if line.startswith("+"):
+            added.append(line[1:])
+            continue
+        if line.startswith(" "):
+            # Malformed context hunks are ambiguous with context lines.
+            # Keep this path conservative by refusing context-bearing blocks.
+            return [], []
+    return removed, added
+
+
+def _replace_unique_removed_chunk(
+    current: str,
+    removed_lines: list[str],
+    added_lines: list[str],
+) -> tuple[str | None, str | None]:
+    if not removed_lines:
+        return None, "missing_removed_lines"
+    source_lines = current.splitlines()
+    chunk_len = len(removed_lines)
+    if chunk_len <= 0:
+        return None, "missing_removed_lines"
+    matches: list[int] = []
+    for i in range(0, len(source_lines) - chunk_len + 1):
+        if source_lines[i : i + chunk_len] == removed_lines:
+            matches.append(i)
+    if not matches:
+        return None, "removed_lines_not_found"
+    if len(matches) > 1:
+        return None, "ambiguous_removed_lines_match"
+    start = matches[0]
+    replaced = source_lines[:start] + added_lines + source_lines[start + chunk_len :]
+    updated = "\n".join(replaced)
+    if current.endswith("\n"):
+        updated += "\n"
+    return updated, None
+
+
 def _is_allowed_path(target: str) -> bool:
     if target.startswith("src/") or target.startswith("tests/"):
         return True
@@ -284,7 +352,14 @@ def repair_malformed_diff(
     if any(w.startswith(severe_prefixes) for w in warnings):
         return {"applied": False, "status": "skipped", "reason": "unsafe_or_internal_target", "diff": source, "error": None}
 
-    if task_type == "implementation_with_tests":
+    placeholder_single_file_candidate = (
+        repair_file_count == 1
+        and bool(blocks)
+        and any(_is_malformed_context_hunk_header(line) for line in blocks[0])
+        and "malformed_hunk_header" in errors
+    )
+
+    if task_type == "implementation_with_tests" and not placeholder_single_file_candidate:
         if repair_file_count < 2 or repair_file_count > 3:
             return {
                 "applied": False,
@@ -402,6 +477,62 @@ def repair_malformed_diff(
                 "raw_repair_file_count": raw_repair_file_count,
             }
         current = target_file.read_text(encoding="utf-8") if target_file.exists() else ""
+
+        if (
+            placeholder_single_file_candidate
+            and repair_file_count == 1
+            and old_path is not None
+            and new_path is not None
+            and old_path == new_path
+            and target_file.exists()
+        ):
+            removed_lines, added_lines = _extract_removed_added_lines_after_malformed_hunk(block)
+            if not removed_lines:
+                return {
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": "missing_removed_lines",
+                    "diff": source,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
+            updated, replace_error = _replace_unique_removed_chunk(current, removed_lines, added_lines)
+            if replace_error is not None or updated is None:
+                return {
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": str(replace_error or "placeholder_repair_failed"),
+                    "diff": source,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
+            file_diff_lines = list(
+                unified_diff(
+                    current.splitlines(),
+                    updated.splitlines(),
+                    fromfile=f"a/{target}",
+                    tofile=f"b/{target}",
+                    lineterm="",
+                )
+            )
+            if not file_diff_lines:
+                return {
+                    "applied": False,
+                    "status": "skipped",
+                    "reason": "placeholder_no_changes",
+                    "diff": source,
+                    "error": None,
+                    "repair_file_count": repair_file_count,
+                    "repair_targets": repair_targets,
+                    "raw_repair_file_count": raw_repair_file_count,
+                }
+            repaired_chunks.append(f"diff --git a/{target} b/{target}\n" + "".join(line + "\n" for line in file_diff_lines))
+            continue
+
         intended = _extract_block_intended_content(block, is_new_file=is_new_file)
         file_diff_lines = list(
             unified_diff(

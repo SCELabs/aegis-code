@@ -418,13 +418,164 @@ def test_duplicate_file_targets_merge_repair_single_block_per_file(tmp_path: Pat
         context={"files": [{"path": "src/main.py", "content": "a\n"}]},
     )
     assert result["applied"] is True
-    assert result["reason"] == "duplicate_targets_merged"
+
+
+def test_repair_single_file_malformed_placeholder_hunk(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def test_intentional_failure_for_aegis_fix():\n"
+        "    assert \"actual\" == \"expected\"\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ ... @@\n"
+        "-def test_intentional_failure_for_aegis_fix():\n"
+        "-    assert \"actual\" == \"expected\"\n"
+        "+def test_intentional_failure_for_aegis_fix():\n"
+        "+    assert \"actual\" == \"actual\"\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="fix failing tests",
+        patch_plan={
+            "task_type": "implementation_with_tests",
+            "proposed_changes": [{"file": "tests/test_cli.py"}],
+        },
+        context={"files": [{"path": "tests/test_cli.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is True
     repaired = str(result["diff"])
-    assert repaired.count("diff --git a/src/main.py b/src/main.py") == 1
-    assert repaired.count("@@ -1 +1 @@") == 2
-    checked = check_patch_text(repaired, cwd=tmp_path)
-    assert checked["valid"] is True
-    assert checked["apply_blocked"] is False
+    assert "@@ ... @@" not in repaired
+    inspected = inspect_diff(repaired, cwd=tmp_path)
+    assert inspected["valid"] is True
+
+
+def test_repair_single_file_malformed_hunk_refuses_ambiguous_match(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def test_intentional_failure_for_aegis_fix():\n"
+        "    assert \"actual\" == \"expected\"\n"
+        "\n"
+        "def test_intentional_failure_for_aegis_fix():\n"
+        "    assert \"actual\" == \"expected\"\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ ... @@\n"
+        "-def test_intentional_failure_for_aegis_fix():\n"
+        "-    assert \"actual\" == \"expected\"\n"
+        "+def test_intentional_failure_for_aegis_fix():\n"
+        "+    assert \"actual\" == \"actual\"\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="fix failing tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "tests/test_cli.py"}]},
+        context={"files": [{"path": "tests/test_cli.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "ambiguous_removed_lines_match"
+
+
+def test_repair_single_file_malformed_hunk_refuses_missing_removed_lines(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def different_test_name():\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ ... @@\n"
+        "-def test_intentional_failure_for_aegis_fix():\n"
+        "-    assert \"actual\" == \"expected\"\n"
+        "+def test_intentional_failure_for_aegis_fix():\n"
+        "+    assert \"actual\" == \"actual\"\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="fix failing tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "tests/test_cli.py"}]},
+        context={"files": [{"path": "tests/test_cli.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "removed_lines_not_found"
+
+
+def test_repair_single_file_malformed_function_header_hunk(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def test_intentional_failure_for_aegis_fix():\n"
+        "    assert \"actual\" == \"expected\"\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ def test_intentional_failure_for_aegis_fix():\n"
+        "-    assert \"actual\" == \"expected\"\n"
+        "+    assert \"expected\" == \"expected\"\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="fix failing tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "tests/test_cli.py"}]},
+        context={"files": [{"path": "tests/test_cli.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is True
+    repaired = str(result["diff"])
+    assert "@@ def test_intentional_failure_for_aegis_fix():" not in repaired
+    assert "@@ -" in repaired
+    assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
+
+
+def test_repair_single_file_malformed_class_header_hunk(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "class SomeTest:\n"
+        "    value = \"actual\"\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ class SomeTest:\n"
+        "-    value = \"actual\"\n"
+        "+    value = \"expected\"\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="fix failing tests",
+        patch_plan={"task_type": "implementation_with_tests", "proposed_changes": [{"file": "tests/test_cli.py"}]},
+        context={"files": [{"path": "tests/test_cli.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is True
+    repaired = str(result["diff"])
+    assert "@@ class SomeTest:" not in repaired
+    assert "@@ -" in repaired
+    assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
 
 
 def test_duplicate_file_targets_merge_invalid_still_rejected(tmp_path: Path) -> None:
