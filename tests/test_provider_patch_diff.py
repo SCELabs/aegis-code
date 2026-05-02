@@ -2419,6 +2419,129 @@ def test_provider_timeout_during_regeneration_sets_timeout_result(monkeypatch, t
     assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
 
 
+def test_provider_diff_with_truncation_placeholder_is_blocked_before_repair(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/tests/test_client.py b/tests/test_client.py\n"
+                "--- a/tests/test_client.py\n"
+                "+++ b/tests/test_client.py\n"
+                "@@ -1,2 +1,3 @@\n"
+                "-def old_test():\n"
+                "-    assert True\n"
+                "+def old_test():\n"
+                "+    assert True\n"
+                "+[...truncated...]\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add tests for AegisResult.debug_summary; do not modify source files", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "placeholder_content"
+    assert payload["patch_diff"]["repair_attempted"] is False
+    assert payload["apply_safety"] == "BLOCKED"
+
+
+def test_tests_only_task_blocks_destructive_test_rewrite(monkeypatch, tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    target = tests_dir / "test_client.py"
+    target.write_text("\n".join(f"def test_old_{i}():\n    assert True" for i in range(120)) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    deleted = "".join(f"-def test_old_{i}():\n-    assert True\n" for i in range(100))
+    added = (
+        "+def test_debug_summary_new():\n"
+        "+    assert True\n"
+        "+def test_debug_summary_new_2():\n"
+        "+    assert True\n"
+        "+def test_debug_summary_new_3():\n"
+        "+    assert True\n"
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/tests/test_client.py b/tests/test_client.py\n"
+                "--- a/tests/test_client.py\n"
+                "+++ b/tests/test_client.py\n"
+                "@@ -1,200 +1,12 @@\n"
+                f"{deleted}{added}"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add tests for AegisResult.debug_summary; do not modify source files", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_test_rewrite"
+    assert payload["apply_safety"] == "BLOCKED"
+
+
+def test_tests_only_task_allows_small_test_addition(monkeypatch, tmp_path: Path) -> None:
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    target = tests_dir / "test_client.py"
+    target.write_text("def test_existing():\n    assert True\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+                "diff": (
+                    "diff --git a/tests/test_client.py b/tests/test_client.py\n"
+                    "--- a/tests/test_client.py\n"
+                    "+++ b/tests/test_client.py\n"
+                    "@@ -1,2 +1,5 @@\n"
+                    " def test_existing():\n"
+                    "     assert True\n"
+                    "+\n"
+                    "+def test_debug_summary():\n"
+                    "+    assert True\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add tests for AegisResult.debug_summary; do not modify source files", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"].get("error") != "destructive_test_rewrite"
+
+
 def test_provider_timeout_uses_configurable_value(monkeypatch, tmp_path: Path) -> None:
     aegis_dir = tmp_path / ".aegis"
     aegis_dir.mkdir(parents=True, exist_ok=True)

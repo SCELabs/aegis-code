@@ -2,6 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from aegis_code.providers.context_builder import (
+    build_named_test_file_context,
+    extract_named_test_file,
+    line_safe_cap,
+    shape_test_generation_context,
+    trim_context,
+)
+
+
+def _line_safe_cap(content: str, limit: int) -> str:
+    return line_safe_cap(content, limit)
+
 
 def _is_docs_task(task: str, patch_plan: dict[str, Any]) -> bool:
     lowered = str(task or "").lower()
@@ -25,24 +37,24 @@ def _strip_provider_prefix(model: str) -> str:
 
 
 def _trim_context(context: dict[str, Any], max_chars: int) -> dict[str, Any]:
-    if max_chars <= 0:
-        return {"files": []}
-    files = context.get("files", [])
-    if not isinstance(files, list):
-        return {"files": []}
-    trimmed: list[dict[str, str]] = []
-    remaining = max_chars
-    for item in files:
-        path = str(item.get("path", ""))
-        content = str(item.get("content", ""))
-        if not path:
-            continue
-        chunk = content[:remaining]
-        trimmed.append({"path": path, "content": chunk})
-        remaining -= len(chunk)
-        if remaining <= 0:
-            break
-    return {"files": trimmed}
+    return trim_context(context, max_chars)
+
+
+def _extract_named_test_file(task: str) -> str:
+    return extract_named_test_file(task)
+
+
+def _build_named_test_file_context(path: str, content: str) -> dict[str, Any]:
+    return build_named_test_file_context(path, content)
+
+
+def _shape_test_generation_context(
+    *,
+    task: str,
+    context: dict[str, Any],
+    patch_plan: dict[str, Any],
+) -> dict[str, Any]:
+    return shape_test_generation_context(task=task, context=context, patch_plan=patch_plan)
 
 
 def build_diff_prompt(
@@ -61,19 +73,35 @@ def build_diff_prompt(
     if isinstance(raw_regen, list):
         regen_constraints = [f"- {str(item)}" for item in raw_regen if str(item).strip()]
     if task_type == "test_generation":
+        named_test_file = _extract_named_test_file(task)
         test_constraints = [
             "Test-generation guidance:",
-            "- Produce a full-file unified diff for the test file.",
-            "- Replace the entire contents of the test file.",
-            "- Ensure the hunk header matches the full file length.",
-            "- Return exactly one diff block.",
+            "- Append-only test addition unless the task explicitly asks to edit existing tests.",
+            "- Do not delete existing tests.",
+            "- Do not rewrite whole files.",
+            "- Do not replace imports unless required.",
+            "- Add the smallest possible test.",
+            "- Prefer appending a new test method/function near relevant existing tests.",
+            "- Output a valid unified diff only.",
             "- Prefer modifying tests only.",
             "- Do not modify source files unless explicitly requested.",
-            "- Put imports at the top of test files.",
-            "- Replace placeholder tests cleanly instead of appending imports after functions.",
             "- Keep diff hunks minimal and valid.",
             "- Ensure unified diff hunk line counts match hunk headers.",
+            "- Use a real unified hunk header generated against the provided file content.",
+            "- Use a real unified diff hunk header with line numbers.",
+            "- Do not use placeholder hunk headers such as @@ ... @@.",
+            "- Do not include truncated context.",
         ]
+        if named_test_file:
+            test_constraints.extend(
+                [
+                    f"- Named target file: {named_test_file}",
+                    f"- Allowed target: {named_test_file}",
+                ]
+            )
+        else:
+            test_constraints.append("- Allowed targets: tests/**")
+        test_constraints.append("- Max deletions: 0")
         if target_file:
             test_constraints.extend(
                 [
@@ -126,13 +154,16 @@ def build_diff_prompt(
                 "- Do not modify files outside allowed targets.",
             ]
         )
+    prompt_context: dict[str, Any] = context
+    if task_type == "test_generation":
+        prompt_context = _shape_test_generation_context(task=task, context=context, patch_plan=patch_plan)
     return (
         "You generate a unified git diff only.\n"
         "Do not output markdown fences or explanations.\n"
         "If unsure, output an empty string.\n\n"
         f"Task: {task}\n"
         f"Failures: {failures}\n"
-        f"Context: {context}\n"
+        f"Context: {prompt_context}\n"
         f"Patch plan: {patch_plan}\n"
         f"Aegis execution guidance: {aegis_execution}\n"
         + ("\n".join(test_constraints) + "\n" if test_constraints else "")

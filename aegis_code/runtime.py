@@ -23,6 +23,7 @@ from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
+from aegis_code.patches.policy import hard_invalid_content_reason, hard_invalid_reason
 from aegis_code.patches.diff_repair import repair_malformed_diff
 from aegis_code.patches.diff_writer import (
     remove_latest_diff,
@@ -259,6 +260,9 @@ def is_test_generation_task(task: str) -> bool:
 
 
 def _test_hint_path(task: str, context: dict[str, Any]) -> str:
+    named = re.search(r"(tests/[A-Za-z0-9_./-]+\.py)", str(task or ""))
+    if named:
+        return named.group(1).strip()
     files = context.get("files", []) if isinstance(context, dict) else []
     for item in files:
         if isinstance(item, dict):
@@ -473,14 +477,36 @@ def _hard_invalid_reason(
     additions: int,
     size_threshold: int,
     plan_consistent: bool,
+    diff_text: str = "",
+    validation: dict[str, Any] | None = None,
+    test_task: bool = False,
+    task_text: str = "",
 ) -> str | None:
-    if syntactic_valid is False:
-        return "syntactic_invalid"
-    if additions > size_threshold:
-        return "excessive_diff_size"
-    if not plan_consistent:
-        return "plan_inconsistent"
-    return None
+    return hard_invalid_reason(
+        syntactic_valid=syntactic_valid,
+        additions=additions,
+        size_threshold=size_threshold,
+        plan_consistent=plan_consistent,
+        diff_text=diff_text,
+        validation=validation,
+        test_task=test_task,
+        task_text=task_text,
+    )
+
+
+def _hard_invalid_content_reason(
+    *,
+    diff_text: str,
+    validation: dict[str, Any],
+    test_task: bool,
+    task_text: str,
+) -> str | None:
+    return hard_invalid_content_reason(
+        diff_text=diff_text,
+        validation=validation,
+        test_task=test_task,
+        task_text=task_text,
+    )
 
 
 def _compute_apply_safety(
@@ -560,7 +586,12 @@ def _read_context_file(path: Path, max_chars_per_file: int) -> str:
         return ""
     if len(text) <= max_chars_per_file:
         return text
-    return text[:max_chars_per_file].rstrip() + "\n[truncated]"
+    capped = text[:max_chars_per_file]
+    newline_idx = capped.rfind("\n")
+    if newline_idx == -1:
+        return "[context truncated for runtime context budget]"
+    kept = capped[: newline_idx + 1]
+    return kept + "[context truncated for runtime context budget]"
 
 
 def build_task_context(cwd: Path) -> dict:
@@ -1264,6 +1295,8 @@ def build_run_payload(
             test_file_hint = _test_hint_path(options.task, failure_context)
             patch_plan["task_type"] = "test_generation"
             patch_plan["target_file"] = test_file_hint
+            patch_plan["max_deletions"] = 0
+            patch_plan["allowed_targets"] = [test_file_hint] if test_file_hint else ["tests/**"]
             patch_plan["strategy"] += (
                 " Prefer modifying tests only. Avoid source changes unless explicitly requested. "
                 "Place imports at the top of test files, replace placeholder tests cleanly, and keep hunk counts valid."
@@ -1499,6 +1532,23 @@ def build_run_payload(
         docs_wrapper_source = _sanitize_docs_wrapper_content(
             _select_docs_wrapper_content(provider_result, initial_diff or str(provider_result.get("diff", "") or ""))
         )
+        early_content_invalid_reason = _hard_invalid_content_reason(
+            diff_text=initial_diff,
+            validation=validation_result if isinstance(validation_result, dict) else {},
+            test_task=test_task,
+            task_text=options.task,
+        )
+        if early_content_invalid_reason:
+            repair_result = {
+                "applied": False,
+                "status": "skipped",
+                "reason": early_content_invalid_reason,
+                "diff": initial_diff,
+                "error": None,
+                "repair_file_count": 0,
+                "raw_repair_file_count": 0,
+                "repair_targets": [],
+            }
         if not bool(validation_result.get("valid", False)) and (initial_diff or docs_task):
             if docs_task:
                 wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
@@ -1521,8 +1571,9 @@ def build_run_payload(
                         "repair_targets": ["README.md"],
                     }
                     docs_wrapped_applied = True
-            _progress(options, "attempting repair")
-            if not bool(repair_result.get("applied", False)):
+            if not early_content_invalid_reason:
+                _progress(options, "attempting repair")
+            if not bool(repair_result.get("applied", False)) and not early_content_invalid_reason:
                 repair_attempted = True
                 repair_result = repair_malformed_diff(
                     initial_diff,
@@ -1556,6 +1607,10 @@ def build_run_payload(
                     additions=repaired_additions,
                     size_threshold=repaired_size_threshold,
                     plan_consistent=bool(repaired_candidate_plan_consistency),
+                    diff_text=initial_diff,
+                    validation=validation_result,
+                    test_task=test_task,
+                    task_text=options.task,
                 )
         initial_quality = evaluate_diff(
             initial_diff,
@@ -1741,6 +1796,10 @@ def build_run_payload(
                 additions=second_additions,
                 size_threshold=second_size_threshold,
                 plan_consistent=second_candidate_plan_consistent,
+                diff_text=second_diff,
+                validation=second_validation,
+                test_task=test_task,
+                task_text=options.task,
             )
             second_candidate_failed = (
                 not bool(second_validation.get("valid", False))
@@ -1773,7 +1832,19 @@ def build_run_payload(
             syntactic_valid, syntactic_error = _syntactic_python_check(diff_text, cwd=(cwd or Path.cwd()))
             additions = int((validation_used.get("summary", {}) or {}).get("additions", 0))
             size_threshold = 500 if test_task else 800
-            if syntactic_valid is False:
+            content_hard_invalid = _hard_invalid_content_reason(
+                diff_text=diff_text,
+                validation=validation_used if isinstance(validation_used, dict) else {},
+                test_task=test_task,
+                task_text=options.task,
+            )
+            if content_hard_invalid:
+                patch_quality = None
+                invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
+                remove_latest_diff(cwd=cwd)
+                syntactic_error = None
+                syntactic_valid = True
+            elif syntactic_valid is False:
                 patch_quality = None
                 invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
                 remove_latest_diff(cwd=cwd)
@@ -1859,7 +1930,15 @@ def build_run_payload(
         if provider_used.get("available", False) and not path_value:
             patch_diff["available"] = False
             validation_errors = validation_used.get("errors", [])
-            if syntactic_valid is False:
+            content_hard_invalid = _hard_invalid_content_reason(
+                diff_text=diff_text,
+                validation=validation_used if isinstance(validation_used, dict) else {},
+                test_task=test_task,
+                task_text=options.task,
+            )
+            if content_hard_invalid:
+                patch_diff["error"] = content_hard_invalid
+            elif syntactic_valid is False:
                 patch_diff["error"] = "syntactic_invalid"
             elif provider_used.get("available", False) and syntactic_valid is True:
                 additions = int((validation_used.get("summary", {}) or {}).get("additions", 0))
@@ -2029,6 +2108,10 @@ def build_run_payload(
                 additions=second_additions,
                 size_threshold=second_threshold,
                 plan_consistent=second_plan_consistent,
+                diff_text=second_diff,
+                validation=second_validation,
+                test_task=test_task,
+                task_text=options.task,
             )
 
             provider_used = second

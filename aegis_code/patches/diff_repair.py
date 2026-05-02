@@ -206,6 +206,70 @@ def _extract_removed_added_lines_after_malformed_hunk(block: list[str]) -> tuple
     return removed, added
 
 
+def _is_truncation_placeholder_line(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    markers = (
+        "[...truncated...]",
+        "...truncated...",
+        "<truncated>",
+        "[truncated]",
+        "... rest of file ...",
+        "... existing code ...",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _looks_partial_context_line(text: str) -> bool:
+    line = str(text or "")
+    if _is_truncation_placeholder_line(line):
+        return True
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if re.search(r"[A-Za-z_]{6,}$", stripped) and any(ch in stripped for ch in ("(", ".", "assert", "return", "self")):
+        return True
+    return False
+
+
+def _extract_append_only_lines_after_malformed_hunk(block: list[str]) -> tuple[list[str], list[str], str | None]:
+    context_lines: list[str] = []
+    added_lines: list[str] = []
+    in_malformed = False
+    seen_add = False
+    for line in block:
+        if _is_malformed_context_hunk_header(line):
+            in_malformed = True
+            continue
+        if not in_malformed:
+            continue
+        if line.startswith("diff --git "):
+            break
+        if line.startswith("--- ") or line.startswith("+++ "):
+            continue
+        if line.startswith("\\ No newline"):
+            continue
+        if line.startswith("-"):
+            return [], [], "has_removed_lines"
+        if line.startswith(" "):
+            if seen_add:
+                return [], [], "context_after_additions"
+            ctx = line[1:]
+            if _looks_partial_context_line(ctx):
+                return [], [], "partial_context_line"
+            context_lines.append(ctx)
+            continue
+        if line.startswith("+"):
+            seen_add = True
+            added_lines.append(line[1:])
+            continue
+        return [], [], "unexpected_line_in_hunk"
+    if not context_lines:
+        return [], [], "missing_context_lines"
+    if not added_lines:
+        return [], [], "missing_added_lines"
+    return context_lines, added_lines, None
+
+
 def _replace_unique_removed_chunk(
     current: str,
     removed_lines: list[str],
@@ -227,6 +291,31 @@ def _replace_unique_removed_chunk(
         return None, "ambiguous_removed_lines_match"
     start = matches[0]
     replaced = source_lines[:start] + added_lines + source_lines[start + chunk_len :]
+    updated = "\n".join(replaced)
+    if current.endswith("\n"):
+        updated += "\n"
+    return updated, None
+
+
+def _insert_after_unique_context_chunk(
+    current: str,
+    context_lines: list[str],
+    added_lines: list[str],
+) -> tuple[str | None, str | None]:
+    source_lines = current.splitlines()
+    chunk_len = len(context_lines)
+    if chunk_len <= 0:
+        return None, "missing_context_lines"
+    matches: list[int] = []
+    for i in range(0, len(source_lines) - chunk_len + 1):
+        if source_lines[i : i + chunk_len] == context_lines:
+            matches.append(i)
+    if not matches:
+        return None, "context_lines_not_found"
+    if len(matches) > 1:
+        return None, "ambiguous_context_lines_match"
+    start = matches[0] + chunk_len
+    replaced = source_lines[:start] + added_lines + source_lines[start:]
     updated = "\n".join(replaced)
     if current.endswith("\n"):
         updated += "\n"
@@ -487,18 +576,24 @@ def repair_malformed_diff(
             and target_file.exists()
         ):
             removed_lines, added_lines = _extract_removed_added_lines_after_malformed_hunk(block)
-            if not removed_lines:
-                return {
-                    "applied": False,
-                    "status": "skipped",
-                    "reason": "missing_removed_lines",
-                    "diff": source,
-                    "error": None,
-                    "repair_file_count": repair_file_count,
-                    "repair_targets": repair_targets,
-                    "raw_repair_file_count": raw_repair_file_count,
-                }
-            updated, replace_error = _replace_unique_removed_chunk(current, removed_lines, added_lines)
+            replace_error: str | None = None
+            updated: str | None = None
+            if removed_lines:
+                updated, replace_error = _replace_unique_removed_chunk(current, removed_lines, added_lines)
+            else:
+                context_lines, append_added_lines, append_error = _extract_append_only_lines_after_malformed_hunk(block)
+                if append_error is not None:
+                    return {
+                        "applied": False,
+                        "status": "skipped",
+                        "reason": str(append_error),
+                        "diff": source,
+                        "error": None,
+                        "repair_file_count": repair_file_count,
+                        "repair_targets": repair_targets,
+                        "raw_repair_file_count": raw_repair_file_count,
+                    }
+                updated, replace_error = _insert_after_unique_context_chunk(current, context_lines, append_added_lines)
             if replace_error is not None or updated is None:
                 return {
                     "applied": False,

@@ -2,7 +2,6 @@
 
 import argparse
 import getpass
-import hashlib
 import json
 import os
 import re
@@ -14,6 +13,7 @@ from aegis_code.budget import can_spend, clear_budget, get_budget_state, load_bu
 from aegis_code.config import load_config
 from aegis_code.compare import build_comparison, format_comparison, load_last_runs
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.fix.signatures import build_failure_signature
 from aegis_code.context_state import (
     format_context_refresh,
     format_context_show,
@@ -1547,17 +1547,6 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("Next: run `aegis-code init` or set `commands.test` in `.aegis/aegis-code.yml`.")
         return 2
 
-    def _failure_signature(result: object) -> str:
-        full_output = str(getattr(result, "full_output", "") or "")
-        if not full_output:
-            stdout = str(getattr(result, "stdout", "") or "")
-            stderr = str(getattr(result, "stderr", "") or "")
-            full_output = f"{stdout}\n{stderr}"
-        normalized = "\n".join(line.strip() for line in full_output.splitlines() if line.strip())
-        if not normalized:
-            normalized = f"status={getattr(result, 'status', '')};exit={getattr(result, 'exit_code', '')}"
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
     def _resolve_latest_accepted_diff_or_print() -> Path | None:
         paths = project_paths(cwd)
         latest_diff = paths["latest_diff"]
@@ -1588,7 +1577,7 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("Tests failing. Generating fix proposal...")
         print("")
 
-        signature_before = _failure_signature(current_result)
+        signature_before = build_failure_signature(current_result)
         if signature_before in seen_signatures:
             print("Tests still failing after applied fix.")
             print("Failure signature repeated. Stopping to avoid loop.")
@@ -1650,7 +1639,7 @@ def handle_fix(argv: Sequence[str]) -> int:
             print("✔ tests passed after fix")
             return 0
 
-        signature_after = _failure_signature(test_result)
+        signature_after = build_failure_signature(test_result)
         if signature_after == signature_before:
             print("Tests still failing after applied fix.")
             print("Failure signature repeated. Stopping to avoid loop.")

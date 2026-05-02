@@ -777,3 +777,106 @@ def test_repair_validation_failed_reason(tmp_path: Path, monkeypatch) -> None:
     assert result["applied"] is False
     assert result["status"] == "failed"
     assert result["reason"] == "validation_failed"
+
+
+def test_repair_append_only_malformed_hunk_with_unique_context(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_client.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "class TestAegisResult:\n"
+        "    def test_summary_and_summary_lines(self):\n"
+        "        lines = [\"a\"]\n"
+        "        self.assertTrue(all(isinstance(line, str) for line in lines))\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_client.py b/tests/test_client.py\n"
+        "--- a/tests/test_client.py\n"
+        "+++ b/tests/test_client.py\n"
+        "@@ ... @@\n"
+        "     def test_summary_and_summary_lines(self):\n"
+        "         lines = [\"a\"]\n"
+        "         self.assertTrue(all(isinstance(line, str) for line in lines))\n"
+        "+\n"
+        "+    def test_debug_summary_returns_string(self):\n"
+        "+        assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add one test for debug summary",
+        patch_plan={"task_type": "test_generation", "proposed_changes": [{"file": "tests/test_client.py"}]},
+        context={"files": [{"path": "tests/test_client.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is True
+    repaired = str(result["diff"])
+    assert "@@ ... @@" not in repaired
+    assert inspect_diff(repaired, cwd=tmp_path)["valid"] is True
+
+
+def test_repair_append_only_malformed_hunk_refuses_ambiguous_context(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_client.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def test_summary_and_summary_lines(self):\n"
+        "    lines = [\"a\"]\n"
+        "    self.assertTrue(all(isinstance(line, str) for line in lines))\n"
+        "\n"
+        "def test_summary_and_summary_lines(self):\n"
+        "    lines = [\"a\"]\n"
+        "    self.assertTrue(all(isinstance(line, str) for line in lines))\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_client.py b/tests/test_client.py\n"
+        "--- a/tests/test_client.py\n"
+        "+++ b/tests/test_client.py\n"
+        "@@ ... @@\n"
+        " def test_summary_and_summary_lines(self):\n"
+        "     lines = [\"a\"]\n"
+        "     self.assertTrue(all(isinstance(line, str) for line in lines))\n"
+        "+\n"
+        "+def test_debug_summary_returns_string(self):\n"
+        "+    assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add one test for debug summary",
+        patch_plan={"task_type": "test_generation", "proposed_changes": [{"file": "tests/test_client.py"}]},
+        context={"files": [{"path": "tests/test_client.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "ambiguous_context_lines_match"
+
+
+def test_repair_append_only_malformed_hunk_refuses_partial_context_line(tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_client.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "def test_summary_and_summary_lines(self):\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    malformed = (
+        "diff --git a/tests/test_client.py b/tests/test_client.py\n"
+        "--- a/tests/test_client.py\n"
+        "+++ b/tests/test_client.py\n"
+        "@@ ... @@\n"
+        " def test_summary_and_summary_lines(self):\n"
+        "     self.assertTrue(all(isinstan\n"
+        "+\n"
+        "+def test_debug_summary_returns_string(self):\n"
+        "+    assert True\n"
+    )
+    result = repair_malformed_diff(
+        malformed,
+        cwd=tmp_path,
+        task="add one test for debug summary",
+        patch_plan={"task_type": "test_generation", "proposed_changes": [{"file": "tests/test_client.py"}]},
+        context={"files": [{"path": "tests/test_client.py", "content": target.read_text(encoding="utf-8")}]},
+    )
+    assert result["applied"] is False
+    assert result["status"] == "skipped"
+    assert result["reason"] == "partial_context_line"
