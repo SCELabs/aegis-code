@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -192,12 +192,12 @@ def test_format_apply_check_result_contains_summary_fields() -> None:
             "applied": False,
         }
     )
-    assert "Valid: True" in formatted
+    assert "Valid: yes" in formatted
     assert "Files: 1" in formatted
     assert "Hunks: 2" in formatted
     assert "Additions: 3" in formatted
     assert "Deletions: 4" in formatted
-    assert "Applied: False" in formatted
+    assert "Apply blocked: no" in formatted
 
 
 def test_cli_apply_check_prints_and_does_not_modify_file(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -222,7 +222,7 @@ def test_cli_apply_check_prints_and_does_not_modify_file(tmp_path: Path, monkeyp
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Patch check:" in out
-    assert "Applied: False" in out
+    assert "Apply blocked: no" in out
     assert target.read_text(encoding="utf-8") == before
 
 
@@ -240,7 +240,7 @@ def test_cli_apply_check_marks_unsafe_paths_as_blocked(tmp_path: Path, monkeypat
     exit_code = cli.main(["apply", "--check", str(diff_file)])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "Apply blocked: True" in out
+    assert "Apply blocked: yes" in out
     assert "unsafe_paths" in out
 
 
@@ -279,7 +279,7 @@ def test_apply_check_uses_latest_diff_without_path(tmp_path: Path, monkeypatch, 
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Patch check:" in out
-    assert str(latest) in out
+    assert ".aegis/runs/latest.diff" in out
 
 
 def test_apply_confirm_uses_latest_diff_without_path(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -331,7 +331,8 @@ def test_apply_confirm_run_tests_uses_latest_diff_without_path(tmp_path: Path, m
     out = capsys.readouterr().out
     assert exit_code == 0
     assert captured["path"] == str(latest)
-    assert "✔ tests passed" in out
+    assert "Verification:" in out
+    assert "- Tests: passed" in out
 
 
 def test_apply_does_not_apply_invalid_latest_diff(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -350,6 +351,7 @@ def test_apply_does_not_apply_invalid_latest_diff(tmp_path: Path, monkeypatch, c
     out = capsys.readouterr().out
     assert exit_code == 1
     assert called["apply"] is False
-    assert "No accepted diff found." in out
-    assert "Latest patch is BLOCKED and cannot be applied." in out
-    assert "aegis-code diff --full" in out
+    assert "Status: BLOCKED" in out
+    assert "Reason: no_accepted_diff" in out
+    assert "- aegis-code diff --full" in out
+

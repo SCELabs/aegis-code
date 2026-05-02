@@ -173,9 +173,9 @@ def test_format_apply_result_contains_fields() -> None:
         }
     )
     assert "Patch apply: x.diff" in text
-    assert "Applied: False" in text
+    assert "Applied: no" in text
     assert "Files changed: 0" in text
-    assert "Warnings:" in text
+    assert "Backups:" in text
     assert "Errors:" in text
 
 
@@ -220,7 +220,7 @@ def test_cli_apply_confirm_prints_result(tmp_path: Path, monkeypatch, capsys) ->
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Patch apply:" in out
-    assert "Applied: True" in out
+    assert "Applied: yes" in out
 
 
 def test_apply_confirm_creates_new_file_and_parent_dirs(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -241,7 +241,7 @@ def test_apply_confirm_creates_new_file_and_parent_dirs(tmp_path: Path, monkeypa
     assert exit_code == 0
     assert target.exists()
     assert "return 42" in target.read_text(encoding="utf-8")
-    assert "(created)" in out
+    assert "src/pkg/new_file.py" in out
 
 
 def test_apply_without_confirm_does_not_create_new_file(tmp_path: Path, monkeypatch, capsys) -> None:

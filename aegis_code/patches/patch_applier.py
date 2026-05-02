@@ -281,25 +281,36 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
 
 
 def format_apply_result(result: dict[str, Any]) -> str:
+    applied = bool(result.get("applied", False))
+    applied_text = "yes" if applied else "no"
     lines = [
         f"Patch apply: {result.get('path')}",
-        f"Applied: {result.get('applied', False)}",
+        f"Applied: {applied_text}",
         f"Files changed: {len(result.get('files_changed', []))}",
     ]
+    backups: list[str] = []
     for item in result.get("files_changed", []):
-        if bool(item.get("created", False)):
-            lines.append(f"- {item.get('path')} (created)")
-        else:
-            lines.append(f"- {item.get('path')} (backup: {item.get('backup_path')})")
-    lines.append("Warnings:")
-    warnings = result.get("warnings", [])
-    if warnings:
-        lines.extend(f"- {w}" for w in warnings)
+        lines.append(f"- {item.get('path')}")
+        backup_path = item.get("backup_path")
+        if backup_path:
+            backups.append(str(backup_path))
+    lines.append("")
+    lines.append("Backups:")
+    if backups:
+        lines.extend(f"- {item}" for item in backups)
     else:
         lines.append("- none")
-    lines.append("Errors:")
+
+    warnings = result.get("warnings", [])
+    if warnings:
+        lines.append("")
+        lines.append("Warnings:")
+        lines.extend(f"- {w}" for w in warnings)
+
     errors = result.get("errors", [])
     if errors:
+        lines.append("")
+        lines.append("Errors:")
         for error in errors:
             if error == "context_mismatch":
                 lines.append(
@@ -307,7 +318,6 @@ def format_apply_result(result: dict[str, Any]) -> str:
                 )
             else:
                 lines.append(f"- {error}")
-    else:
-        lines.append("- none")
+    lines.append("")
     lines.append("No git commands were run.")
     return "\n".join(lines)

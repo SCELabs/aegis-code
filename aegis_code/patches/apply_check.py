@@ -33,30 +33,27 @@ def check_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
 
 def format_apply_check_result(result: dict[str, Any]) -> str:
     summary = result.get("summary", {})
+    valid_text = "yes" if bool(result.get("valid", False)) else "no"
+    blocked_text = "yes" if bool(result.get("apply_blocked", False)) else "no"
     lines = [
         f"Patch check: {result.get('path')}",
-        f"Valid: {result.get('valid', False)}",
+        f"Valid: {valid_text}",
         f"Files: {summary.get('file_count', 0)}",
         f"Hunks: {summary.get('hunk_count', 0)}",
         f"Additions: {summary.get('additions', 0)}",
         f"Deletions: {summary.get('deletions', 0)}",
-        "Warnings:",
+        f"Apply blocked: {blocked_text}",
     ]
-    warnings = result.get("warnings", [])
-    if warnings:
-        lines.extend(f"- {item}" for item in warnings)
-    else:
-        lines.append("- none")
-    lines.append("Errors:")
-    errors = result.get("errors", [])
-    if errors:
-        lines.extend(f"- {item}" for item in errors)
-    else:
-        lines.append("- none")
-    lines.append(f"Apply blocked: {result.get('apply_blocked', False)}")
     blockers = result.get("apply_block_reasons", [])
     if blockers:
         lines.append("Apply block reasons:")
         lines.extend(f"- {item}" for item in blockers)
-    lines.append(f"Applied: {result.get('applied', False)}")
+    warnings = result.get("warnings", [])
+    if warnings:
+        lines.append("Warnings:")
+        lines.extend(f"- {item}" for item in warnings)
+    errors = result.get("errors", [])
+    if errors:
+        lines.append("Errors:")
+        lines.extend(f"- {item}" for item in errors)
     return "\n".join(lines)

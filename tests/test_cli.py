@@ -337,6 +337,9 @@ def test_task_prints_invalid_patch_status_and_quality_message(tmp_path: Path, mo
     assert "Patch diff status: invalid" in out
     assert "Patch quality: invalid (not evaluated)" in out
     assert "Aegis corrective control: no_guidance_returned" in out
+    assert "Aegis Code Summary" in out
+    assert "Status: BLOCKED" in out
+    assert "Reason: hunk_count_mismatch" in out
 
 
 def test_progress_messages_emitted_by_default(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -444,7 +447,70 @@ def test_diff_command_stat(tmp_path: Path, monkeypatch, capsys) -> None:
     exit_code = cli.main(["diff", "--stat"])
     out = capsys.readouterr().out
     assert exit_code == 0
+    assert "Diff: .aegis/runs/latest.diff" in out
+    assert "Files:" in out
     assert "src/main.py (+1 -1)" in out
+
+
+def test_task_final_summary_valid_patch_output(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    diff_path = runs / "latest.diff"
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_cli.py").write_text("x=1\n", encoding="utf-8")
+    diff_path.write_text(
+        "diff --git a/tests/test_cli.py b/tests/test_cli.py\n"
+        "--- a/tests/test_cli.py\n"
+        "+++ b/tests/test_cli.py\n"
+        "@@ -1 +1 @@\n"
+        "-x=1\n"
+        "+x=2\n",
+        encoding="utf-8",
+    )
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "add tests only for existing behavior",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_passed",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": [{}]},
+            "patch_diff": {
+                "attempted": True,
+                "available": True,
+                "status": "generated",
+                "path": str(diff_path),
+                "validation_result": {"valid": True},
+                "syntactic_valid": True,
+                "plan_consistent": True,
+                "repair_applied": True,
+            },
+            "patch_quality": {"confidence": 0.9},
+            "apply_safety": "HIGH",
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["add tests only for existing behavior", "--propose-patch"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Aegis Code Summary" in out
+    assert "Status: completed_tests_passed" in out
+    assert "Patch:" in out
+    assert "- Safety: HIGH" in out
+    assert "Files:" in out
+    assert "- tests/test_cli.py (+1 -1)" in out
 
 
 def test_apply_with_run_tests_flag(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -478,7 +544,8 @@ def test_apply_with_run_tests_flag(tmp_path: Path, monkeypatch, capsys) -> None:
     exit_code = cli.main(["apply", str(diff_file), "--confirm", "--run-tests"])
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert "✔ tests passed" in out
+    assert "Verification:" in out
+    assert "- Tests: passed" in out
 
 
 def test_provider_heartbeat_tty_uses_carriage_return(tmp_path: Path, monkeypatch, capsys) -> None:

@@ -70,6 +70,19 @@ from aegis_code.workspace import (
 )
 
 
+def _display_path(path: Path | str, cwd: Path | None = None) -> str:
+    base = cwd or Path.cwd()
+    p = Path(path)
+    try:
+        return str(p.resolve().relative_to(base.resolve())).replace("\\", "/")
+    except Exception:
+        return str(p).replace("\\", "/")
+
+
+def _yesno(value: bool) -> str:
+    return "yes" if bool(value) else "no"
+
+
 def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
     info = adapter or {}
     status = str(info.get("control_status", "disabled"))
@@ -1049,9 +1062,7 @@ def handle_apply(argv: Sequence[str]) -> int:
         if latest_diff.exists():
             return latest_diff
         if latest_invalid.exists():
-            print("No accepted diff found.")
-            print("Latest patch is BLOCKED and cannot be applied.")
-            print("Run `aegis-code diff --full` to inspect the invalid patch.")
+            _print_structured_blocked("no_accepted_diff")
             return None
         print("No accepted diff found. Run a task that generates a valid patch first.")
         return None
@@ -1073,18 +1084,13 @@ def handle_apply(argv: Sequence[str]) -> int:
         except Exception as exc:
             print(f"Patch check failed: {exc}")
             return 2
-        print(format_apply_check_result(result))
+        result_for_display = dict(result)
+        result_for_display["path"] = _display_path(Path(str(result.get("path", ""))), cwd=cwd)
+        print(format_apply_check_result(result_for_display))
         if not result.get("valid", False):
             errors = result.get("errors", [])
             reason = str(errors[0]) if isinstance(errors, list) and errors else "invalid_diff"
-            print("")
-            print("Status: BLOCKED")
-            print(f"Reason: {reason}")
-            print("")
-            print("No files changed.")
-            print("")
-            print("Next step:")
-            print("-> Regenerate or fix the diff, then rerun `aegis-code apply --check`.")
+            _print_structured_blocked(reason)
         return 0
 
     if not args.confirm and args.path:
@@ -1136,34 +1142,41 @@ def handle_apply(argv: Sequence[str]) -> int:
             return 1
         path = latest
     result = apply_patch_file(path, cwd=cwd)
-    print(format_apply_result(result))
+    result_for_display = dict(result)
+    result_for_display["path"] = _display_path(Path(str(result.get("path", ""))), cwd=cwd)
+    files_changed = []
+    for item in result.get("files_changed", []):
+        if not isinstance(item, dict):
+            continue
+        cloned = dict(item)
+        if item.get("path"):
+            cloned["path"] = str(item.get("path"))
+        if item.get("backup_path"):
+            cloned["backup_path"] = _display_path(Path(str(item.get("backup_path"))), cwd=cwd)
+        files_changed.append(cloned)
+    result_for_display["files_changed"] = files_changed
+    print(format_apply_result(result_for_display))
     if not result.get("applied", False):
         errors = result.get("errors", [])
         reason = str(errors[0]) if isinstance(errors, list) and errors else "apply_blocked"
-        print("")
-        print("Status: BLOCKED")
-        print(f"Reason: {reason}")
-        print("")
-        print("No files changed.")
-        print("")
-        print("Next step:")
-        if reason == "duplicate_file_targets":
-            print("-> Refine task to target a single file")
-        else:
-            print("-> Run `aegis-code apply --check <diff-path>` and resolve blockers.")
+        _print_structured_blocked(reason)
         return 2
 
     if args.run_tests:
         cfg = load_config(cwd)
         test_command = cfg.commands.test.strip()
         if not test_command:
-            print("Tests: no configured test command")
+            print("")
+            print("Verification:")
+            print("- Tests: not configured")
             return 0
         test_result = run_configured_tests(test_command, cwd=cwd)
+        print("")
+        print("Verification:")
         if test_result.status == "ok" and test_result.exit_code == 0:
-            print("✔ tests passed")
+            print("- Tests: passed")
             return 0
-        print("❌ tests failed")
+        print("- Tests: failed")
         return 2
     return 0
 
@@ -1189,21 +1202,24 @@ def handle_diff(argv: Sequence[str]) -> int:
     diff_text = selected_path.read_text(encoding="utf-8")
     inspected = inspect_diff(diff_text, cwd=Path.cwd())
     files = inspected.get("files", [])
+    display_path = _display_path(selected_path, cwd=Path.cwd())
 
     if selected_is_invalid:
         print("Status: BLOCKED")
-        print(f"Showing invalid diff: {selected_path}")
+        print(f"Showing invalid diff: {display_path}")
         print("")
         print("This patch was not accepted and cannot be applied.")
         print("")
 
     if args.stat:
         if selected_is_invalid and not bool(inspected.get("valid", False)):
-            print("Status: BLOCKED")
             print("Reason: invalid_diff")
             print("File stats unavailable for invalid diff.")
             print("Run `aegis-code diff --full` to inspect raw provider output.")
             return 0
+        print(f"Diff: {display_path}")
+        print("")
+        print("Files:")
         if isinstance(files, list) and files:
             for item in files:
                 if not isinstance(item, dict):
@@ -1223,17 +1239,37 @@ def handle_diff(argv: Sequence[str]) -> int:
     return 0
 
 
-def _print_structured_blocked(reason: str, next_step: str) -> None:
+def _print_structured_blocked(reason: str, next_lines: list[str] | None = None) -> None:
+    lines = next_lines or ["aegis-code diff --full", "refine task scope and rerun"]
     print("Status: BLOCKED")
     print(f"Reason: {reason}")
     print("")
     print("No files changed.")
     print("")
-    print("Next step:")
-    print(f"-> {next_step}")
+    print("Next:")
+    for line in lines:
+        print(f"- {line}")
 
 
-def _print_patch_summary(payload: dict[str, object], cwd: Path) -> None:
+def _print_task_final_summary(payload: dict[str, object], cwd: Path) -> None:
+    patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+    status = str(payload.get("status", "") or "")
+    print("")
+    print("Aegis Code Summary")
+    if str(patch_diff.get("status", "")) == "invalid":
+        print("Status: BLOCKED")
+        print(f"Reason: {patch_diff.get('error', 'invalid_diff')}")
+        print("")
+        print("No files changed.")
+        print("")
+        print("Next:")
+        print("- aegis-code diff --full")
+        print("- refine task scope and rerun")
+        return
+
+    print(f"Status: {status}")
+    print(f"Task: {payload.get('task', '')}")
+
     patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
     if not bool(patch_diff.get("available", False)):
         return
@@ -1250,8 +1286,16 @@ def _print_patch_summary(payload: dict[str, object], cwd: Path) -> None:
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     syntactic_valid = patch_diff.get("syntactic_valid")
     plan_consistent = patch_diff.get("plan_consistent")
+
     print("")
-    print("✔ Patch generated")
+    print("Patch:")
+    print(f"- Generated: {_yesno(True)}")
+    print(f"- Safety: {apply_safety}")
+    print(f"- Valid: {_yesno(bool(validation.get('valid', False)))}")
+    print(f"- Syntax: {'n/a' if syntactic_valid is None else _yesno(bool(syntactic_valid))}")
+    print(f"- Plan: {'n/a' if plan_consistent is None else ('consistent' if bool(plan_consistent) else 'inconsistent')}")
+    print(f"- Repair: {'applied' if repair_applied else 'none'}")
+
     print("")
     print("Files:")
     if isinstance(files, list) and files:
@@ -1262,19 +1306,12 @@ def _print_patch_summary(payload: dict[str, object], cwd: Path) -> None:
             print(f"- {target} (+{int(item.get('additions', 0))} -{int(item.get('deletions', 0))})")
     else:
         print("- none")
-    print("")
-    print("Quality:")
-    print(f"- Safety: {apply_safety}")
-    print(f"- Valid: {'yes' if bool(validation.get('valid', False)) else 'no'}")
-    syntax_text = "n/a" if syntactic_valid is None else ("yes" if bool(syntactic_valid) else "no")
-    print(f"- Syntax: {syntax_text}")
-    plan_text = "n/a" if plan_consistent is None else ("consistent" if bool(plan_consistent) else "inconsistent")
-    print(f"- Plan: {plan_text}")
-    print(f"- Repair: {'applied' if repair_applied else 'none'}")
+
     print("")
     print("Next:")
-    print("aegis-code diff")
-    print("aegis-code apply --check")
+    print("- aegis-code diff")
+    print("- aegis-code apply --check")
+    print("- aegis-code apply --confirm --run-tests")
 
 
 def handle_backups(argv: Sequence[str]) -> int:
@@ -1463,7 +1500,6 @@ def handle_task(argv: Sequence[str]) -> int:
     if str(patch_diff.get("status", "")) == "invalid":
         _print_structured_blocked(
             str(patch_diff.get("error", "invalid_diff") or "invalid_diff"),
-            "Run `aegis-code diff --full` and refine task scope or regenerate a smaller valid patch.",
         )
     if str(patch_diff.get("status", "")) == "invalid":
         print("Patch quality: invalid (not evaluated)")
@@ -1490,7 +1526,7 @@ def handle_task(argv: Sequence[str]) -> int:
     print(_format_adapter_summary(payload.get("adapter")))
     _print_aegis_impact_if_relevant(payload)
     _print_aegis_usage_if_available(payload, cwd)
-    _print_patch_summary(payload, cwd)
+    _print_task_final_summary(payload, cwd)
     return 0
 
 
@@ -1529,9 +1565,7 @@ def handle_fix(argv: Sequence[str]) -> int:
         if latest_diff.exists():
             return latest_diff
         if latest_invalid.exists():
-            print("No accepted diff found.")
-            print("Latest patch is BLOCKED and cannot be applied.")
-            print("Run `aegis-code diff --full` to inspect the invalid patch.")
+            _print_structured_blocked("no_accepted_diff", ["aegis-code diff --full"])
             return None
         print("No accepted diff found. Run a task that generates a valid patch first.")
         return None
@@ -1581,27 +1615,21 @@ def handle_fix(argv: Sequence[str]) -> int:
         if not diff_available or not isinstance(diff_path, str) or not diff_path:
             _print_structured_blocked(
                 str(patch_diff.get("error", "no_patch_generated") or "no_patch_generated"),
-                "Run `aegis-code diff --full` to inspect the proposed patch.",
+                ["aegis-code diff --full"],
             )
             return 1
 
         if apply_safety in {"BLOCKED", "LOW"}:
-            print("Status: BLOCKED")
-            print("Reason: unsafe_patch")
-            print("")
-            print("No files changed.")
-            print("")
-            print("Next step:")
-            print("-> Run `aegis-code diff --full` to inspect the proposed patch.")
+            _print_structured_blocked("unsafe_patch", ["aegis-code diff --full"])
             return 1
 
         if not args.confirm:
             print("Patch generated but not applied.")
             print("")
             print("Next:")
-            print("aegis-code diff")
-            print("aegis-code apply --check")
-            print("aegis-code apply --confirm --run-tests")
+            print("- aegis-code diff")
+            print("- aegis-code apply --check")
+            print("- aegis-code apply --confirm --run-tests")
             return 0
 
         print(f"Safety: {apply_safety}")
@@ -1613,7 +1641,6 @@ def handle_fix(argv: Sequence[str]) -> int:
         if not apply_result.get("applied", False):
             _print_structured_blocked(
                 str((apply_result.get("errors") or ["apply_blocked"])[0]),
-                "Run `aegis-code apply --check .aegis/runs/latest.diff` and `aegis-code diff --full`.",
             )
             return 1
 

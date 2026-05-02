@@ -57,7 +57,7 @@ def test_fix_proposal_only_does_not_apply(tmp_path: Path, monkeypatch, capsys) -
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Patch generated but not applied." in out
-    assert "aegis-code apply --confirm --run-tests" in out
+    assert "- aegis-code apply --confirm --run-tests" in out
 
 
 def test_fix_confirm_applies_high_safety_patch(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -119,6 +119,8 @@ def test_fix_blocks_low_or_blocked_safety_patch(tmp_path: Path, monkeypatch, cap
     assert exit_code == 1
     assert "Status: BLOCKED" in out
     assert "Reason: unsafe_patch" in out
+    assert "Next:" in out
+    assert "- aegis-code diff --full" in out
 
 
 def test_fix_stops_on_repeated_failure_signature(tmp_path: Path, monkeypatch, capsys) -> None:
