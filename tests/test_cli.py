@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
 from aegis_code import cli
 from aegis_code.budget import load_budget
-from aegis_code.models import AegisDecision
+from aegis_code.models import AegisDecision, CommandResult
 
 
 class FakeAegisClient:
@@ -418,6 +418,69 @@ def test_provider_heartbeat_non_tty_sparse_updates(tmp_path: Path, monkeypatch, 
     assert "[2/" not in out
 
 
+def test_diff_command_no_file(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli.main(["diff"])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "No diff found. Run a task first." in out
+
+
+def test_diff_command_stat(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text("x = 1\n", encoding="utf-8")
+    (runs / "latest.diff").write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["diff", "--stat"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "src/main.py (+1 -1)" in out
+
+
+def test_apply_with_run_tests_flag(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    diff_file = tmp_path / "latest.diff"
+    diff_file.write_text("diff --git a/x b/x\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "aegis_code.cli.apply_patch_file",
+        lambda _path, cwd=None: {
+            "applied": True,
+            "path": str(diff_file),
+            "files_changed": [{"path": "src/main.py", "backup_path": None, "additions": 1, "deletions": 0, "created": False}],
+            "warnings": [],
+            "errors": [],
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.cli.run_configured_tests",
+        lambda _cmd, cwd=None: CommandResult(
+            name="tests",
+            command=_cmd,
+            status="ok",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            output_preview="",
+            full_output="",
+        ),
+    )
+    exit_code = cli.main(["apply", str(diff_file), "--confirm", "--run-tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "✔ tests passed" in out
+
+
 def test_provider_heartbeat_tty_uses_carriage_return(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -641,3 +704,63 @@ def test_cli_provider_timeout_override_passed_to_task_options(tmp_path: Path, mo
     options = captured.get("options")
     assert options is not None
     assert getattr(options, "provider_timeout_seconds", None) == 42
+
+
+def test_diff_command_invalid_diff_preview(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.invalid.diff").write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["diff"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Status: BLOCKED" in out
+    assert "Showing invalid diff:" in out
+    assert "This patch was not accepted and cannot be applied." in out
+    assert "diff --git a/src/main.py b/src/main.py" in out
+
+
+def test_diff_command_invalid_diff_full(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    full_text = (
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-x = 1\n"
+        "+x = 2\n"
+    )
+    (runs / "latest.invalid.diff").write_text(full_text, encoding="utf-8")
+    exit_code = cli.main(["diff", "--full"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Status: BLOCKED" in out
+    assert "This patch was not accepted and cannot be applied." in out
+    assert full_text.strip() in out
+
+
+def test_diff_command_invalid_diff_stat(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.invalid.diff").write_text(
+        "not a unified diff\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["diff", "--stat"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Status: BLOCKED" in out
+    assert "Reason: invalid_diff" in out
+    assert "File stats unavailable for invalid diff." in out
+    assert "Run `aegis-code diff --full` to inspect raw provider output." in out

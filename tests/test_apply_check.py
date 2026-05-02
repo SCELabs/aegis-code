@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code import cli
+from aegis_code.models import CommandResult
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
 
 
@@ -259,3 +260,96 @@ def test_cli_apply_missing_diff_path_has_helpful_message(tmp_path: Path, monkeyp
     assert "Diff file not found:" in out
     assert "latest.diff" in out
     assert "Run a failing task with --propose-patch first" in out
+
+
+def test_apply_check_uses_latest_diff_without_path(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/main.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x = 1\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Patch check:" in out
+    assert str(latest) in out
+
+
+def test_apply_confirm_uses_latest_diff_without_path(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text("diff --git a/src/main.py b/src/main.py\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_apply(path: Path, cwd=None):
+        captured["path"] = str(path)
+        return {"applied": True, "path": str(path), "files_changed": [], "warnings": [], "errors": []}
+
+    monkeypatch.setattr("aegis_code.cli.apply_patch_file", _fake_apply)
+    exit_code = cli.main(["apply", "--confirm"])
+    _ = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["path"] == str(latest)
+
+
+def test_apply_confirm_run_tests_uses_latest_diff_without_path(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text("diff --git a/src/main.py b/src/main.py\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_apply(path: Path, cwd=None):
+        captured["path"] = str(path)
+        return {"applied": True, "path": str(path), "files_changed": [], "warnings": [], "errors": []}
+
+    monkeypatch.setattr("aegis_code.cli.apply_patch_file", _fake_apply)
+    monkeypatch.setattr(
+        "aegis_code.cli.run_configured_tests",
+        lambda _cmd, cwd=None: CommandResult(
+            name="tests",
+            command=_cmd,
+            status="ok",
+            exit_code=0,
+            stdout="",
+            stderr="",
+            output_preview="",
+            full_output="",
+        ),
+    )
+    exit_code = cli.main(["apply", "--confirm", "--run-tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["path"] == str(latest)
+    assert "✔ tests passed" in out
+
+
+def test_apply_does_not_apply_invalid_latest_diff(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.invalid.diff").write_text("not valid\n", encoding="utf-8")
+    called = {"apply": False}
+
+    def _fake_apply(path: Path, cwd=None):
+        called["apply"] = True
+        return {"applied": True, "path": str(path), "files_changed": [], "warnings": [], "errors": []}
+
+    monkeypatch.setattr("aegis_code.cli.apply_patch_file", _fake_apply)
+    exit_code = cli.main(["apply", "--confirm"])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert called["apply"] is False
+    assert "No accepted diff found." in out
+    assert "Latest patch is BLOCKED and cannot be applied." in out
+    assert "aegis-code diff --full" in out
