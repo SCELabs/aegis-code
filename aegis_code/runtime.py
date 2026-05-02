@@ -483,6 +483,26 @@ def _hard_invalid_reason(
     return None
 
 
+def _compute_apply_safety(
+    *,
+    validation_valid: bool,
+    syntactic_valid: bool | None,
+    plan_consistent: bool,
+    confidence: float,
+) -> str:
+    if not validation_valid:
+        return "BLOCKED"
+    if syntactic_valid is False:
+        return "BLOCKED"
+    if not plan_consistent:
+        return "BLOCKED"
+    if confidence >= 0.85:
+        return "HIGH"
+    if confidence >= 0.70:
+        return "MEDIUM"
+    return "LOW"
+
+
 def _aegis_regeneration_control(
     *,
     base_url: str,
@@ -2147,6 +2167,19 @@ def build_run_payload(
             "preview": "",
         }
 
+    patch_diff_payload = patch_diff if isinstance(patch_diff, dict) else {}
+    validation_payload = patch_diff_payload.get("validation_result", {})
+    validation_valid = bool(validation_payload.get("valid", False)) if isinstance(validation_payload, dict) else False
+    syntactic_valid = patch_diff_payload.get("syntactic_valid")
+    plan_consistent = bool(patch_diff_payload.get("plan_consistent", False))
+    confidence = float((patch_quality or {}).get("confidence", 0.0)) if isinstance(patch_quality, dict) else 0.0
+    apply_safety = _compute_apply_safety(
+        validation_valid=validation_valid,
+        syntactic_valid=syntactic_valid if isinstance(syntactic_valid, bool) or syntactic_valid is None else None,
+        plan_consistent=plan_consistent,
+        confidence=confidence,
+    )
+
     payload = {
         "task": options.task,
         "mode": mode,
@@ -2169,6 +2202,7 @@ def build_run_payload(
         "patch_plan": patch_plan,
         "patch_diff": patch_diff,
         "patch_quality": patch_quality,
+        "apply_safety": apply_safety,
         "verification": verification,
         "status": status,
         "notes": notes,

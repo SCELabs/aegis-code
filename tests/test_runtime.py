@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
-from aegis_code.runtime import TaskOptions, build_run_payload, run_task
+from aegis_code.runtime import TaskOptions, _compute_apply_safety, build_run_payload, run_task
 from tests.helpers import (
     command_result_from_output,
     pytest_output_fail,
@@ -429,6 +429,15 @@ def test_cheapest_mode_forces_cheap_model_tier(monkeypatch, tmp_path: Path) -> N
         client=client,
     )
     assert payload["selected_model_tier"] == "cheap"
+
+
+def test_apply_safety_scoring() -> None:
+    assert _compute_apply_safety(validation_valid=False, syntactic_valid=True, plan_consistent=True, confidence=0.99) == "BLOCKED"
+    assert _compute_apply_safety(validation_valid=True, syntactic_valid=False, plan_consistent=True, confidence=0.99) == "BLOCKED"
+    assert _compute_apply_safety(validation_valid=True, syntactic_valid=True, plan_consistent=False, confidence=0.99) == "BLOCKED"
+    assert _compute_apply_safety(validation_valid=True, syntactic_valid=True, plan_consistent=True, confidence=0.90) == "HIGH"
+    assert _compute_apply_safety(validation_valid=True, syntactic_valid=True, plan_consistent=True, confidence=0.70) == "MEDIUM"
+    assert _compute_apply_safety(validation_valid=True, syntactic_valid=True, plan_consistent=True, confidence=0.69) == "LOW"
 
 
 def test_balanced_mode_keeps_mid_model_tier(monkeypatch, tmp_path: Path) -> None:

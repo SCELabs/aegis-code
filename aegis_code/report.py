@@ -42,6 +42,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     patch_plan = payload.get("patch_plan", {})
     patch_diff = payload.get("patch_diff", {})
     patch_quality = payload.get("patch_quality")
+    apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
     verification = payload.get("verification", {})
     retry_policy = payload.get("retry_policy", {})
@@ -290,6 +291,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
             "## Patch Diff Proposal",
             "",
+            f"- Apply safety: `{apply_safety}`",
         ]
     )
 
