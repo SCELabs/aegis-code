@@ -2,6 +2,7 @@
 
 import argparse
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -308,6 +309,7 @@ def _build_check_sll_parser() -> argparse.ArgumentParser:
 def _build_fix_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code fix")
     parser.add_argument("--confirm", action="store_true", help="Confirm apply for proposed patch.")
+    parser.add_argument("--max-cycles", type=int, default=2, help="Maximum fix cycles (1-5).")
     return parser
 
 
@@ -1496,6 +1498,9 @@ def handle_fix(argv: Sequence[str]) -> int:
     parser = _build_fix_parser()
     args = parser.parse_args(list(argv))
     cwd = Path.cwd()
+    if args.max_cycles < 1 or args.max_cycles > 5:
+        print("Error: --max-cycles must be between 1 and 5.")
+        return 2
     cfg = load_config(cwd)
     verification_command = cfg.commands.test.strip()
     if not verification_command:
@@ -1506,93 +1511,129 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("Next: run `aegis-code init` or set `commands.test` in `.aegis/aegis-code.yml`.")
         return 2
 
+    def _failure_signature(result: object) -> str:
+        full_output = str(getattr(result, "full_output", "") or "")
+        if not full_output:
+            stdout = str(getattr(result, "stdout", "") or "")
+            stderr = str(getattr(result, "stderr", "") or "")
+            full_output = f"{stdout}\n{stderr}"
+        normalized = "\n".join(line.strip() for line in full_output.splitlines() if line.strip())
+        if not normalized:
+            normalized = f"status={getattr(result, 'status', '')};exit={getattr(result, 'exit_code', '')}"
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def _resolve_latest_accepted_diff_or_print() -> Path | None:
+        paths = project_paths(cwd)
+        latest_diff = paths["latest_diff"]
+        latest_invalid = paths["runs_dir"] / "latest.invalid.diff"
+        if latest_diff.exists():
+            return latest_diff
+        if latest_invalid.exists():
+            print("No accepted diff found.")
+            print("Latest patch is BLOCKED and cannot be applied.")
+            print("Run `aegis-code diff --full` to inspect the invalid patch.")
+            return None
+        print("No accepted diff found. Run a task that generates a valid patch first.")
+        return None
+
+    initial_result = run_configured_tests(verification_command, cwd=cwd)
+    if initial_result.status == "ok" and initial_result.exit_code == 0:
+        print("✔ tests already pass")
+        return 0
+
     base_mode = cfg.mode
     final_mode = select_runtime_mode(base_mode, cwd=cwd)
-    options = TaskOptions(
-        task="triage current test failures",
-        mode=final_mode,
-        propose_patch=True,
-        no_report=False,
-        project_context={},
-    )
     reason = get_mode_reason(base_mode, final_mode, cwd=cwd)
     if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
         return 0
-    options.project_context = load_runtime_context(cwd=cwd)
-    options.budget_state = get_budget_state(cwd=cwd)
-    options.runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=cwd)
-    payload = run_task(options=options, cwd=cwd)
-    print(format_runtime_control_summary(options.runtime_policy, options.budget_state, options.project_context))
-    print(_format_adapter_summary(payload.get("adapter")))
-    _print_aegis_impact_if_relevant(payload)
-    _print_aegis_usage_if_available(payload, cwd)
+    current_result = initial_result
+    seen_signatures: set[str] = set()
 
-    latest = project_paths()["latest_json"]
-    if not latest.exists():
-        print("No patch proposal available. Use report to inspect failures.")
-        return 2
-    payload = json.loads(latest.read_text(encoding="utf-8"))
-    failures = payload.get("failures", {})
-    failure_count = int(failures.get("failure_count", 0) or 0)
-    if failure_count == 0:
-        print("Fix summary:")
-        print(f"- Verification command: {verification_command}")
-        print(f"- Failure count: {failure_count}")
-        print("Tests passed. No action required.")
-        print("Next: run `aegis-code report` for details.")
-        return 0
+    for cycle in range(1, int(args.max_cycles) + 1):
+        print(f"Cycle {cycle}/{int(args.max_cycles)}")
+        print("Tests failing. Generating fix proposal...")
+        print("")
 
-    patch_diff = payload.get("patch_diff", {})
-    diff_path = patch_diff.get("path")
-    if not patch_diff.get("available", False) or not diff_path:
-        print("Fix summary:")
-        print(f"- Verification command: {verification_command}")
-        print(f"- Failure count: {failure_count}")
-        print("- Patch diff path: none")
-        print("No patch proposal available. Use report to inspect failures.")
-        print("Next: run `aegis-code report`.")
-        return 2
+        signature_before = _failure_signature(current_result)
+        if signature_before in seen_signatures:
+            print("Tests still failing after applied fix.")
+            print("Failure signature repeated. Stopping to avoid loop.")
+            print("")
+            print("No further files changed.")
+            return 1
+        seen_signatures.add(signature_before)
 
-    diff_file = Path(str(diff_path))
-    if not diff_file.exists():
-        print("No patch proposal available. Use report to inspect failures.")
-        return 2
-    inspected = inspect_diff(diff_file.read_text(encoding="utf-8"), cwd=Path.cwd())
-    summary = inspected.get("summary", {})
-    patch_quality = payload.get("patch_quality")
+        options = TaskOptions(
+            task="fix failing tests",
+            mode=final_mode,
+            propose_patch=True,
+            no_report=False,
+            project_context=load_runtime_context(cwd=cwd),
+            budget_state=get_budget_state(cwd=cwd),
+            runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+        )
+        payload = run_task(options=options, cwd=cwd)
+        patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+        diff_available = bool(patch_diff.get("available", False))
+        diff_path = patch_diff.get("path")
+        apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED").upper()
 
-    print("Fix summary:")
-    print(f"- Verification command: {verification_command}")
-    print(f"- Failure count: {failure_count}")
-    print(f"- Patch diff path: {diff_path}")
-    print("Patch proposal:")
-    print(f"- Files: {summary.get('file_count', 0)}")
-    print(f"- Changes: +{summary.get('additions', 0)} / -{summary.get('deletions', 0)}")
-    if patch_quality:
-        print(f"- Quality: {patch_quality.get('confidence', 0.0)}")
-    else:
-        print("- Quality: n/a")
+        if not diff_available or not isinstance(diff_path, str) or not diff_path:
+            _print_structured_blocked(
+                str(patch_diff.get("error", "no_patch_generated") or "no_patch_generated"),
+                "Run `aegis-code diff --full` to inspect the proposed patch.",
+            )
+            return 1
 
-    if not args.confirm:
-        print(f"Preview available. Use `aegis-code apply {diff_path}` to inspect.")
-        print("Use `aegis-code fix --confirm` to apply this patch.")
-        return 1
+        if apply_safety in {"BLOCKED", "LOW"}:
+            print("Status: BLOCKED")
+            print("Reason: unsafe_patch")
+            print("")
+            print("No files changed.")
+            print("")
+            print("Next step:")
+            print("-> Run `aegis-code diff --full` to inspect the proposed patch.")
+            return 1
 
-    apply_result = apply_patch_file(diff_file, cwd=Path.cwd())
-    print("Apply result:")
-    print(format_apply_result(apply_result))
-    if not apply_result.get("applied", False):
-        print("Next: run `aegis-code apply --check .aegis/runs/latest.diff` and `aegis-code report`.")
-        return 2
+        if not args.confirm:
+            print("Patch generated but not applied.")
+            print("")
+            print("Next:")
+            print("aegis-code diff")
+            print("aegis-code apply --check")
+            print("aegis-code apply --confirm --run-tests")
+            return 0
 
-    result = run_configured_tests(verification_command, cwd=Path.cwd())
-    if result.status == "ok" and result.exit_code == 0:
-        print("Post-apply tests passed.")
-        print("Next: run `aegis-code report` and `aegis-code status`.")
-        return 0
-    print("Post-apply tests are still failing.")
-    print("Next: run `aegis-code report` to inspect remaining failures.")
-    return 2
+        print(f"Safety: {apply_safety}")
+        print("Applying patch...")
+        latest_diff = _resolve_latest_accepted_diff_or_print()
+        if latest_diff is None:
+            return 1
+        apply_result = apply_patch_file(latest_diff, cwd=cwd)
+        if not apply_result.get("applied", False):
+            _print_structured_blocked(
+                str((apply_result.get("errors") or ["apply_blocked"])[0]),
+                "Run `aegis-code apply --check .aegis/runs/latest.diff` and `aegis-code diff --full`.",
+            )
+            return 1
+
+        print("Running tests...")
+        test_result = run_configured_tests(verification_command, cwd=cwd)
+        if test_result.status == "ok" and test_result.exit_code == 0:
+            print("✔ tests passed after fix")
+            return 0
+
+        signature_after = _failure_signature(test_result)
+        if signature_after == signature_before:
+            print("Tests still failing after applied fix.")
+            print("Failure signature repeated. Stopping to avoid loop.")
+            print("")
+            print("No further files changed.")
+            return 1
+        current_result = test_result
+
+    print("Max cycles reached with failing tests.")
+    return 1
 
 
 def handle_next(argv: Sequence[str]) -> int:
