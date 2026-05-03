@@ -2080,6 +2080,11 @@ def handle_setup(argv: Sequence[str]) -> int:
         print(f"- Context: {'available' if bool(status.get('context_available', False)) else 'missing'}")
         print(f"- Latest run: {'found' if bool(status.get('latest_run', False)) else 'missing'}")
         print(f"- Verification: {'available' if bool(status.get('verification_available', False)) else 'missing'}")
+        print(f"- Detected stack: {status.get('detected_stack') or 'unknown'}")
+        print(f"- Package manager: {status.get('package_manager') or 'n/a'}")
+        print(f"- Verification command: {status.get('detected_test_command') or 'n/a'}")
+        print(f"- Verification confidence: {status.get('verification_confidence') or 'low'}")
+        print(f"- Verification reason: {status.get('verification_reason') or 'n/a'}")
 
         fully_ready = all(
             bool(status.get(key, False))

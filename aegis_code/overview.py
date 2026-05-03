@@ -26,7 +26,11 @@ def build_overview(cwd: Path | None = None) -> dict[str, Any]:
         backup_count = len([item for item in backups_dir.iterdir() if item.is_dir()])
     return {
         "stack": str(caps.get("detected_stack") or "unknown"),
+        "package_manager": str(caps.get("package_manager") or "n/a"),
         "verification": str(cfg.commands.test.strip() or "n/a"),
+        "detected_verification": str(caps.get("test_command") or "n/a"),
+        "verification_confidence": str(caps.get("confidence") or "low"),
+        "verification_reason": str(caps.get("reason") or "n/a"),
         "budget": budget,
         "context": {
             "available": bool(context.get("available", False)),
@@ -53,7 +57,11 @@ def format_overview(data: dict[str, Any]) -> str:
         [
             "Aegis Code Overview",
             f"- Stack: {data.get('stack', 'unknown')}",
+            f"- Package manager: {data.get('package_manager', 'n/a')}",
             f"- Verification: {data.get('verification', 'n/a')}",
+            f"- Detected verification: {data.get('detected_verification', 'n/a')}",
+            f"- Verification confidence: {data.get('verification_confidence', 'low')}",
+            f"- Verification reason: {data.get('verification_reason', 'n/a')}",
             f"- Budget: {budget_text}",
             (
                 f"- Context: {'available' if context.get('available', False) else 'missing'}, "

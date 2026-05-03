@@ -156,7 +156,8 @@ def check_setup(cwd: Path) -> dict:
     context_dir = cwd / ".aegis" / "context"
     context_available = context_dir.exists() and context_dir.is_dir() and any(context_dir.iterdir())
     latest_run = (cwd / ".aegis" / "runs" / "latest.json").exists()
-    verification_available = bool(detect_capabilities(cwd).get("verification_available", False))
+    detected = detect_capabilities(cwd)
+    verification_available = bool(detected.get("verification_available", False))
 
     return {
         "initialized": initialized,
@@ -167,4 +168,9 @@ def check_setup(cwd: Path) -> dict:
         "context_available": context_available,
         "latest_run": latest_run,
         "verification_available": verification_available,
+        "detected_stack": detected.get("detected_stack"),
+        "package_manager": detected.get("package_manager"),
+        "detected_test_command": detected.get("test_command"),
+        "verification_confidence": detected.get("confidence"),
+        "verification_reason": detected.get("reason"),
     }
