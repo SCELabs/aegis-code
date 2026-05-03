@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from aegis_code import cli
 from aegis_code.config import ensure_project_files
@@ -80,6 +81,31 @@ def test_setup_check_full_ready(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "- Context: available" in out
     assert "- Latest run: found" in out
     assert "- Verification: available" in out
+
+
+def test_setup_check_prefers_observed_selected_test_command(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    ensure_project_files(cwd=tmp_path, force=False)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "capabilities.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "detected_stack": "python",
+                "package_manager": None,
+                "selected_test_command": "pytest -q",
+                "verification": {"available": True, "confidence": "high", "reason": "observed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["setup", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code in {0, 1}
+    assert "- Observed capabilities: present" in out
+    assert "- Observed selected test command: pytest -q" in out
+    assert "- Verification command: pytest -q" in out
 
 
 def test_setup_check_no_project(tmp_path: Path, monkeypatch, capsys) -> None:

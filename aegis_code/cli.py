@@ -62,6 +62,8 @@ from aegis_code.secrets import (
 from aegis_code.setup import check_setup, run_setup
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
+from aegis_code.tools.shell import run_shell_command
+from aegis_code.probe import run_project_probe
 from aegis_code.usage import get_usage_warning, load_usage
 from aegis_code.workspace import (
     add_project,
@@ -352,6 +354,12 @@ def _build_setup_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _build_probe_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code probe")
+    parser.add_argument("--run", action="store_true", help="Run safe test command candidates.")
+    return parser
+
+
 def _build_task_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code")
     parser.add_argument("task", help="Task prompt for Aegis guidance.")
@@ -549,15 +557,113 @@ def handle_create(argv: Sequence[str]) -> int:
             print(f"- {item}")
     print(f"Applied: {'true' if result.get('applied', False) else 'false'}")
     exit_code = int(result.get("code", 2))
-    if exit_code != 0 or not args.validate:
-        return exit_code
+    stack_name = str(plan.get("stack", {}).get("name", "unknown") or "unknown")
+    applied = bool(result.get("applied", False))
+    dependencies_status = "skipped"
+    tests_status = "not available"
+    stabilization_status = "not needed"
 
     target_path = Path(args.target)
-    validation = run_configured_tests(str(plan.get("test_command", "") or "").strip(), cwd=target_path)
-    if validation.status == "ok" and validation.exit_code == 0:
-        print("Validation: tests passed.")
+    if exit_code == 0 and applied:
+        print("")
+        print("Installing dependencies...")
+        detected = detect_capabilities(target_path)
+        detected_stack = str(detected.get("detected_stack", "") or "")
+        install_command: str | None = None
+        if detected_stack.startswith("python"):
+            requirements = target_path / "requirements.txt"
+            if requirements.exists():
+                install_command = "pip install -r requirements.txt"
+        elif detected_stack.startswith("node"):
+            manager = str(detected.get("package_manager", "npm") or "npm")
+            install_command = f"{manager} install"
+        if install_command:
+            install_result = run_shell_command(name="install_deps", command=install_command, cwd=target_path)
+            if install_result.status == "ok" and int(install_result.exit_code or 0) == 0:
+                dependencies_status = "installed"
+                print(f"Dependencies install: ok ({install_command})")
+            else:
+                dependencies_status = "failed"
+                print(f"Dependencies install: failed ({install_command})")
+                if install_result.output_preview:
+                    print(install_result.output_preview)
+        else:
+            dependencies_status = "skipped"
+            print("Dependencies install: skipped (no known install step for detected stack).")
+
+    if exit_code != 0 or not args.validate:
+        print("")
+        print("Create Summary")
+        print(f"Stack: {stack_name}")
+        print(f"Applied: {'yes' if applied else 'no'}")
+        print(f"Dependencies: {dependencies_status}")
+        print(f"Tests: {tests_status}")
+        print(f"Stabilization: {stabilization_status}")
+        print("")
+        print("Next:")
+        print(f"- cd {target_path}")
+        if str(plan.get("test_command", "")).strip():
+            print(f"- {str(plan.get('test_command', '')).strip()}")
+        return exit_code
+
+    probe_payload = run_project_probe(cwd=target_path, run_tests=False)
+    detected_for_validation = detect_capabilities(target_path)
+    probe_selected = str(probe_payload.get("selected_test_command") or "").strip()
+    verification_info = probe_payload.get("verification", {}) if isinstance(probe_payload.get("verification", {}), dict) else {}
+    probe_verification_available = bool(verification_info.get("available", False))
+    verification_command = probe_selected if probe_verification_available else ""
+    if not verification_command and probe_verification_available:
+        verification_command = str(detected_for_validation.get("test_command") or "").strip()
+    environment_issue = bool(verification_info.get("environment_issue", False))
+    if environment_issue and not probe_selected:
+        tests_status = "not available"
+        stabilization_status = "skipped"
+        print("Validation: runtime missing for verification command candidates.")
+        print("")
+        print("Create Summary")
+        print(f"Stack: {stack_name}")
+        print(f"Applied: {'yes' if applied else 'no'}")
+        print(f"Dependencies: {dependencies_status}")
+        print(f"Tests: {tests_status}")
+        print(f"Stabilization: {stabilization_status}")
+        print("")
+        print("Next:")
+        print(f"- cd {target_path}")
+        return 0
+    if not verification_command:
+        tests_status = "not available"
+        stabilization_status = "skipped"
+        print("Validation: no verification command detected.")
+        print("")
+        print("Create Summary")
+        print(f"Stack: {stack_name}")
+        print(f"Applied: {'yes' if applied else 'no'}")
+        print(f"Dependencies: {dependencies_status}")
+        print(f"Tests: {tests_status}")
+        print(f"Stabilization: {stabilization_status}")
+        print("")
+        print("Next:")
+        print(f"- cd {target_path}")
         return 0
 
+    validation = run_configured_tests(verification_command, cwd=target_path)
+    if validation.status == "ok" and validation.exit_code == 0:
+        tests_status = "passed"
+        print("Validation: tests passed.")
+        print("")
+        print("Create Summary")
+        print(f"Stack: {stack_name}")
+        print(f"Applied: {'yes' if applied else 'no'}")
+        print(f"Dependencies: {dependencies_status}")
+        print(f"Tests: {tests_status}")
+        print(f"Stabilization: {stabilization_status}")
+        print("")
+        print("Next:")
+        print(f"- cd {target_path}")
+        print(f"- {verification_command}")
+        return 0
+
+    tests_status = "failed"
     print("Validation: tests failed. Running Aegis stabilization...")
     cfg = load_config(target_path)
     base_mode = cfg.mode
@@ -583,9 +689,21 @@ def handle_create(argv: Sequence[str]) -> int:
     print(_format_adapter_summary(payload.get("adapter")))
     _print_aegis_impact_if_relevant(payload)
     _print_aegis_usage_if_available(payload, target_path)
+    stabilization_status = "applied" if str(payload.get("status", "")).strip() else "failed"
     print("Aegis stabilization plan generated.")
     print("Report JSON: .aegis/runs/latest.json")
     print("Report MD: .aegis/runs/latest.md")
+    print("")
+    print("Create Summary")
+    print(f"Stack: {stack_name}")
+    print(f"Applied: {'yes' if applied else 'no'}")
+    print(f"Dependencies: {dependencies_status}")
+    print(f"Tests: {tests_status}")
+    print(f"Stabilization: {stabilization_status}")
+    print("")
+    print("Next:")
+    print(f"- cd {target_path}")
+    print(f"- {verification_command}")
     return 0
 
 
@@ -2085,6 +2203,8 @@ def handle_setup(argv: Sequence[str]) -> int:
         print(f"- Verification command: {status.get('detected_test_command') or 'n/a'}")
         print(f"- Verification confidence: {status.get('verification_confidence') or 'low'}")
         print(f"- Verification reason: {status.get('verification_reason') or 'n/a'}")
+        print(f"- Observed capabilities: {'present' if bool(status.get('observed_capabilities_present', False)) else 'missing'}")
+        print(f"- Observed selected test command: {status.get('observed_selected_test_command') or 'n/a'}")
 
         fully_ready = all(
             bool(status.get(key, False))
@@ -2134,6 +2254,74 @@ def handle_setup(argv: Sequence[str]) -> int:
     print(f"- Aegis: {aegis_status}")
     print(f"- Provider preset: {provider_summary}")
     print(f"- First run: {first_summary}")
+    return 0
+
+
+def handle_probe(argv: Sequence[str]) -> int:
+    parser = _build_probe_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    payload = run_project_probe(cwd=cwd, run_tests=bool(args.run))
+    runtimes = payload.get("runtimes", {}) if isinstance(payload.get("runtimes", {}), dict) else {}
+    verification = payload.get("verification", {}) if isinstance(payload.get("verification", {}), dict) else {}
+
+    print("Aegis Probe")
+    print("")
+    print("Detected:")
+    print(f"- Stack: {payload.get('detected_stack') or 'unknown'}")
+    print(f"- Package manager: {payload.get('package_manager') or 'none'}")
+    print("")
+    print("Runtime:")
+    for name in ("python", "pip", "npm", "pnpm", "yarn", "bun", "pytest", "make"):
+        info = runtimes.get(name, {}) if isinstance(runtimes.get(name, {}), dict) else {}
+        state = "found" if bool(info.get("available", False)) else "missing"
+        print(f"- {name}: {state}")
+    print("")
+    print("Install candidates:")
+    install_candidates = payload.get("install_candidates", [])
+    if isinstance(install_candidates, list) and install_candidates:
+        for item in install_candidates:
+            if isinstance(item, dict):
+                available = bool(item.get("available", False))
+                if available:
+                    print(f"- {item.get('command', '')}")
+                else:
+                    block_reason = str(item.get("block_reason", "") or "blocked")
+                    print(f"- {item.get('command', '')} (blocked: {block_reason})")
+    else:
+        print("- none")
+    print("")
+    print("Test candidates:")
+    test_candidates = payload.get("test_candidates", [])
+    if isinstance(test_candidates, list) and test_candidates:
+        for item in test_candidates:
+            if isinstance(item, dict):
+                available = bool(item.get("available", False))
+                if available:
+                    print(f"- {item.get('command', '')}")
+                else:
+                    block_reason = str(item.get("block_reason", "") or "blocked")
+                    print(f"- {item.get('command', '')} (blocked: {block_reason})")
+    else:
+        print("- none")
+    print("")
+    print("Observed:")
+    print(f"- Verification: {'available' if bool(verification.get('available', False)) else 'unavailable'}")
+    print(f"- Selected test command: {payload.get('selected_test_command') or 'none'}")
+    print(f"- Confidence: {verification.get('confidence') or 'low'}")
+    print("")
+    print("Saved:")
+    print("- .aegis/capabilities.json")
+
+    observed_runs = payload.get("observed_runs", [])
+    if bool(args.run) and isinstance(observed_runs, list) and observed_runs:
+        print("")
+        print("Observed runs:")
+        for item in observed_runs:
+            if isinstance(item, dict):
+                print(
+                    f"- {item.get('command', '')} | status={item.get('status')} | exit={item.get('exit_code')}"
+                )
     return 0
 
 
@@ -2198,6 +2386,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_usage(args[1:])
     if command == "setup":
         return handle_setup(args[1:])
+    if command == "probe":
+        return handle_probe(args[1:])
     return handle_task(args)
 
 

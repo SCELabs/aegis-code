@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aegis_code import cli
@@ -78,3 +79,25 @@ def test_overview_read_only_no_writes(tmp_path: Path, monkeypatch) -> None:
     after = {str(p.resolve()) for p in tmp_path.rglob("*")}
     assert exit_code == 0
     assert before == after
+
+
+def test_overview_shows_observed_capabilities(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "capabilities.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "detected_stack": "python",
+                "package_manager": None,
+                "selected_test_command": "pytest -q",
+                "verification": {"available": True, "confidence": "high", "reason": "observed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["overview"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Observed capabilities: present" in out
+    assert "Observed selected test command: pytest -q" in out

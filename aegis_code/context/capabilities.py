@@ -124,7 +124,9 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
     if tests_dir.exists():
         signals.append("tests/")
 
-    if _has_any(root, ["pyproject.toml", "setup.py", "requirements.txt", "pytest.ini", "tests"]):
+    python_project_markers = _has_any(root, ["pyproject.toml", "setup.py", "requirements.txt", "pytest.ini"])
+    python_tests_marker = tests_dir.exists()
+    if python_project_markers or (python_tests_marker and not package_json.exists()):
         fastapi_detected = _detect_python_fastapi(root, pyproject, requirements)
         detected_stack = "python-fastapi" if fastapi_detected else "python"
         verification_available = tests_dir.exists() or pytest_ini.exists()
@@ -136,7 +138,7 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             reason = "fastapi markers detected but no pytest entrypoint found"
         else:
             reason = "python project markers detected but no test entrypoint found"
-        return {
+        detected = {
             "detected_stack": detected_stack,
             "language": "python",
             "test_command": command,
@@ -146,6 +148,7 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             "package_manager": None,
             "signals": signals,
         }
+        return _apply_observed_override(root, detected)
 
     if package_json.exists():
         signals.append("package.json")
@@ -166,7 +169,7 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
         has_test = isinstance(scripts, dict) and isinstance(scripts.get("test"), str) and scripts.get("test", "").strip()
         if has_test:
             language = "typescript" if _has_any(root, ["tsconfig.json"]) else "javascript"
-            return {
+            detected = {
                 "detected_stack": stack,
                 "language": language,
                 "test_command": f"{package_manager} test",
@@ -176,7 +179,8 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
                 "package_manager": package_manager,
                 "signals": signals,
             }
-        return {
+            return _apply_observed_override(root, detected)
+        detected = {
             "detected_stack": stack,
             "language": "javascript",
             "test_command": None,
@@ -186,10 +190,11 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             "package_manager": package_manager,
             "signals": signals,
         }
+        return _apply_observed_override(root, detected)
 
     if cargo_toml.exists():
         signals.append("Cargo.toml")
-        return {
+        detected = {
             "detected_stack": "rust",
             "language": "rust",
             "test_command": "cargo test",
@@ -199,10 +204,11 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             "package_manager": None,
             "signals": signals,
         }
+        return _apply_observed_override(root, detected)
 
     if go_mod.exists():
         signals.append("go.mod")
-        return {
+        detected = {
             "detected_stack": "go",
             "language": "go",
             "test_command": "go test ./...",
@@ -212,10 +218,11 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             "package_manager": None,
             "signals": signals,
         }
+        return _apply_observed_override(root, detected)
 
     if pom_xml.exists():
         signals.append("pom.xml")
-        return {
+        detected = {
             "detected_stack": "java",
             "language": "java",
             "test_command": "mvn test",
@@ -225,6 +232,7 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             "package_manager": None,
             "signals": signals,
         }
+        return _apply_observed_override(root, detected)
 
     if gradle.exists() or gradle_kts.exists():
         if gradle.exists():
@@ -233,7 +241,7 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             signals.append("build.gradle.kts")
         if gradlew.exists():
             signals.append("gradlew")
-        return {
+        detected = {
             "detected_stack": "java",
             "language": "java",
             "test_command": "./gradlew test" if gradlew.exists() else "gradle test",
@@ -243,8 +251,9 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
             "package_manager": None,
             "signals": signals,
         }
+        return _apply_observed_override(root, detected)
 
-    return {
+    detected = {
         "detected_stack": None,
         "language": None,
         "test_command": None,
@@ -254,3 +263,33 @@ def detect_capabilities(cwd: Path | None = None) -> dict[str, Any]:
         "package_manager": None,
         "signals": signals,
     }
+    return _apply_observed_override(root, detected)
+
+
+def _apply_observed_override(root: Path, detected: dict[str, Any]) -> dict[str, Any]:
+    observed_path = root / ".aegis" / "capabilities.json"
+    if not observed_path.exists():
+        return detected
+    try:
+        observed = json.loads(observed_path.read_text(encoding="utf-8"))
+    except Exception:
+        return detected
+    if not isinstance(observed, dict) or int(observed.get("version", 0) or 0) != 1:
+        return detected
+    verification = observed.get("verification", {})
+    selected = str(observed.get("selected_test_command", "") or "").strip()
+    if not isinstance(verification, dict):
+        return detected
+    if not bool(verification.get("available", False)) or not selected:
+        return detected
+    patched = dict(detected)
+    patched["test_command"] = selected
+    patched["verification_available"] = True
+    patched["confidence"] = str(verification.get("confidence", patched.get("confidence", "medium")) or "medium")
+    patched["reason"] = str(verification.get("reason", "observed_capabilities") or "observed_capabilities")
+    if patched.get("detected_stack") in {None, "", "unknown"} and observed.get("detected_stack"):
+        patched["detected_stack"] = observed.get("detected_stack")
+    if (patched.get("package_manager") in {None, "", "n/a"}) and observed.get("package_manager"):
+        patched["package_manager"] = observed.get("package_manager")
+    patched["observed_capabilities"] = True
+    return patched

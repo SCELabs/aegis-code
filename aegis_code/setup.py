@@ -11,6 +11,7 @@ from aegis_code.provider_presets import apply_preset, detect_available_providers
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.secrets import resolve_key
 from aegis_code.context_state import load_runtime_context
+from aegis_code.probe import load_observed_capabilities
 
 
 def _confirm(prompt: str, assume_yes: bool) -> bool:
@@ -157,6 +158,7 @@ def check_setup(cwd: Path) -> dict:
     context_available = context_dir.exists() and context_dir.is_dir() and any(context_dir.iterdir())
     latest_run = (cwd / ".aegis" / "runs" / "latest.json").exists()
     detected = detect_capabilities(cwd)
+    observed = load_observed_capabilities(cwd)
     verification_available = bool(detected.get("verification_available", False))
 
     return {
@@ -173,4 +175,8 @@ def check_setup(cwd: Path) -> dict:
         "detected_test_command": detected.get("test_command"),
         "verification_confidence": detected.get("confidence"),
         "verification_reason": detected.get("reason"),
+        "observed_capabilities_present": bool(observed is not None),
+        "observed_selected_test_command": (
+            str(observed.get("selected_test_command", "")).strip() if isinstance(observed, dict) else ""
+        ),
     }
