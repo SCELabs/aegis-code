@@ -13,6 +13,7 @@ from aegis_code.budget import can_spend, clear_budget, get_budget_state, load_bu
 from aegis_code.config import load_config
 from aegis_code.compare import build_comparison, format_comparison, load_last_runs
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.fix.state import FixLoopState
 from aegis_code.fix.signatures import build_failure_signature
 from aegis_code.context_state import (
     format_context_refresh,
@@ -1570,7 +1571,7 @@ def handle_fix(argv: Sequence[str]) -> int:
     if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
         return 0
     current_result = initial_result
-    seen_signatures: set[str] = set()
+    loop_state = FixLoopState()
 
     for cycle in range(1, int(args.max_cycles) + 1):
         print(f"Cycle {cycle}/{int(args.max_cycles)}")
@@ -1578,13 +1579,6 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("")
 
         signature_before = build_failure_signature(current_result)
-        if signature_before in seen_signatures:
-            print("Tests still failing after applied fix.")
-            print("Failure signature repeated. Stopping to avoid loop.")
-            print("")
-            print("No further files changed.")
-            return 1
-        seen_signatures.add(signature_before)
 
         options = TaskOptions(
             task="fix failing tests",
@@ -1623,6 +1617,7 @@ def handle_fix(argv: Sequence[str]) -> int:
 
         print(f"Safety: {apply_safety}")
         print("Applying patch...")
+        loop_state.record_before_apply(signature_before)
         latest_diff = _resolve_latest_accepted_diff_or_print()
         if latest_diff is None:
             return 1
@@ -1640,7 +1635,7 @@ def handle_fix(argv: Sequence[str]) -> int:
             return 0
 
         signature_after = build_failure_signature(test_result)
-        if signature_after == signature_before:
+        if loop_state.repeated_after_apply(signature_after):
             print("Tests still failing after applied fix.")
             print("Failure signature repeated. Stopping to avoid loop.")
             print("")
