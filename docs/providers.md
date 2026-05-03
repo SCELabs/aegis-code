@@ -1,66 +1,78 @@
 # Providers and Keys
 
-Environment variables:
+## Environment Variables
 
-AEGIS_API_KEY
-AEGIS_BASE_URL
-OPENAI_API_KEY
-OPENROUTER_API_KEY
-GEMINI_API_KEY
-ANTHROPIC_API_KEY
+Common keys:
 
-Example:
+- `AEGIS_API_KEY`
+- `AEGIS_BASE_URL`
+- `OPENAI_API_KEY`
+- `OPENROUTER_API_KEY`
+- `GEMINI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+Examples:
+
+```bash
 export AEGIS_API_KEY=...
 export OPENAI_API_KEY=...
+```
 
 Windows:
+
+```powershell
 setx AEGIS_API_KEY ...
 setx OPENAI_API_KEY ...
+```
 
-Future direction:
+## Key Management (`aegis-code keys`)
 
-aegis-code keys set AEGIS_API_KEY
+Aegis Code supports scoped key management:
+
+- project scope (`--project`)
+- global scope (`--global`)
+
+Commands:
+
+```bash
 aegis-code keys status
-aegis-code keys clear OPENAI_API_KEY
+aegis-code keys list
+aegis-code keys set <NAME> [VALUE] --project
+aegis-code keys set <NAME> [VALUE] --global
+aegis-code keys clear <NAME> --project
+aegis-code keys clear <NAME> --global
+```
 
-Secrets must not be committed.
+Key values are never printed in plain text.
 
-OpenRouter can be used as a multi-model routing provider with one API key.
+## Provider Control
 
-## Using Aegis
+Use provider commands to inspect or update provider routing:
+
+```bash
+aegis-code provider status
+aegis-code provider detect
+aegis-code provider list
+aegis-code provider preset <name>
+aegis-code provider model <tier> <provider:model>
+```
+
+## Behavior Notes
+
+- Provider-backed patch generation is proposal-only.
+- All generated patches still go through validation, safety scoring, and apply gating.
+- Aegis Code remains a controlled pipeline even when provider output is available.
+
+## Aegis Integration
 
 Aegis integration is optional.
 
 Without Aegis:
-- all commands run locally
-- behavior is deterministic
-- no external calls are made
 
-With Aegis enabled:
-- runtime behavior can be adjusted dynamically
-- additional stabilization signals are applied
-- system performance may improve for complex workflows
+- commands still run locally
+- control behavior remains deterministic
 
-To enable:
+With Aegis control enabled:
 
-aegis-code onboard
-
-Or manually:
-
-aegis-code keys set AEGIS_API_KEY <key>
-
-Provider detection:
-
-aegis-code provider detect
-
-Guided setup can run onboarding, provider detection, optional preset apply, and optional first analysis:
-
-aegis-code setup
-
-Detected keys:
-- OPENAI_API_KEY
-- ANTHROPIC_API_KEY
-- OPENROUTER_API_KEY
-- GEMINI_API_KEY
-
-Key values are never printed.
+- runtime control signals may influence strategy
+- mutation rules do not change (`--confirm` still required)

@@ -1,24 +1,39 @@
 # Apply Confirm (Human-Confirmed)
 
-Use explicit confirmation to apply a patch diff:
+Use explicit confirmation to apply a patch:
 
-- `aegis-code apply .aegis/runs/latest.diff --confirm`
-- `aegis-code apply .aegis/runs/latest.diff` (preview only, no edits)
+```bash
+aegis-code apply --confirm
+aegis-code apply --confirm <path>
+aegis-code apply --confirm --run-tests
+```
+
+## Behavior
+
+- `--confirm` is required for file mutation.
+- No-path confirm applies `.aegis/runs/latest.diff`.
+- If latest accepted diff is missing:
+  - and latest invalid diff exists, apply is blocked.
+  - otherwise, apply reports no accepted diff.
+- `LOW` or `BLOCKED` latest run safety blocks apply.
+- `--run-tests` runs configured tests after successful apply.
 
 ## Safety model
-- Requires explicit `--confirm`.
-- Runs patch inspection/check before apply.
-- Refuses invalid or unsafe diffs.
-- Creates backups under `.aegis/backups/<timestamp>/...`.
-- Does not run git commands.
+
+- Validates patch structure before apply.
+- Refuses invalid/unsafe patches.
+- Creates backups under `.aegis/backups/<id>/...`.
+- No git commands are run.
 
 ## Limitations
-- Text unified diffs only.
-- No binary diff apply.
-- No rename/delete/new-file apply in this phase.
-- No autonomous apply behavior.
+
+- Unified text diffs only.
+- `latest.invalid.diff` is never applyable.
+- Review remains required; apply is not autonomous.
 
 ## Recovery
-- Restore files manually from `.aegis/backups/...` if needed.
-- List backups: `aegis-code backups`
-- Restore backup snapshot: `aegis-code restore BACKUP_ID`
+
+```bash
+aegis-code backups
+aegis-code restore <backup-id>
+```

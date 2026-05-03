@@ -1,39 +1,30 @@
 # Apply Check (Preview-Only)
 
-`aegis-code apply --check` validates a diff file without modifying project files.
+`aegis-code apply --check` validates a patch without modifying files.
 
-## What apply check does
-- Reads a diff file.
-- Parses file targets, hunks, additions, and deletions.
-- Reports summary counts.
-- Surfaces warnings and errors.
-- If the diff file is missing, prints a setup hint to generate a proposal diff first.
+## Commands
 
-## What apply check does NOT do
-- It does not apply patches.
-- It does not edit files.
-- It does not run git operations.
+```bash
+aegis-code apply --check
+aegis-code apply --check <path>
+```
 
-## Command examples
-- `aegis-code apply --check .aegis/runs/latest.diff`
-- `aegis-code apply .aegis/runs/latest.diff` (preview only, requires `--confirm` for apply)
+Behavior:
 
-## Safety guarantees
-- No file edits are performed.
-- No patch application occurs.
-- No git operations are performed.
+- `--check` with no path validates `.aegis/runs/latest.diff`.
+- If no accepted diff exists but `.aegis/runs/latest.invalid.diff` exists, apply remains blocked.
+- Reports validity, counts, warnings, and apply-block reasons.
+- For latest accepted diff, run-level safety gating applies:
+  - `LOW` -> blocked (`low_safety`)
+  - `BLOCKED` -> blocked (`blocked_safety`)
 
-## Warning categories
-- `unsafe_absolute_path`: diff references absolute paths.
-- `unsafe_parent_traversal`: diff references parent traversal (`..`) paths.
-- `internal_or_generated_path`: diff touches internal/generated paths such as:
-  `.git`, `.venv`, `venv`, `__pycache__`, `.pytest_cache`, `*.egg-info`, `.aegis`.
-- `very_large_diff`: more than 1000 changed lines.
-- `binary_diff_detected`: binary patch markers detected.
+## What apply check does not do
 
-Warnings do not apply or block anything by themselves. They are advisory for human review.
+- Does not apply patches.
+- Does not edit files.
+- Does not run git operations.
 
-## Future note
-- A real apply command may be added later behind explicit human confirmation.
-- `aegis-code apply PATH --confirm` is explicit and separate from `--check`.
-- Confirmed apply creates backups under `.aegis/backups/` and can be recovered with `aegis-code backups` and `aegis-code restore BACKUP_ID`.
+## Safety notes
+
+- `latest.invalid.diff` is inspectable via `aegis-code diff --full` but never applyable.
+- Use `aegis-code diff`, `--stat`, or `--full` before confirm apply.

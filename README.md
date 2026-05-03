@@ -1,101 +1,184 @@
-﻿# aegis-code
+# aegis-code
 
-`aegis-code` is a terminal-native, Aegis-guided coding workflow runner focused on safe, supervised operation.
+A terminal-native controlled patch pipeline for proposing, inspecting, validating, and safely applying code changes.
 
-Current capabilities include failure-aware test triage, optional structural analysis, proposal-only patch diffs, deterministic patch-quality scoring, explicit human-confirmed apply with backups, and controlled project scaffold creation.
+## What Aegis Code Is
 
-## Install (Dev)
+Aegis Code is a safety/control layer around AI-assisted patch generation. It is designed to:
+
+- generate proposal diffs
+- validate and inspect patches
+- attempt conservative repair for specific malformed diffs
+- block unsafe or invalid patches
+- require explicit human confirmation before file mutation
+- optionally verify with tests after apply
+
+## What Aegis Code Is Not
+
+Aegis Code is not:
+
+- an autonomous coding agent
+- a replacement for developer review
+- a blind patch applier
+- a guarantee that every generated patch is correct
+
+## Core Workflow
+
+1. Generate a proposal (no file mutation):
+
+```bash
+aegis-code "fix failing tests" --propose-patch
+```
+
+2. Inspect the latest diff:
+
+```bash
+aegis-code diff
+aegis-code diff --stat
+aegis-code diff --full
+```
+
+3. Run apply check:
+
+```bash
+aegis-code apply --check
+```
+
+4. Apply only with explicit confirmation:
+
+```bash
+aegis-code apply --confirm
+```
+
+5. Apply and run tests:
+
+```bash
+aegis-code apply --confirm --run-tests
+```
+
+## Quickstart
+
+Install (dev):
 
 ```bash
 pip install -e .
 ```
 
-## Environment Variables
-
-- `AEGIS_API_KEY` (optional for local smoke tests, required for real backend auth)
-- `AEGIS_BASE_URL` (optional override; otherwise config/default is used)
-- `OPENAI_API_KEY` (optional; only needed for provider-backed proposal diffs)
-
-See `.env.example` for a starter template.
-
-## Quick Start
+Initialize project files:
 
 ```bash
 aegis-code init
 ```
 
-Run `aegis-code onboard` to enable Aegis control guidance.
-
-Guided first-run setup:
-
-```bash
-aegis-code setup
-```
-
-Read-only readiness check (no changes made):
+Setup readiness check:
 
 ```bash
 aegis-code setup --check
 ```
 
-Run a task:
+Refresh and inspect local runtime context:
 
 ```bash
-aegis-code "triage current test failures" --budget 1.25
+aegis-code context refresh
+aegis-code context show
 ```
 
-View one-shot project state summary:
+Propose + inspect + check + apply:
 
 ```bash
+aegis-code "triage current test failures" --propose-patch
+aegis-code diff
+aegis-code apply --check
+aegis-code apply --confirm --run-tests
+```
+
+## Safety Model
+
+- Proposal-first: generation is proposal-only.
+- No silent apply: `--confirm` is required for mutation.
+- Accepted vs invalid diffs:
+  - accepted diff: `.aegis/runs/latest.diff`
+  - invalid diff: `.aegis/runs/latest.invalid.diff`
+- `aegis-code diff` prefers `latest.diff`; if missing, it shows `latest.invalid.diff` with a BLOCKED warning.
+- Apply safety scoring is written to run metadata:
+  - `HIGH`, `MEDIUM`, `LOW`, `BLOCKED`
+- `apply --check` and `apply --confirm` gate on latest run safety for `latest.diff`:
+  - `LOW` and `BLOCKED` are blocked.
+- Hard-invalid guards block placeholder/truncation content and destructive rewrites.
+- Destructive rewrite protection includes tests/docs-focused guards.
+- No git commands are run by Aegis Code.
+- Stale diff cleanup: task runs clear prior `latest.diff` / `latest.invalid.diff` before new generation.
+
+## Fix Loop
+
+Use bounded test-fix workflow:
+
+```bash
+aegis-code fix
+aegis-code fix --confirm
+aegis-code fix --confirm --max-cycles 2
+```
+
+Behavior:
+
+- `fix` without `--confirm` is non-mutating.
+- `fix --confirm` only applies accepted diffs with `HIGH`/`MEDIUM` safety.
+- Stops early on repeated failure signatures to avoid loops.
+- For simple single-test pytest assertion mismatches, Aegis Code can use a deterministic micro-fix (single assertion update) instead of provider generation.
+- Deterministic micro-fixes still go through diff/check metadata and safety gating.
+
+## Command Reference
+
+Project and status:
+
+```bash
+aegis-code init
+aegis-code setup
+aegis-code setup --check
+aegis-code status
+aegis-code report
+aegis-code compare
 aegis-code overview
-```
-
-Get local next-step suggestions:
-
-```bash
 aegis-code next
 ```
 
-Inspect read-only runtime policy status:
+Runtime/task:
 
 ```bash
+aegis-code "<task>"
+aegis-code "<task>" --dry-run
+aegis-code "<task>" --propose-patch
+```
+
+Diff/apply/fix:
+
+```bash
+aegis-code diff
+aegis-code diff --stat
+aegis-code diff --full
+aegis-code apply --check
+aegis-code apply --check <path>
+aegis-code apply --confirm
+aegis-code apply --confirm <path>
+aegis-code apply --confirm --run-tests
+aegis-code fix
+aegis-code fix --confirm --max-cycles 2
+```
+
+Context/budget/policy:
+
+```bash
+aegis-code context refresh
+aegis-code context show
+aegis-code budget set 1.00
+aegis-code budget status
+aegis-code budget clear
 aegis-code policy status
 ```
 
-## Local vs Aegis Control
+Workspace:
 
-Aegis Code can run in two modes:
-
-### Local Mode (default)
-
-Works without connecting to Aegis.
-
-Provides:
-
-- project scaffolding and planning
-- budget-aware execution
-- context-aware task handling
-- deterministic runtime control
-- workspace orchestration
-- reporting and observability
-
-### Aegis Control
-
-Auto-enabled when an `AEGIS_API_KEY` is configured, unless disabled in config.
-
-Adds:
-
-- runtime guidance based on system behavior
-- dynamic model tier selection overrides
-- retry and escalation control
-- context strategy adjustments
-- stronger stabilization signals for complex workflows
-
-## Workspace
-
-Manage multiple projects with a single local control layer.
-
-Commands:
+```bash
 aegis-code workspace init
 aegis-code workspace add <path>
 aegis-code workspace remove <path>
@@ -105,178 +188,73 @@ aegis-code workspace overview
 aegis-code workspace refresh-context
 aegis-code workspace run "<task>" --dry-run
 aegis-code workspace run "<task>" --confirm
-
-Full documentation: see docs/workspace.md
-
-Compare the last two runtime runs:
-
-```bash
-aegis-code compare
 ```
 
-Run reports now also keep JSON history snapshots under `.aegis/runs/history/`.
+## Keys, Project Scope, and Workspace
 
-Refresh deterministic project-local context:
+Aegis Code supports project and global key management via `aegis-code keys`.
+
+- project scope: stored for current project
+- global scope: reusable across projects/workspaces
+
+Examples:
 
 ```bash
+aegis-code keys status
+aegis-code keys list
+aegis-code keys set OPENAI_API_KEY --project
+aegis-code keys set OPENAI_API_KEY --global
+aegis-code keys clear OPENAI_API_KEY --project
+```
+
+Workspace operations reuse each project's local config, context, and runtime controls.
+
+## Budget Control Note
+
+Budget in Aegis Code is a runtime control signal for behavior (for example mode selection and control policy), not a real billing/cost tracker.
+
+## Current Limitations
+
+- Python-first workflow today.
+- Provider output quality can vary.
+- Complex semantic fixes may still block or require task refinement/manual edits.
+- Node/JS support is planned but not complete.
+
+## Demo Script (Failing-Test Flow)
+
+```bash
+pip install -e .
+aegis-code init
+aegis-code setup --check
 aegis-code context refresh
-aegis-code context show
+
+# run a proposal-producing task
+aegis-code "fix failing tests" --propose-patch
+
+# inspect proposal
+
+aegis-code diff --stat
+aegis-code diff
+
+# validate apply safety
+aegis-code apply --check
+
+# apply with explicit confirmation + test verification
+aegis-code apply --confirm --run-tests
 ```
 
-Set a local runtime budget guardrail:
+If latest patch is invalid/blocked, inspect raw provider diff:
 
 ```bash
-aegis-code budget set 1.00
-aegis-code budget status
+aegis-code diff --full
 ```
-
-List available stack profiles:
-
-```bash
-aegis-code create --list-stacks
-```
-
-Create a planning-only project plan:
-
-```bash
-aegis-code create "inventory tracker"
-```
-
-Force a stack profile:
-
-```bash
-aegis-code create "inventory tracker" --stack python-fastapi
-```
-
-Preview scaffold target without writing files:
-
-```bash
-aegis-code create "inventory tracker" --target ./inventory-api
-```
-
-Write scaffold files with explicit confirmation:
-
-```bash
-aegis-code create "inventory tracker" --target ./inventory-api --confirm
-```
-
-Write scaffold files and validate:
-
-```bash
-aegis-code create "inventory tracker" --target ./inventory-api --confirm --validate
-```
-
-## Stack Profiles
-
-Current internal stack IDs:
-
-- `python-basic`
-- `python-cli`
-- `python-fastapi`
-- `node-react`
-
-Profiles are versioned internally (starting at `0.1`) and surfaced in create planning output.
-
-Scaffold writes `.aegis/create_manifest.yml` to record selected stack, stack version, idea, test command, and created files.
-
-No external Copier/Cookiecutter template dependency is used yet.
-
-`aegis-code create --list-stacks` lists internal stack profiles and versions without generating a plan or writing files.
-
-`--validate` is optional and only runs after `--target` + `--confirm`; it runs tests for the scaffold and, on failure, runs Aegis stabilization planning/proposal flow.
-
-## Runtime Policy
-
-`aegis-code policy status` is read-only and local-only.
-
-It shows current project runtime policy signals:
-
-- mode and configured model tiers
-- provider config flags (without secret values)
-- budget state and remaining estimate
-- context availability and capped runtime context metadata
-- verification command and runtime guard summary
-
-This pass does not change runtime routing or model selection.
-
-Budget-aware mode selection policy (v1):
-
-- no budget file: keep configured/requested mode
-- remaining budget `< 0.10`: force `cheapest` mode for that invocation
-- no mid-run mode switching
-- deterministic per invocation
-
-Runtime calls now receive a structured local control payload:
-
-- `project_context`
-- `budget_state`
-- `runtime_policy`
-
-This prepares Aegis Code for deeper client integration without adding new external calls.
-When enhanced runtime is enabled and Aegis guidance is available, runtime applies advisory controls for model tier, retry cap, escalation permission, and context mode.
-
-Budget runtime events now record selected mode and decision reason (`default`, `low_budget`, or `policy_adjustment`) in `.aegis/budget.json` for local observability.
-
-Runtime Control summaries in CLI/report output show selected mode, reason, budget remaining, and context availability.
-Aegis Control summaries in CLI/report output show control status/reason while execution remains local and mutation remains confirm-only.
-Set `aegis.control_enabled` to `auto` (default), `true`, or `false` in `.aegis/aegis-code.yml`.
-`auto` enables Aegis control when `AEGIS_API_KEY` is available; execution remains local and mutation remains confirm-only.
-
-## Overview
-
-`aegis-code overview` provides a compact full-project snapshot in one command:
-
-- detected stack
-- verification command
-- budget remaining/limit
-- context availability and size
-- selected runtime mode + reason
-- latest run presence
-- backup count
-
-This is local-only, deterministic, and read-only.
-
-## Project Context
-
-`aegis-code context refresh` and `aegis-code context show` manage deterministic local context under `.aegis/context/`.
-
-- local only and deterministic
-- no network/provider/backend calls
-- selective reads from `README.md`, `pyproject.toml`, `package.json`, and bounded `docs/**/*.md`
-- runtime commands load compact project context when available
-- runtime inclusion order: `project_summary`, `constraints`, `architecture`
-- runtime context is capped (default 6000 chars) with truncation marker when needed
-- reports include context metadata (`available`, `included_paths`, `total_chars`)
-- intended as high-signal project-local context for runtime control and project awareness
 
 ## Documentation
 
-- Command reference: docs/commands.md
-- Workspace control: docs/workspace.md
-- Configuration: docs/config.md
-- Providers and keys: docs/providers.md
-
-## Safety Model
-
-- No autonomous edits.
-- No patch auto-apply.
-- `--confirm` required for file mutation.
-- Confirmed apply creates backups under `.aegis/backups/...`.
-- Restore is available for rollback.
-- Patch apply supports modifying existing files and creating new files from unified diffs.
-- Delete/rename/binary diff apply is not supported.
-- No git commands are run by `aegis-code`.
-- `create --target` refuses current repo root and non-empty targets.
-- Local budget guardrails apply to runtime/Aegis calls only.
-- Planning, listing, config, and other local-only operations are always free.
-- Context refresh/show are local deterministic operations only.
-
-## Optional Integrations
-
-- SLL (`structural_language_lab`) is optional and local-install only.
-- Provider-backed patch diffs are optional and proposal-only.
-- Optional `aegis` client auto-detection is supported at runtime; when unavailable, Aegis Code automatically falls back to local runtime execution with no config changes required.
-- Aegis control is configured via `aegis.control_enabled` (`auto`/`true`/`false`) and uses `client.auto().step(...)` as a control-layer call.
-- Local verification/execution remains primary; Aegis guidance is attached as `aegis_result`.
-- Fallback stays local when disabled, import is missing, or client execution errors.
-- JSON run history snapshots are stored in `.aegis/runs/history`, and `aegis-code compare` uses the last two snapshots when available.
+- Command reference: `docs/commands.md`
+- Apply check: `docs/apply_check.md`
+- Apply confirm: `docs/apply_confirm.md`
+- Workspace: `docs/workspace.md`
+- Providers and keys: `docs/providers.md`
+- Create workflow: `docs/create.md`
+- Demo workflow: `docs/demo_workflow.md`
