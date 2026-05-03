@@ -56,6 +56,26 @@ def hard_invalid_content_reason(
             return "placeholder_content"
 
     if not test_task:
+        files = validation.get("files", []) if isinstance(validation, dict) else []
+        for item in files if isinstance(files, list) else []:
+            if not isinstance(item, dict):
+                continue
+            target = str(item.get("new_path") or item.get("old_path") or "").lower()
+            if not target:
+                continue
+            is_docs = (
+                target == "readme.md"
+                or target.endswith(".md")
+                or target.startswith("docs/")
+            )
+            if not is_docs:
+                continue
+            file_additions = int(item.get("additions", 0) or 0)
+            file_deletions = int(item.get("deletions", 0) or 0)
+            if file_deletions > 200:
+                return "destructive_docs_rewrite"
+            if file_deletions > 80 and file_additions < (file_deletions / 2):
+                return "destructive_docs_rewrite"
         return None
 
     files = validation.get("files", []) if isinstance(validation, dict) else []

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aegis_code.providers.base import _trim_context, build_diff_prompt, is_plausible_diff
+from aegis_code.providers.context_builder import build_failure_fix_context
 
 
 def test_is_plausible_diff_accepts_common_diff_markers() -> None:
@@ -181,3 +182,94 @@ def test_build_diff_prompt_non_test_task_unaffected() -> None:
     assert "Append-only test addition unless the task explicitly asks to edit existing tests." not in prompt
     assert "Do not delete existing tests." not in prompt
     assert "Context: {'files': [{'path': 'src/main.py', 'content': 'def main():\\n    pass\\n'}]}" in prompt
+
+
+def test_fix_context_extracts_failing_test_function() -> None:
+    content = (
+        "import pytest\n\n"
+        "def test_alpha():\n"
+        "    assert True\n\n"
+        "def test_aegis_intentional_semantic_failure():\n"
+        "    from aegis import AegisResult\n"
+        "    result = AegisResult(scope='llm')\n"
+        "    assert result.debug_summary() == 'wrong'\n\n"
+        "def test_omega():\n"
+        "    assert True\n"
+    )
+    shaped = build_failure_fix_context(
+        context={"files": [{"path": "tests/test_client.py", "content": content}]},
+        target_file="tests/test_client.py",
+        failing_nodeid="tests/test_client.py::test_aegis_intentional_semantic_failure",
+        failing_error="AssertionError: - wrong + scope=llm actions=0 trace_steps=0 used_fallback=no",
+    )
+    files = shaped.get("files", [])
+    assert isinstance(files, list) and files
+    block = files[0]
+    source = str(block.get("failing_test_source", ""))
+    assert "def test_aegis_intentional_semantic_failure" in source
+    assert "def test_alpha" not in source
+    assert "def test_omega" not in source
+
+
+def test_fix_prompt_for_assertion_mismatch_limits_target_to_failing_test_file() -> None:
+    prompt = build_diff_prompt(
+        task="fix failing tests in tests/test_client.py; target failing test tests/test_client.py::test_aegis_intentional_semantic_failure",
+        failures={},
+        context={
+            "files": [
+                {"path": "tests/test_client.py", "content": "def test_aegis_intentional_semantic_failure():\n    assert True\n"},
+                {"path": "tests/test_other.py", "content": "def test_other():\n    assert True\n"},
+            ]
+        },
+        patch_plan={
+            "task_type": "test_generation",
+            "target_file": "tests/test_client.py",
+            "allowed_targets": ["tests/test_client.py"],
+            "failing_test_nodeid": "tests/test_client.py::test_aegis_intentional_semantic_failure",
+            "failing_test_error": "AssertionError: x",
+            "proposed_changes": [],
+        },
+        aegis_execution={},
+    )
+    assert "Allowed-target guidance:" in prompt
+    assert "Modify only these files: tests/test_client.py" in prompt
+    assert "tests/test_other.py" not in prompt
+
+
+def test_fix_prompt_prefers_assertion_update_when_actual_output_visible() -> None:
+    prompt = build_diff_prompt(
+        task="fix failing tests in tests/test_client.py; assertion mismatch",
+        failures={},
+        context={"files": [{"path": "tests/test_client.py", "content": "def test_x():\n    assert True\n"}]},
+        patch_plan={
+            "task_type": "test_generation",
+            "target_file": "tests/test_client.py",
+            "failing_test_nodeid": "tests/test_client.py::test_x",
+            "failing_test_error": "AssertionError: - wrong + scope=llm actions=0 trace_steps=0 used_fallback=no",
+            "proposed_changes": [],
+        },
+        aegis_execution={},
+    )
+    assert "Prefer updating the assertion expected value if implementation behavior is clearly shown by pytest." in prompt
+
+
+def test_fix_context_does_not_include_entire_large_test_file() -> None:
+    large = "\n".join(f"def test_noise_{i}():\n    assert True\n" for i in range(200))
+    content = (
+        "import pytest\n\n"
+        + large
+        + "\n"
+        + "def test_aegis_intentional_semantic_failure():\n"
+        + "    assert 'actual' == 'wrong'\n"
+        + "\n"
+        + large
+    )
+    shaped = build_failure_fix_context(
+        context={"files": [{"path": "tests/test_client.py", "content": content}]},
+        target_file="tests/test_client.py",
+        failing_nodeid="tests/test_client.py::test_aegis_intentional_semantic_failure",
+        failing_error="AssertionError: mismatch",
+    )
+    source = str(shaped["files"][0].get("failing_test_source", ""))
+    assert "def test_aegis_intentional_semantic_failure" in source
+    assert "test_noise_0" not in source

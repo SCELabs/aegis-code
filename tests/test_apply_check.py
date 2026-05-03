@@ -355,3 +355,46 @@ def test_apply_does_not_apply_invalid_latest_diff(tmp_path: Path, monkeypatch, c
     assert "Reason: no_accepted_diff" in out
     assert "- aegis-code diff --full" in out
 
+
+def test_apply_check_blocks_low_safety_latest_diff(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- /dev/null\n"
+        "+++ b/src/main.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x = 1\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text('{"apply_safety":"LOW"}', encoding="utf-8")
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
+def test_apply_confirm_blocks_low_safety_latest_diff(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text("diff --git a/src/main.py b/src/main.py\n", encoding="utf-8")
+    (runs / "latest.json").write_text('{"apply_safety":"LOW"}', encoding="utf-8")
+    called = {"apply": False}
+
+    def _fake_apply(path: Path, cwd=None):
+        called["apply"] = True
+        return {"applied": True, "path": str(path), "files_changed": [], "warnings": [], "errors": []}
+
+    monkeypatch.setattr("aegis_code.cli.apply_patch_file", _fake_apply)
+    exit_code = cli.main(["apply", "--confirm"])
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert called["apply"] is False
+    assert "Status: BLOCKED" in out
+    assert "Reason: low_safety" in out
+

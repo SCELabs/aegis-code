@@ -86,6 +86,17 @@ def build_diff_prompt(
             test_constraints.extend([f"- Named target file: {named_test_file}", f"- Allowed target: {named_test_file}"])
         if target_file and not any("Modify only this file:" in str(item) for item in test_constraints):
             test_constraints.extend([f"- Modify only this file: {target_file}", "- Do not touch any other files."])
+        if patch_plan.get("failing_test_nodeid"):
+            test_constraints.extend(
+                [
+                    "- Modify only the failing test function.",
+                    "- Do not rewrite the test file.",
+                    "- Do not delete unrelated tests.",
+                    "- Prefer updating the assertion expected value if implementation behavior is clearly shown by pytest.",
+                    "- Use a valid unified diff with real hunk line numbers.",
+                    "- Do not use placeholder hunk headers.",
+                ]
+            )
     elif task_type == "implementation_with_tests":
         test_constraints = [
             "Implementation-with-tests guidance:",

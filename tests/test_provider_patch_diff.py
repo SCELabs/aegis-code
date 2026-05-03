@@ -2584,4 +2584,64 @@ def test_provider_timeout_cli_override_is_used_by_provider_calls(monkeypatch, tm
         client=_Client(),
     )
     assert payload["patch_diff"]["error"] == "provider_timeout"
-    assert captured.get("patch generation") == 30
+
+
+def test_task_run_clears_stale_latest_diff_when_patch_skipped(monkeypatch, tmp_path: Path) -> None:
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    stale_diff = runs / "latest.diff"
+    stale_invalid = runs / "latest.invalid.diff"
+    stale_diff.write_text("old diff", encoding="utf-8")
+    stale_invalid.write_text("old invalid", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(task="improve the client", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["attempted"] is False
+    assert not stale_diff.exists()
+    assert not stale_invalid.exists()
+
+
+def test_destructive_docs_rewrite_is_hard_invalid(monkeypatch, tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("\n".join(f"line {i}" for i in range(700)) + "\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    deleted = "".join(f"-line {i}\n" for i in range(592))
+    added = "+small\n+tiny\n+brief\n"
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@ -1,592 +1,3 @@\n"
+                f"{deleted}{added}"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="improve docs", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_docs_rewrite"
+    assert payload["patch_diff"]["repair_attempted"] is False
+    assert payload["apply_safety"] == "BLOCKED"

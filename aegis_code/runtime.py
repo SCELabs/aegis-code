@@ -977,6 +977,8 @@ def build_run_payload(
 ) -> dict[str, Any]:
     _progress(options, "loading config")
     config = load_config(cwd)
+    remove_latest_diff(cwd=cwd)
+    remove_latest_invalid_diff(cwd=cwd)
     provider_timeout_seconds = int(
         options.provider_timeout_seconds
         if options.provider_timeout_seconds is not None
@@ -1235,6 +1237,22 @@ def build_run_payload(
                 asdict(decision),
                 sll_analysis,
             )
+            lowered_task = str(options.task or "").lower()
+            failed_tests = final_failures.get("failed_tests", []) if isinstance(final_failures, dict) else []
+            first_failure = failed_tests[0] if isinstance(failed_tests, list) and failed_tests else {}
+            if (
+                isinstance(first_failure, dict)
+                and "fix failing tests in " in lowered_task
+            ):
+                failure_file = str(first_failure.get("file", "") or "").replace("\\", "/")
+                if failure_file.startswith("tests/"):
+                    patch_plan["task_type"] = "test_generation"
+                    patch_plan["target_file"] = failure_file
+                    patch_plan["allowed_targets"] = [failure_file]
+                    patch_plan["max_deletions"] = 5
+                    patch_plan["append_only"] = False
+                    patch_plan["failing_test_nodeid"] = str(first_failure.get("test_name", "") or "")
+                    patch_plan["failing_test_error"] = str(first_failure.get("error", "") or "")
     else:
         patch_plan = generate_patch_plan(
             options.task,
