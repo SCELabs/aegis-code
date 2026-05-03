@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aegis_code.patches.constraints import build_patch_constraints
 from aegis_code.providers.context_builder import (
     build_named_test_file_context,
     extract_named_test_file,
@@ -69,46 +70,22 @@ def build_diff_prompt(
     regen_constraints: list[str] = []
     task_type = str(patch_plan.get("task_type", "")).strip().lower()
     target_file = str(patch_plan.get("target_file", "")).strip()
+    constraints = build_patch_constraints(task=task, task_type=task_type, context=context)
     raw_regen = patch_plan.get("regeneration_constraints", [])
     if isinstance(raw_regen, list):
         regen_constraints = [f"- {str(item)}" for item in raw_regen if str(item).strip()]
     if task_type == "test_generation":
-        named_test_file = _extract_named_test_file(task)
+        named_test_file = str(constraints.get("target_file") or _extract_named_test_file(task))
         test_constraints = [
             "Test-generation guidance:",
-            "- Append-only test addition unless the task explicitly asks to edit existing tests.",
-            "- Do not delete existing tests.",
-            "- Do not rewrite whole files.",
-            "- Do not replace imports unless required.",
-            "- Add the smallest possible test.",
-            "- Prefer appending a new test method/function near relevant existing tests.",
-            "- Output a valid unified diff only.",
-            "- Prefer modifying tests only.",
-            "- Do not modify source files unless explicitly requested.",
-            "- Keep diff hunks minimal and valid.",
-            "- Ensure unified diff hunk line counts match hunk headers.",
-            "- Use a real unified hunk header generated against the provided file content.",
-            "- Use a real unified diff hunk header with line numbers.",
-            "- Do not use placeholder hunk headers such as @@ ... @@.",
-            "- Do not include truncated context.",
         ]
-        if named_test_file:
-            test_constraints.extend(
-                [
-                    f"- Named target file: {named_test_file}",
-                    f"- Allowed target: {named_test_file}",
-                ]
-            )
-        else:
-            test_constraints.append("- Allowed targets: tests/**")
-        test_constraints.append("- Max deletions: 0")
-        if target_file:
-            test_constraints.extend(
-                [
-                    f"- Modify only this file: {target_file}",
-                    "- Do not touch any other files.",
-                ]
-            )
+        provider_instructions = constraints.get("provider_instructions", [])
+        if isinstance(provider_instructions, list):
+            test_constraints.extend(f"- {str(item)}" for item in provider_instructions)
+        elif named_test_file:
+            test_constraints.extend([f"- Named target file: {named_test_file}", f"- Allowed target: {named_test_file}"])
+        if target_file and not any("Modify only this file:" in str(item) for item in test_constraints):
+            test_constraints.extend([f"- Modify only this file: {target_file}", "- Do not touch any other files."])
     elif task_type == "implementation_with_tests":
         test_constraints = [
             "Implementation-with-tests guidance:",

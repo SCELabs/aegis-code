@@ -20,6 +20,7 @@ from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.models import CommandResult
 from aegis_code.patches.apply_check import check_patch_text
+from aegis_code.patches.constraints import build_patch_constraints, detect_named_test_file
 from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
@@ -260,9 +261,9 @@ def is_test_generation_task(task: str) -> bool:
 
 
 def _test_hint_path(task: str, context: dict[str, Any]) -> str:
-    named = re.search(r"(tests/[A-Za-z0-9_./-]+\.py)", str(task or ""))
+    named = detect_named_test_file(task)
     if named:
-        return named.group(1).strip()
+        return named
     files = context.get("files", []) if isinstance(context, dict) else []
     for item in files:
         if isinstance(item, dict):
@@ -1292,11 +1293,20 @@ def build_run_payload(
             ],
         }
         if test_task:
-            test_file_hint = _test_hint_path(options.task, failure_context)
+            test_constraints = build_patch_constraints(options.task, "test_generation", context=failure_context)
+            test_file_hint = str(test_constraints.get("target_file") or _test_hint_path(options.task, failure_context))
             patch_plan["task_type"] = "test_generation"
             patch_plan["target_file"] = test_file_hint
-            patch_plan["max_deletions"] = 0
-            patch_plan["allowed_targets"] = [test_file_hint] if test_file_hint else ["tests/**"]
+            patch_plan["max_deletions"] = test_constraints.get("max_deletions", 0)
+            allowed_targets = test_constraints.get("allowed_targets", [])
+            if isinstance(allowed_targets, list) and allowed_targets:
+                patch_plan["allowed_targets"] = [str(item) for item in allowed_targets]
+            else:
+                patch_plan["allowed_targets"] = [test_file_hint] if test_file_hint else ["tests/**"]
+            if test_constraints.get("append_only") is not None:
+                patch_plan["append_only"] = bool(test_constraints.get("append_only"))
+            if test_constraints.get("insertion_hint"):
+                patch_plan["insertion_hint"] = str(test_constraints.get("insertion_hint"))
             patch_plan["strategy"] += (
                 " Prefer modifying tests only. Avoid source changes unless explicitly requested. "
                 "Place imports at the top of test files, replace placeholder tests cleanly, and keep hunk counts valid."
@@ -1653,16 +1663,17 @@ def build_run_payload(
                 "Minimize unrelated file changes.",
             ]
             if test_task:
-                enhanced_constraints.extend(
-                    [
-                        "Modify only tests/ paths unless explicitly requested.",
-                        "Keep imports at top of test files.",
-                        "Replace placeholder tests cleanly; do not append imports after test functions.",
+                test_constraints = build_patch_constraints(options.task, "test_generation", context=failure_context)
+                regen_instructions = test_constraints.get("regeneration_instructions", [])
+                if isinstance(regen_instructions, list):
+                    enhanced_constraints.extend(str(item) for item in regen_instructions)
+                allowed_targets = test_constraints.get("allowed_targets", [])
+                if isinstance(allowed_targets, list) and allowed_targets:
+                    enhanced_patch_plan["allowed_targets"] = [str(item) for item in allowed_targets]
+                else:
+                    enhanced_patch_plan["allowed_targets"] = [
+                        path for path in _extract_context_paths(failure_context) if path.startswith("tests/")
                     ]
-                )
-                enhanced_patch_plan["allowed_targets"] = [
-                    path for path in _extract_context_paths(failure_context) if path.startswith("tests/")
-                ]
             if impl_with_tests_task:
                 planned_targets = sorted(_collect_plan_targets(patch_plan))
                 if planned_targets:

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import re
 from typing import Any
+
+from aegis_code.patches.constraints import (
+    build_tests_only_insertion_hint,
+    detect_named_test_file,
+)
 
 
 def line_safe_cap(content: str, limit: int) -> str:
@@ -41,10 +45,7 @@ def trim_context(context: dict[str, Any], max_chars: int) -> dict[str, Any]:
 
 
 def extract_named_test_file(task: str) -> str:
-    match = re.search(r"(tests/[A-Za-z0-9_./-]+\.py)", str(task or ""))
-    if not match:
-        return ""
-    return match.group(1).strip()
+    return detect_named_test_file(task)
 
 
 def build_named_test_file_context(path: str, content: str) -> dict[str, Any]:
@@ -115,7 +116,7 @@ def build_named_test_file_context(path: str, content: str) -> dict[str, Any]:
 
 
 def build_insertion_hint() -> str:
-    return "Append a new test method at the end of class TestAegisResult."
+    return build_tests_only_insertion_hint("", target_file=None)
 
 
 def shape_test_generation_context(
