@@ -764,3 +764,131 @@ def test_workspace_next_sorting_order_high_medium_low_stable(tmp_path: Path, mon
     assert exit_code == 0
     assert out.index("1. high-failures") < out.index("2. medium-provider")
     assert out.index("2. medium-provider") < out.index("3. low-passing")
+
+
+def test_workspace_run_safe_skips_when_no_verification(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "cli-tool"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": False}, "final_failures": {"failure_count": 2}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.workspace.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no run_task")))
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "run", "--safe", "fix failing tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "skipped (no verification)" in out
+    assert "- executed: 0" in out
+
+
+def test_workspace_run_safe_skips_when_already_stable(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "web-client"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps(
+            {
+                "verification": {"available": True},
+                "final_failures": {"failure_count": 0},
+                "status": "completed_tests_passed",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.workspace.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no run_task")))
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "run", "--safe", "fix failing tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "skipped (already stable)" in out
+    assert "- executed: 0" in out
+
+
+def test_workspace_run_safe_skips_when_budget_blocked(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 2}, "status": "failed"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.workspace._allow_runtime_for_workspace", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr("aegis_code.workspace.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no run_task")))
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "run", "--safe", "fix failing tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "skipped (budget blocked)" in out
+    assert "- skipped: 1" in out
+
+
+def test_workspace_run_safe_executes_when_eligible(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (project / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 2}, "status": "failed"}),
+        encoding="utf-8",
+    )
+
+    def _fake_run_task(**_: object) -> dict:
+        return {"final_failures": {"failure_count": 0}, "status": "completed_tests_passed"}
+
+    monkeypatch.setattr("aegis_code.workspace.run_task", _fake_run_task)
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "run", "--safe", "fix failing tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- api-service -> fix failing tests" in out
+    assert "- executed: 1" in out
+    assert "- passed: 1" in out
+
+
+def test_workspace_run_safe_mixed_behavior(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    run_proj = tmp_path / "api-service"
+    no_verify_proj = tmp_path / "cli-tool"
+    stable_proj = tmp_path / "web-client"
+    for project in [run_proj, no_verify_proj, stable_proj]:
+        project.mkdir(parents=True, exist_ok=True)
+        (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (run_proj / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 1}, "status": "failed"}),
+        encoding="utf-8",
+    )
+    (no_verify_proj / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": False}, "final_failures": {"failure_count": 1}}),
+        encoding="utf-8",
+    )
+    (stable_proj / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 0}, "status": "completed_tests_passed"}),
+        encoding="utf-8",
+    )
+
+    def _fake_run_task(**_: object) -> dict:
+        return {"final_failures": {"failure_count": 1}, "status": "failed"}
+
+    monkeypatch.setattr("aegis_code.workspace.run_task", _fake_run_task)
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(run_proj)]) == 0
+    assert cli.main(["workspace", "add", str(no_verify_proj)]) == 0
+    assert cli.main(["workspace", "add", str(stable_proj)]) == 0
+    exit_code = cli.main(["workspace", "run", "--safe", "fix failing tests"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- api-service -> fix failing tests" in out
+    assert "- cli-tool -> skipped (no verification)" in out
+    assert "- web-client -> skipped (already stable)" in out
+    assert "- executed: 1" in out
+    assert "- skipped: 2" in out
+    assert "- failed: 1" in out

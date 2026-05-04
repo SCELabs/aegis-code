@@ -9,6 +9,7 @@ from aegis_code.context_state import refresh_context
 from aegis_code.context_state import load_runtime_context
 from aegis_code.policy import build_runtime_policy_payload, get_mode_reason, select_runtime_mode
 from aegis_code.runtime import TaskOptions, run_task
+from aegis_code.short_circuit import should_skip_provider
 
 
 def _workspace_path(cwd: Path) -> Path:
@@ -335,6 +336,119 @@ def run_workspace_task(task: str, cwd: Path) -> dict:
         "executed": executed,
         "skipped_missing": skipped_missing,
         "skipped_budget": skipped_budget,
+        "projects": results,
+    }
+
+
+def _failure_count_from_payload(payload: dict) -> int:
+    final_failures = payload.get("final_failures")
+    if isinstance(final_failures, dict):
+        try:
+            return int(final_failures.get("failure_count", 0) or 0)
+        except Exception:
+            return 0
+    return 0
+
+
+def _short_circuit_blocks_safe_run(task: str, project_path: Path) -> tuple[bool, str]:
+    decision = should_skip_provider(TaskOptions(task=task), cwd=project_path)
+    if not bool(decision.get("skip", False)):
+        return False, ""
+    reason = str(decision.get("reason", "short_circuit") or "short_circuit")
+    if reason == "repeated_failure":
+        return False, ""
+    return True, reason
+
+
+def run_workspace_task_safe(task: str, cwd: Path) -> dict:
+    data = load_workspace(cwd)
+    if data is None:
+        return {"exists": False}
+
+    projects = data.get("projects", [])
+    executed = 0
+    skipped = 0
+    failed = 0
+    passed = 0
+    results = []
+
+    for item in projects:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", ""))
+        name = str(item.get("name", Path(path).name if path else ""))
+        project_path = Path(path) if path else None
+        if project_path is None or not project_path.exists():
+            skipped += 1
+            results.append({"name": name, "status": "skipped", "reason": "project missing"})
+            continue
+
+        latest_path = project_path / ".aegis" / "runs" / "latest.json"
+        payload: dict = {}
+        if latest_path.exists():
+            try:
+                raw = json.loads(latest_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    payload = raw
+            except Exception:
+                payload = {}
+
+        verification = payload.get("verification", {})
+        verification_available = bool(verification.get("available", False)) if isinstance(verification, dict) else False
+        if not verification_available:
+            skipped += 1
+            results.append({"name": name, "status": "skipped", "reason": "no verification"})
+            continue
+
+        failures = _failure_count_from_payload(payload)
+        if failures == 0 and _is_run_passed(payload):
+            skipped += 1
+            results.append({"name": name, "status": "skipped", "reason": "already stable"})
+            continue
+
+        blocked_by_short_circuit, short_reason = _short_circuit_blocks_safe_run(task, project_path)
+        if blocked_by_short_circuit:
+            skipped += 1
+            results.append({"name": name, "status": "skipped", "reason": f"short-circuit ({short_reason})"})
+            continue
+
+        cfg = load_config(project_path)
+        base_mode = cfg.mode
+        final_mode = select_runtime_mode(base_mode, cwd=project_path)
+        reason = get_mode_reason(base_mode, final_mode, cwd=project_path)
+        if not _allow_runtime_for_workspace(project_path, selected_mode=final_mode, reason=reason):
+            skipped += 1
+            results.append({"name": name, "status": "skipped", "reason": "budget blocked"})
+            continue
+
+        project_context = load_runtime_context(cwd=project_path)
+        budget_state = get_budget_state(cwd=project_path)
+        runtime_policy = build_runtime_policy_payload(base_mode, final_mode, cwd=project_path)
+        options = TaskOptions(
+            task=task,
+            mode=final_mode,
+            project_context=project_context,
+            budget_state=budget_state,
+            runtime_policy=runtime_policy,
+        )
+        run_payload = run_task(options=options, cwd=project_path)
+        executed += 1
+        run_failed = not _is_run_passed(run_payload if isinstance(run_payload, dict) else {})
+        if run_failed:
+            failed += 1
+            outcome = "failed"
+        else:
+            passed += 1
+            outcome = "passed"
+        results.append({"name": name, "status": "executed", "outcome": outcome, "reason": "executed"})
+
+    return {
+        "exists": True,
+        "task": task,
+        "executed": executed,
+        "skipped": skipped,
+        "failed": failed,
+        "passed": passed,
         "projects": results,
     }
 

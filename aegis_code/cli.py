@@ -76,6 +76,7 @@ from aegis_code.workspace import (
     init_workspace,
     preview_workspace_run,
     refresh_workspace_context,
+    run_workspace_task_safe,
     remove_project,
     run_workspace_task,
 )
@@ -332,7 +333,8 @@ def _build_workspace_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("next", prog="aegis-code workspace next")
     subparsers.add_parser("refresh-context", prog="aegis-code workspace refresh-context")
     run_parser = subparsers.add_parser("run", prog="aegis-code workspace run")
-    run_parser.add_argument("task")
+    run_parser.add_argument("task", nargs="?")
+    run_parser.add_argument("--safe", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--confirm", action="store_true")
     return parser
@@ -1258,6 +1260,37 @@ def handle_workspace(argv: Sequence[str]) -> int:
         print(f"- Skipped (missing): {result.get('skipped_missing', 0)}")
         return 0
     if args.workspace_command == "run":
+        if args.safe:
+            task = str(args.task or "").strip()
+            if not task:
+                print("Error: safe mode requires a task")
+                return 2
+            result = run_workspace_task_safe(task=task, cwd=cwd)
+            if not result.get("exists", False):
+                print("No workspace found. Run `aegis-code workspace init`.")
+                return 1
+            print("Workspace run (safe mode):")
+            print("")
+            print("Running:")
+            for item in result.get("projects", []):
+                status = str(item.get("status", "skipped"))
+                name = str(item.get("name", ""))
+                reason = str(item.get("reason", "") or "")
+                if status == "executed":
+                    print(f"- {name} -> {task}")
+                else:
+                    print(f"- {name} -> skipped ({reason})")
+            print("")
+            print("Summary:")
+            print(f"- executed: {result.get('executed', 0)}")
+            print(f"- skipped: {result.get('skipped', 0)}")
+            print(f"- failed: {result.get('failed', 0)}")
+            print(f"- passed: {result.get('passed', 0)}")
+            return 0
+
+        if not args.task:
+            print("Error: missing task")
+            return 2
         if args.dry_run:
             preview = preview_workspace_run(task=args.task, cwd=cwd)
             if not preview.get("exists", False):
