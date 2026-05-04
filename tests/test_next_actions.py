@@ -100,6 +100,41 @@ def test_no_environment_issues_uses_normal_behavior() -> None:
     assert "Probe project capabilities: aegis-code probe --run" in text
 
 
+def test_provider_dependency_missing_next_action_priority_over_tests_passed() -> None:
+    data = build_next_actions(
+        {
+            "status": "completed_tests_passed",
+            "final_failures": {"failure_count": 0},
+            "verification": {"available": True},
+            "patch_diff": {
+                "attempted": True,
+                "available": False,
+                "error": "openai package is not installed.",
+            },
+        }
+    )
+    assert data.get("rule") == "provider_dependency_missing"
+    text = format_next_actions(data)
+    assert "Install provider dependency: python -m pip install openai" in text
+    assert "Re-run the task with --propose-patch" in text
+
+
+def test_provider_unavailable_generic_next_action() -> None:
+    data = build_next_actions(
+        {
+            "status": "completed_tests_passed",
+            "final_failures": {"failure_count": 0},
+            "verification": {"available": True},
+            "patch_diff": {
+                "attempted": True,
+                "available": False,
+                "error": "provider timeout",
+            },
+        }
+    )
+    assert data.get("rule") == "provider_unavailable"
+
+
 def test_status_output_includes_next_safe_action(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     runs = tmp_path / ".aegis" / "runs"

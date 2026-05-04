@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code import cli
+from aegis_code.secrets import set_key
 
 
 def test_doctor_prints_capability_summary(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -50,13 +51,16 @@ def test_doctor_shows_provider_name_and_base_url(tmp_path: Path, monkeypatch, ca
     assert "- Provider:" in out
     assert "name: openai-compatible" in out
     assert "base_url: http://localhost:11434/v1" in out
+    assert "Aegis API key: missing (source: missing)" in out
+    assert "Aegis Base URL:" in out
+    assert "Provider key: missing (source: missing)" in out
 
 
 def test_doctor_output_includes_environment_section(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "aegis_code.cli.diagnose_environment",
-        lambda _cwd: {
+        lambda _cwd, **_kwargs: {
             "python": {"available": True, "version": "Python 3.12.0", "warning": None, "suggestion": None},
             "node": {"available": False, "version": None, "warning": None, "suggestion": None},
             "npm": {"available": False, "version": None, "warning": None, "suggestion": None},
@@ -74,3 +78,59 @@ def test_doctor_output_includes_environment_section(tmp_path: Path, monkeypatch,
     assert "npm: missing" in out
     assert "Git: git version 2.46.0" in out
     assert "Environment issues:" in out
+
+
+def test_doctor_reports_key_sources(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    set_key("AEGIS_API_KEY", "aegis-secret", tmp_path, scope="global")
+    set_key("OPENAI_API_KEY", "openai-secret", tmp_path, scope="global")
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        "providers:\n"
+        "  enabled: true\n"
+        "  provider: \"openai\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Aegis API key: configured (source: global)" in out
+    assert "Provider key: configured (source:" in out
+
+
+def test_doctor_openai_provider_shows_default_base_url_label(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    aegis = tmp_path / ".aegis"
+    aegis.mkdir(parents=True, exist_ok=True)
+    (aegis / "aegis-code.yml").write_text(
+        "providers:\n"
+        "  enabled: true\n"
+        "  provider: \"openai\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- Provider:" in out
+    assert "name: openai" in out
+    assert "base_url: default OpenAI API" in out
+
+
+def test_doctor_reports_missing_openai_package_when_provider_enabled(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("aegis_code.environment.importlib.util.find_spec", lambda _name: None)
+    aegis = tmp_path / ".aegis"
+    aegis.mkdir(parents=True, exist_ok=True)
+    (aegis / "aegis-code.yml").write_text(
+        "providers:\n"
+        "  enabled: true\n"
+        "  provider: \"openai\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n",
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "OpenAI provider is enabled but the openai package is not installed." in out

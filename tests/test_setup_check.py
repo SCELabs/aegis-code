@@ -56,6 +56,16 @@ def test_setup_check_with_keys(tmp_path: Path, monkeypatch) -> None:
     assert status["provider_key"] is True
 
 
+def test_setup_check_base_url_source_global(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AEGIS_BASE_URL", raising=False)
+    ensure_project_files(cwd=tmp_path, force=False)
+    set_key("AEGIS_BASE_URL", "https://global-base.example", tmp_path, scope="global")
+    status = check_setup(tmp_path)
+    assert status["aegis_base_url"] == "https://global-base.example"
+    assert status["aegis_base_url_source"] == "global"
+
+
 def test_setup_check_full_ready(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     ensure_project_files(cwd=tmp_path, force=False)
@@ -74,9 +84,9 @@ def test_setup_check_full_ready(tmp_path: Path, monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert "Setup Check:" in out
     assert "- Project initialized: true" in out
-    assert "- Aegis key: set" in out
+    assert "- Aegis key: present" in out
     assert "- Aegis control: enabled" in out
-    assert "- Provider key: found" in out
+    assert "- Provider key: present" in out
     assert "- Provider preset: configured" in out
     assert "- Context: available" in out
     assert "- Latest run: found" in out

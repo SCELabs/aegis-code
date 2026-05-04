@@ -4,6 +4,7 @@ import argparse
 import ast
 from difflib import unified_diff
 import getpass
+import importlib.util
 import json
 import os
 import re
@@ -126,9 +127,16 @@ def _print_verification_block(verification: dict[str, object] | None, *, compact
 
 
 def _print_provider_block(provider_name: str, base_url: str) -> None:
+    provider = str(provider_name or "").strip().lower()
+    raw_base_url = str(base_url or "").strip()
+    display_base_url = raw_base_url
+    if provider == "openai" and (not raw_base_url or raw_base_url.lower() == "n/a"):
+        display_base_url = "default OpenAI API"
+    elif provider == "openai-compatible" and (not raw_base_url or raw_base_url.lower() == "n/a"):
+        display_base_url = "missing"
     print("- Provider:")
     print(f"  - name: {provider_name}")
-    print(f"  - base_url: {base_url}")
+    print(f"  - base_url: {display_base_url}")
 
 
 def _print_sll_block(payload: dict[str, object]) -> None:
@@ -855,11 +863,17 @@ def handle_doctor(argv: Sequence[str]) -> int:
     paths = project_paths(cwd)
     latest = paths["latest_json"]
     backups = list_backups(cwd=cwd).get("backups", [])
-    env = diagnose_environment(cwd)
+    env = diagnose_environment(
+        cwd,
+        provider_enabled=bool(cfg.providers.enabled),
+        provider_name=str(cfg.providers.provider or ""),
+    )
 
-    aegis_key_configured = bool(os.environ.get("AEGIS_API_KEY", "").strip())
     provider_env = str(cfg.providers.api_key_env or "OPENAI_API_KEY")
-    provider_key_configured = bool(os.environ.get(provider_env, "").strip())
+    aegis_key_source = resolve_key_source("AEGIS_API_KEY", cwd)
+    aegis_base_url_source = resolve_key_source("AEGIS_BASE_URL", cwd)
+    provider_key_source = resolve_key_source(provider_env, cwd)
+    provider_key_configured = bool(provider_key_source.get("present", False))
     if not cfg.providers.enabled:
         provider_state = "disabled"
     elif provider_key_configured:
@@ -885,9 +899,17 @@ def handle_doctor(argv: Sequence[str]) -> int:
     print(f"- Runtime available: {'yes' if bool(caps.get('runtime_available', False)) else 'no'}")
     print("")
     print("Integrations:")
-    print(f"- Aegis API key: {'configured' if aegis_key_configured else 'missing'}")
+    print(
+        f"- Aegis API key: {'configured' if bool(aegis_key_source.get('present', False)) else 'missing'} "
+        f"(source: {aegis_key_source.get('source', 'missing')})"
+    )
+    print(f"- Aegis Base URL: {aegis_base_url_source.get('value') or cfg.aegis.base_url}")
+    print(
+        f"- Provider key: {'configured' if bool(provider_key_source.get('present', False)) else 'missing'} "
+        f"(source: {provider_key_source.get('source', 'missing')})"
+    )
     print(f"- SLL: {'available' if sll.get('available', False) else 'unavailable'}")
-    print(f"- Patch provider: {provider_state}")
+    print(f"- Patch provider: {'enabled' if bool(cfg.providers.enabled) else 'disabled'}")
     _print_provider_block(str(cfg.providers.provider or "openai"), str(cfg.providers.base_url or "n/a"))
     print("")
     print("State:")
@@ -2474,9 +2496,11 @@ def handle_setup(argv: Sequence[str]) -> int:
             return 2
         print("Setup Check:")
         print(f"- Project initialized: {'true' if bool(status.get('initialized', False)) else 'false'}")
-        print(f"- Aegis key: {'set' if bool(status.get('aegis_key', False)) else 'missing'}")
+        print(f"- Aegis key: {'present' if bool(status.get('aegis_key', False)) else 'missing'} (source: {status.get('aegis_key_source', 'missing')})")
+        print(f"- Aegis base_url: {status.get('aegis_base_url') or 'n/a'} (source: {status.get('aegis_base_url_source', 'config')})")
         print(f"- Aegis control: {status.get('aegis_control_status', 'disabled')}")
-        print(f"- Provider key: {'found' if bool(status.get('provider_key', False)) else 'missing'}")
+        print(f"- Provider key: {'present' if bool(status.get('provider_key', False)) else 'missing'} (source: {status.get('provider_key_source', 'missing')})")
+        print(f"- Provider key name: {status.get('provider_key_name', 'OPENAI_API_KEY')}")
         print(f"- Provider preset: {'configured' if bool(status.get('provider_preset', False)) else 'missing'}")
         print(f"- Context: {'available' if bool(status.get('context_available', False)) else 'missing'}")
         print(f"- Latest run: {'found' if bool(status.get('latest_run', False)) else 'missing'}")
@@ -2515,28 +2539,42 @@ def handle_setup(argv: Sequence[str]) -> int:
     provider_result = result.get("provider", {}) if isinstance(result.get("provider"), dict) else {}
     first_run_result = result.get("first_run", {}) if isinstance(result.get("first_run"), dict) else {}
 
-    if bool(aegis_result.get("success", False)):
-        if str(aegis_result.get("reason", "")) == "already_configured":
-            aegis_status = "already configured"
-        else:
-            aegis_status = "connected"
-    elif str(aegis_result.get("reason", "")) in {"skipped", "email_required"}:
-        aegis_status = "skipped"
-    else:
-        aegis_status = "failed"
-
     applied_preset = provider_result.get("applied_preset")
-    provider_summary = str(applied_preset) if applied_preset else "none"
+    provider_summary = str(applied_preset or provider_result.get("recommended_preset") or "openai")
     first_status = first_run_result.get("status")
     first_summary = str(first_status) if first_status else "skipped"
+    base_url_value = str(aegis_result.get("base_url") or "n/a")
+    provider_key_scope = str(provider_result.get("key_scope") or "global")
+    aegis_api_key_status = "configured (global)" if bool(aegis_result.get("success", False)) else "missing"
+    provider_key_status = "OPENAI_API_KEY (global)" if provider_key_scope == "global" else f"OPENAI_API_KEY ({provider_key_scope})"
 
     print("Aegis Code setup")
     print("")
     print("Setup complete.")
-    print(f"- Initialized: {'true' if bool(result.get('initialized', False)) else 'false'}")
-    print(f"- Aegis: {aegis_status}")
-    print(f"- Provider preset: {provider_summary}")
-    print(f"- First run: {first_summary}")
+    print("")
+    print("Aegis:")
+    print(f"- API key: {aegis_api_key_status}")
+    print(f"- Base URL: {base_url_value}")
+    print("")
+    print("Provider:")
+    print(f"- Key: {provider_key_status}")
+    print(f"- Preset: {provider_summary}")
+    if provider_summary == "openai" and importlib.util.find_spec("openai") is None:
+        print("")
+        print("Provider dependency missing:")
+        print("- Install: python -m pip install openai")
+    print("")
+    print("Try:")
+    print('  aegis-code "analyze project structure"')
+    print("")
+    if first_summary == "skipped":
+        print("First run:")
+        print("- status: skipped")
+    else:
+        tests_state = "passed" if "passed" in first_summary else "failed"
+        print("First run complete:")
+        print(f"- status: {first_summary}")
+        print(f"- tests: {tests_state}")
     return 0
 
 

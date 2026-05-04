@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.error import HTTPError
 
 from aegis_code import cli
+from aegis_code.onboard import run_onboard
 from aegis_code.secrets import load_secrets
 
 
@@ -42,7 +43,7 @@ def test_onboard_success(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "API key saved locally." in out
     assert "Aegis control is auto-enabled when AEGIS_API_KEY is configured (unless disabled in aegis.control_enabled)." in out
     assert "secret_key_value" not in out
-    assert load_secrets(tmp_path).get("AEGIS_API_KEY") == "secret_key_value"
+    assert load_secrets(tmp_path, scope="global").get("AEGIS_API_KEY") == "secret_key_value"
 
 
 def test_onboard_network_failure(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -146,7 +147,7 @@ def test_onboard_prompt_for_email(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "API key saved locally." in out
     assert "Aegis control is auto-enabled when AEGIS_API_KEY is configured (unless disabled in aegis.control_enabled)." in out
     assert "secret_key_value" not in out
-    assert load_secrets(tmp_path).get("AEGIS_API_KEY") == "secret_key_value"
+    assert load_secrets(tmp_path, scope="global").get("AEGIS_API_KEY") == "secret_key_value"
 
 
 def test_onboard_prompt_empty_email(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -156,3 +157,21 @@ def test_onboard_prompt_empty_email(tmp_path: Path, monkeypatch, capsys) -> None
     out = capsys.readouterr().out
     assert exit_code == 2
     assert "Email is required." in out
+
+
+def test_run_onboard_default_scope_global(tmp_path: Path, monkeypatch) -> None:
+    body = json.dumps({"api_key": "secret_key_value"})
+    monkeypatch.setattr("aegis_code.onboard.urlopen", lambda *_args, **_kwargs: _FakeResponse(body))
+    result = run_onboard("user@example.com", tmp_path)
+    assert result["success"] is True
+    assert result["scope"] == "global"
+    assert load_secrets(tmp_path, scope="global").get("AEGIS_API_KEY") == "secret_key_value"
+
+
+def test_run_onboard_can_store_project_scope(tmp_path: Path, monkeypatch) -> None:
+    body = json.dumps({"api_key": "project_scope_value"})
+    monkeypatch.setattr("aegis_code.onboard.urlopen", lambda *_args, **_kwargs: _FakeResponse(body))
+    result = run_onboard("user@example.com", tmp_path, scope="project")
+    assert result["success"] is True
+    assert result["scope"] == "project"
+    assert load_secrets(tmp_path, scope="project").get("AEGIS_API_KEY") == "project_scope_value"

@@ -207,6 +207,12 @@ aegis-code keys set OPENAI_API_KEY --global
 aegis-code keys clear OPENAI_API_KEY --project
 ```
 
+Recommended defaults:
+
+- Use `--global` for `AEGIS_API_KEY` and provider keys such as `OPENAI_API_KEY`.
+- Use `--project` for repository-specific secrets only.
+- Environment variables still take precedence over stored keys.
+
 Workspace operations reuse each project's local config, context, and runtime controls.
 
 ## Budget Control Note

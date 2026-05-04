@@ -280,6 +280,30 @@ def test_runtime_local_default_passing_status(monkeypatch, tmp_path: Path) -> No
     assert payload["status"] == "completed_tests_passed"
 
 
+def test_runtime_propose_patch_provider_dependency_missing_sets_provider_unavailable_status(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.should_skip_provider", lambda _o, _c: {"skip": False, "reason": "none", "action": None})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "openai package is not installed.",
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="add helper function", propose_patch=True), cwd=tmp_path, client=_CapturingClient())
+    assert payload["patch_diff"]["attempted"] is True
+    assert payload["patch_diff"]["available"] is False
+    assert "openai package is not installed" in str(payload["patch_diff"]["error"])
+    assert payload["status"] == "completed_provider_unavailable"
+
+
 def test_runtime_local_default_failing_status(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",

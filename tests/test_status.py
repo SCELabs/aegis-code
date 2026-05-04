@@ -137,3 +137,25 @@ def test_status_shows_provider_name_and_base_url(tmp_path: Path, monkeypatch, ca
     assert "- Provider:" in out
     assert "name: openai-compatible" in out
     assert "base_url: http://localhost:11434/v1" in out
+
+
+def test_status_openai_provider_shows_default_base_url_label(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    aegis = tmp_path / ".aegis"
+    aegis.mkdir(parents=True, exist_ok=True)
+    (aegis / "aegis-code.yml").write_text(
+        "providers:\n"
+        "  enabled: true\n"
+        "  provider: \"openai\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n",
+        encoding="utf-8",
+    )
+    runs = aegis / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(json.dumps({"task": "x", "status": "completed", "failures": {"failure_count": 0}}), encoding="utf-8")
+    exit_code = cli.main(["status"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "- Provider:" in out
+    assert "name: openai" in out
+    assert "base_url: default OpenAI API" in out

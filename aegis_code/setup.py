@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import getpass
 from pathlib import Path
+import yaml
 
+from aegis_code.aegis_client import DEFAULT_AEGIS_BASE_URL, resolve_base_url
 from aegis_code.budget import get_budget_state
 from aegis_code.config import ensure_project_files, load_config
 from aegis_code.context.capabilities import detect_capabilities
@@ -9,7 +12,7 @@ from aegis_code.onboard import run_onboard
 from aegis_code.policy import build_runtime_policy_payload, get_mode_reason, select_runtime_mode
 from aegis_code.provider_presets import apply_preset, detect_available_providers
 from aegis_code.runtime import TaskOptions, run_task
-from aegis_code.secrets import resolve_key
+from aegis_code.secrets import resolve_key, resolve_key_source, set_key
 from aegis_code.context_state import load_runtime_context
 from aegis_code.probe import load_observed_capabilities
 
@@ -32,8 +35,8 @@ def run_setup(
     created = ensure_project_files(cwd=cwd, force=False)
     initialized = bool(created.get("config_created", False) or created.get("project_model_created", False))
 
-    aegis = {"attempted": False, "success": False, "reason": None}
-    provider = {"detected": False, "recommended_preset": None, "applied_preset": None}
+    aegis = {"attempted": False, "success": False, "reason": None, "scope": None, "base_url": None, "base_url_source": None}
+    provider = {"detected": False, "recommended_preset": None, "applied_preset": None, "key_name": "OPENAI_API_KEY", "key_scope": None}
     first_run = {"attempted": False, "status": None}
 
     if skip_aegis:
@@ -43,6 +46,13 @@ def run_setup(
         if existing_key:
             aegis["success"] = True
             aegis["reason"] = "already_configured"
+            resolved_base_url = str(resolve_base_url(cwd) or DEFAULT_AEGIS_BASE_URL).strip()
+            existing_base_url = resolve_key("AEGIS_BASE_URL", cwd)
+            if not existing_base_url and resolved_base_url:
+                set_key("AEGIS_BASE_URL", resolved_base_url, cwd, scope="global")
+            resolved_source = resolve_key_source("AEGIS_BASE_URL", cwd)
+            aegis["base_url"] = resolved_source.get("value") or resolved_base_url
+            aegis["base_url_source"] = resolved_source.get("source", "missing")
         else:
             selected_email = (email or "").strip()
             if not selected_email:
@@ -55,10 +65,24 @@ def run_setup(
                         aegis["reason"] = "skipped"
             if selected_email:
                 aegis["attempted"] = True
-                onboard = run_onboard(selected_email, cwd)
+                onboard = run_onboard(selected_email, cwd, scope="global")
                 if onboard.get("success", False):
                     aegis["success"] = True
                     aegis["reason"] = None
+                    aegis["scope"] = str(onboard.get("scope", "global"))
+                    resolved_base_url = str(resolve_base_url(cwd) or DEFAULT_AEGIS_BASE_URL).strip()
+                    existing_base_url = resolve_key("AEGIS_BASE_URL", cwd)
+                    should_set_base_url = True
+                    if existing_base_url and str(existing_base_url).strip() and str(existing_base_url).strip() != resolved_base_url:
+                        should_set_base_url = _confirm(
+                            "AEGIS_BASE_URL already set. Overwrite with resolved value? [y/N] ",
+                            assume_yes=False,
+                        )
+                    if should_set_base_url and resolved_base_url:
+                        set_key("AEGIS_BASE_URL", resolved_base_url, cwd, scope="global")
+                    resolved_source = resolve_key_source("AEGIS_BASE_URL", cwd)
+                    aegis["base_url"] = resolved_source.get("value") or resolved_base_url
+                    aegis["base_url_source"] = resolved_source.get("source", "missing")
                 else:
                     aegis["success"] = False
                     aegis["reason"] = str(onboard.get("reason", "failed"))
@@ -66,6 +90,14 @@ def run_setup(
                 aegis["reason"] = "email_required"
 
     if not skip_provider:
+        provider_key = resolve_key("OPENAI_API_KEY", cwd)
+        if not provider_key:
+            should_configure = _confirm("Configure provider key now? [Y/n] ", assume_yes=assume_yes)
+            if should_configure:
+                value = getpass.getpass("OPENAI_API_KEY: ").strip() if not assume_yes else ""
+                if value:
+                    set_key("OPENAI_API_KEY", value, cwd, scope="global")
+                    provider["key_scope"] = "global"
         detection = detect_available_providers(cwd)
         provider["detected"] = True
         provider["recommended_preset"] = detection.get("recommended_preset")
@@ -79,6 +111,20 @@ def run_setup(
                 result = apply_preset(recommended, cwd)
                 if result.get("applied", False):
                     provider["applied_preset"] = recommended
+                    config_path = cwd / ".aegis" / "aegis-code.yml"
+                    try:
+                        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+                        raw = loaded if isinstance(loaded, dict) else {}
+                        providers = raw.get("providers")
+                        if not isinstance(providers, dict):
+                            providers = {}
+                        providers["enabled"] = True
+                        providers.setdefault("provider", "openai")
+                        providers.setdefault("api_key_env", "OPENAI_API_KEY")
+                        raw["providers"] = providers
+                        config_path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+                    except Exception:
+                        pass
     else:
         provider["detected"] = False
 
@@ -121,16 +167,23 @@ def check_setup(cwd: Path) -> dict:
     config_path = cwd / ".aegis" / "aegis-code.yml"
     initialized = config_path.exists()
 
-    aegis_key = bool(resolve_key("AEGIS_API_KEY", cwd))
-    provider_key = any(
-        bool(resolve_key(name, cwd))
-        for name in (
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "OPENROUTER_API_KEY",
-            "GEMINI_API_KEY",
-        )
+    aegis_resolved = resolve_key_source("AEGIS_API_KEY", cwd)
+    aegis_key = bool(aegis_resolved.get("present", False))
+    base_url_resolved = resolve_key_source("AEGIS_BASE_URL", cwd)
+    cfg_for_base_url = load_config(cwd)
+    base_url_value = (
+        str(base_url_resolved.get("value", "") or "").strip()
+        if bool(base_url_resolved.get("present", False))
+        else str(cfg_for_base_url.aegis.base_url or DEFAULT_AEGIS_BASE_URL).strip()
     )
+    if bool(base_url_resolved.get("present", False)):
+        base_url_source = str(base_url_resolved.get("source", "missing"))
+    else:
+        configured_base_url = str(cfg_for_base_url.aegis.base_url or "").strip()
+        base_url_source = "config" if configured_base_url else "default"
+    provider_key_name = "OPENAI_API_KEY"
+    provider_resolved = resolve_key_source(provider_key_name, cwd)
+    provider_key = bool(provider_resolved.get("present", False))
 
     aegis_control_status = "disabled"
     if initialized:
@@ -164,8 +217,13 @@ def check_setup(cwd: Path) -> dict:
     return {
         "initialized": initialized,
         "aegis_key": aegis_key,
+        "aegis_key_source": str(aegis_resolved.get("source", "missing")),
+        "aegis_base_url": base_url_value,
+        "aegis_base_url_source": base_url_source,
         "aegis_control_status": aegis_control_status,
         "provider_key": provider_key,
+        "provider_key_source": str(provider_resolved.get("source", "missing")),
+        "provider_key_name": provider_key_name,
         "provider_preset": provider_preset,
         "context_available": context_available,
         "latest_run": latest_run,

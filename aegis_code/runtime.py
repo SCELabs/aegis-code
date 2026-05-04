@@ -2374,6 +2374,14 @@ def build_run_payload(
         plan_consistent=plan_consistent,
         confidence=confidence,
     )
+    if (
+        bool(options.propose_patch)
+        and bool(patch_diff_payload.get("attempted", False))
+        and not bool(patch_diff_payload.get("available", False))
+        and bool(str(patch_diff_payload.get("error", "") or "").strip())
+        and "tests_passed" in str(status or "")
+    ):
+        status = "completed_provider_unavailable"
 
     payload = {
         "task": options.task,

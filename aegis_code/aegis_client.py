@@ -100,6 +100,9 @@ def resolve_base_url(cwd: Path) -> str:
     env_base_url = os.environ.get("AEGIS_BASE_URL", "").strip()
     if env_base_url:
         return env_base_url
+    resolved_key_base_url = resolve_key("AEGIS_BASE_URL", cwd)
+    if resolved_key_base_url:
+        return resolved_key_base_url
     cfg = load_config(cwd)
     cfg_base_url = str(cfg.aegis.base_url or "").strip()
     if cfg_base_url:

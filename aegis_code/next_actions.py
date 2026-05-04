@@ -91,20 +91,27 @@ def build_next_actions(payload: dict[str, Any], cwd: Path | None = None) -> dict
         ]
         return {"actions": actions, "rule": "tests_failed"}
 
+    patch_error = str(patch_diff.get("error", "") or "").strip().lower()
+    if patch_attempted and not patch_available and patch_error:
+        if "openai package is not installed" in patch_error:
+            actions = [
+                "Install provider dependency: python -m pip install openai",
+                "Re-run the task with --propose-patch",
+            ]
+            return {"actions": actions, "rule": "provider_dependency_missing"}
+        actions = [
+            "Check provider setup: aegis-code provider status",
+            "Check keys: aegis-code keys status",
+            "Re-run with --propose-patch",
+        ]
+        return {"actions": actions, "rule": "provider_unavailable"}
+
     if ("tests_passed" in status) or (has_failure_count and failure_count == 0 and verification_available):
         actions = [
             "Review summary: aegis-code status",
             "Compare with previous run: aegis-code compare",
         ]
         return {"actions": actions, "rule": "tests_passed"}
-
-    if patch_attempted and not patch_available:
-        actions = [
-            "Review report: aegis-code report",
-            "Check setup: aegis-code doctor",
-            "Retry with clearer scope or refreshed context: aegis-code context refresh",
-        ]
-        return {"actions": actions, "rule": "patch_attempted_unavailable"}
 
     if not verification_available:
         actions = [

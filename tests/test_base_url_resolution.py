@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aegis_code.aegis_client import DEFAULT_AEGIS_BASE_URL, resolve_base_url
 from aegis_code.onboard import run_onboard
+from aegis_code.secrets import set_key
 
 
 class _FakeResponse:
@@ -42,6 +43,18 @@ def test_base_url_config_fallback(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
     assert resolve_base_url(tmp_path) == "https://config.example"
+
+
+def test_base_url_key_override_before_config(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AEGIS_BASE_URL", raising=False)
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        'aegis:\n  base_url: "https://config.example"\n',
+        encoding="utf-8",
+    )
+    set_key("AEGIS_BASE_URL", "https://global.example", tmp_path, scope="global")
+    assert resolve_base_url(tmp_path) == "https://global.example"
 
 
 def test_base_url_default_fallback(tmp_path: Path, monkeypatch) -> None:

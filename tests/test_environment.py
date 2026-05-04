@@ -61,3 +61,12 @@ def test_no_crash_when_commands_missing(monkeypatch, tmp_path: Path) -> None:
     assert payload["node"]["available"] is False
     assert payload["npm"]["available"] is False
     assert payload["git"]["available"] is False
+
+
+def test_openai_provider_enabled_missing_package_issue(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("aegis_code.environment.shutil.which", lambda _name: "x")
+    monkeypatch.setattr("aegis_code.environment.subprocess.run", lambda cmd, **_kwargs: _cp(stdout=f"{cmd[0]} 1.0.0"))
+    monkeypatch.setattr("aegis_code.environment.importlib.util.find_spec", lambda _name: None)
+    payload = diagnose_environment(tmp_path, provider_enabled=True, provider_name="openai")
+    issues = payload["issues"]
+    assert any("OpenAI provider is enabled but the openai package is not installed." in str(item.get("warning", "")) for item in issues)

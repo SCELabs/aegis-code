@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +76,7 @@ def _latest_run_mentions_build_tool_issue(cwd: Path) -> bool:
     return False
 
 
-def diagnose_environment(cwd: Path) -> dict:
+def diagnose_environment(cwd: Path, *, provider_enabled: bool = False, provider_name: str = "") -> dict:
     python = _tool_status("python", [["python", "--version"], ["python3", "--version"]])
     node = _tool_status("node", [["node", "--version"]])
     npm = _tool_status("npm", [["npm", "--version"]])
@@ -103,6 +104,12 @@ def diagnose_environment(cwd: Path) -> dict:
         build_tools["warning"] = warning
         build_tools["suggestion"] = suggestion
         issues.append({"warning": warning, "suggestion": suggestion})
+
+    if bool(provider_enabled) and str(provider_name or "").strip().lower() == "openai":
+        if importlib.util.find_spec("openai") is None:
+            warning = "OpenAI provider is enabled but the openai package is not installed."
+            suggestion = "Install it with: python -m pip install openai"
+            issues.append({"warning": warning, "suggestion": suggestion})
 
     return {
         "python": python,

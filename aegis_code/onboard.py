@@ -9,7 +9,7 @@ from aegis_code.aegis_client import resolve_base_url
 from aegis_code.secrets import set_key
 
 
-def run_onboard(email: str, cwd: Path) -> dict:
+def run_onboard(email: str, cwd: Path, scope: str = "global") -> dict:
     base_url = resolve_base_url(cwd)
     endpoint = f"{base_url.rstrip('/')}/v1/onboard"
     payload = json.dumps({"email": email}).encode("utf-8")
@@ -50,5 +50,5 @@ def run_onboard(email: str, cwd: Path) -> dict:
     if not api_key:
         return {"success": False, "reason": "invalid_response"}
 
-    set_key("AEGIS_API_KEY", api_key, cwd)
-    return {"success": True}
+    set_key("AEGIS_API_KEY", api_key, cwd, scope=scope)
+    return {"success": True, "scope": str(scope)}
