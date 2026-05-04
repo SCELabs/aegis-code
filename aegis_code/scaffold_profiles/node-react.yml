@@ -1,0 +1,76 @@
+name: node-react
+description: Node React scaffold
+files:
+  - path: .aegis/aegis-code.yml
+    content: |
+      mode: balanced
+      budget_per_task: 1.0
+      models:
+        cheap: openai:gpt-4.1-nano
+        mid: openai:gpt-4.1-mini
+        premium: openai:gpt-4.1
+      commands:
+        test: "{{test_command}}"
+        lint: ""
+      aegis:
+        base_url: "https://aegis-backend-production-4b47.up.railway.app"
+      providers:
+        enabled: false
+        provider: "openai"
+        api_key_env: "OPENAI_API_KEY"
+      patches:
+        generate_diff: false
+        max_context_chars: 12000
+        output_file: ".aegis/runs/latest.diff"
+  - path: .aegis/project_model.md
+    content: |
+      # Project Model
+
+      Idea: {{idea}}
+
+      ## Scope
+      - Initial scaffold created by aegis-code create.
+      - Keep this file updated as architecture evolves.
+  - path: src/App.jsx
+    content: |
+      export default function App() {
+        return <h1>Hello from React</h1>;
+      }
+  - path: src/main.jsx
+    content: |
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import App from './App';
+
+      createRoot(document.getElementById('root')).render(<App />);
+  - path: tests/App.test.jsx
+    content: |
+      import { describe, it, expect } from 'vitest';
+
+      describe('app', () => {
+        it('placeholder', () => {
+          expect(true).toBe(true);
+        });
+      });
+  - path: package.json
+    content: |
+      {
+        "name": "aegis-project",
+        "version": "0.1.0",
+        "private": true,
+        "scripts": {
+          "test": "vitest run"
+        }
+      }
+commands:
+  install: null
+  test: "{{test_command}}"
+  build: null
+validation:
+  expected_files:
+    - .aegis/aegis-code.yml
+    - .aegis/project_model.md
+    - src/App.jsx
+    - package.json
+  expected_signals:
+    - react

@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 
 from aegis_code import cli
+from aegis_code.create_scaffold import create_scaffold, load_profile
 from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.models import CommandResult
 from aegis_code.scaffolds import available_stack_ids
@@ -156,6 +157,54 @@ def test_cli_create_list_stacks_no_side_effects(monkeypatch, tmp_path: Path, cap
         assert stack_id in out
     assert "@0.1" in out
     assert not (tmp_path / ".aegis").exists()
+
+
+def test_scaffold_profile_loads_correctly() -> None:
+    profile = load_profile("python-cli")
+    assert profile.get("name") == "python-cli"
+    files = profile.get("files", [])
+    assert isinstance(files, list)
+    assert any(isinstance(item, dict) and item.get("path") == "src/main.py" for item in files)
+
+
+def test_scaffold_missing_profile_handled() -> None:
+    try:
+        load_profile("missing-profile")
+    except ValueError as exc:
+        assert "Missing scaffold profile" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for missing profile")
+
+
+def test_cli_create_list_profiles_no_side_effects(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("aegis_code.cli.build_create_plan", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no plan")))
+    monkeypatch.setattr("aegis_code.cli.create_scaffold", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no scaffold")))
+    exit_code = cli.main(["create", "--list"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Available scaffolds:" in out
+    assert "- python-cli" in out
+    assert "- fastapi" in out
+    assert "- node-react" in out
+    assert not (tmp_path / ".aegis").exists()
+
+
+def test_scaffold_files_created_from_profile(tmp_path: Path) -> None:
+    target = tmp_path / "profile-proj"
+    result = create_scaffold(
+        target=target,
+        cwd=tmp_path,
+        stack_id="python-cli",
+        stack_version="0.1",
+        idea="terminal command parser",
+        test_command="python -m pytest -q",
+        confirm=True,
+    )
+    assert result.get("ok") is True
+    assert (target / "src" / "main.py").exists()
+    content = (target / "src" / "main.py").read_text(encoding="utf-8")
+    assert "hello from cli" in content
 
 
 def test_cli_create_validate_requires_confirm(monkeypatch, tmp_path: Path, capsys) -> None:

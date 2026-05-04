@@ -25,7 +25,7 @@ from aegis_code.context_state import (
     show_context,
 )
 from aegis_code.create_plan import build_create_plan, format_create_plan
-from aegis_code.create_scaffold import create_scaffold
+from aegis_code.create_scaffold import create_scaffold, list_scaffold_profiles
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
 from aegis_code.next_actions import build_next_actions, format_next_actions
 from aegis_code.onboard import run_onboard
@@ -240,6 +240,7 @@ def _build_maintain_parser() -> argparse.ArgumentParser:
 def _build_create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code create")
     parser.add_argument("idea", nargs="?", default=None, help="Project idea to plan.")
+    parser.add_argument("--list", action="store_true", help="List available scaffold profiles and exit.")
     parser.add_argument("--list-stacks", action="store_true", help="List available stack profiles and exit.")
     parser.add_argument("--stack", default=None, help="Optional stack profile id override.")
     parser.add_argument("--target", default=None, help="Optional scaffold target directory (requires --confirm).")
@@ -574,6 +575,13 @@ def handle_maintain(argv: Sequence[str]) -> int:
 def handle_create(argv: Sequence[str]) -> int:
     parser = _build_create_parser()
     args = parser.parse_args(list(argv))
+    if args.list:
+        print("Available scaffolds:")
+        for name in list_scaffold_profiles():
+            if name == "python-basic":
+                continue
+            print(f"- {name}")
+        return 0
     if args.list_stacks:
         print("Available stacks:")
         for profile in list_stacks():

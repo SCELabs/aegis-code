@@ -1,0 +1,74 @@
+name: fastapi
+description: Python FastAPI scaffold
+files:
+  - path: .aegis/aegis-code.yml
+    content: |
+      mode: balanced
+      budget_per_task: 1.0
+      models:
+        cheap: openai:gpt-4.1-nano
+        mid: openai:gpt-4.1-mini
+        premium: openai:gpt-4.1
+      commands:
+        test: "{{test_command}}"
+        lint: ""
+      aegis:
+        base_url: "https://aegis-backend-production-4b47.up.railway.app"
+      providers:
+        enabled: false
+        provider: "openai"
+        api_key_env: "OPENAI_API_KEY"
+      patches:
+        generate_diff: false
+        max_context_chars: 12000
+        output_file: ".aegis/runs/latest.diff"
+  - path: .aegis/project_model.md
+    content: |
+      # Project Model
+
+      Idea: {{idea}}
+
+      ## Scope
+      - Initial scaffold created by aegis-code create.
+      - Keep this file updated as architecture evolves.
+  - path: app/main.py
+    content: |
+      from fastapi import FastAPI
+
+      app = FastAPI()
+
+
+      @app.get('/')
+      def read_root() -> dict[str, str]:
+          return {'status': 'ok'}
+  - path: app/routes.py
+    content: |
+      from fastapi import APIRouter
+
+      router = APIRouter()
+  - path: app/models.py
+    content: |
+      from pydantic import BaseModel
+
+
+      class Health(BaseModel):
+          status: str
+  - path: tests/test_app.py
+    content: |
+      from app.main import app
+
+
+      def test_app_object_exists() -> None:
+          assert app is not None
+commands:
+  install: null
+  test: "{{test_command}}"
+  build: null
+validation:
+  expected_files:
+    - .aegis/aegis-code.yml
+    - .aegis/project_model.md
+    - app/main.py
+    - tests/test_app.py
+  expected_signals:
+    - fastapi
