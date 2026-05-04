@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -80,13 +81,44 @@ def load_profile(profile_name: str) -> dict[str, Any]:
     return raw
 
 
+def load_external_profile(path: Path) -> dict[str, Any]:
+    source_path = path.resolve()
+    if not source_path.exists():
+        raise ValueError(f"External scaffold profile not found: {path}")
+    if source_path.suffix.lower() not in {".yml", ".yaml", ".json"}:
+        raise ValueError("External scaffold profile must be YAML or JSON")
+    try:
+        if source_path.suffix.lower() == ".json":
+            raw = json.loads(source_path.read_text(encoding="utf-8"))
+        else:
+            raw = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Invalid external scaffold profile format: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("External scaffold profile must be a mapping")
+    name = str(raw.get("name", "") or "").strip()
+    files = raw.get("files", [])
+    if not name:
+        raise ValueError("External scaffold profile missing required field: name")
+    if not isinstance(files, list):
+        raise ValueError("External scaffold profile missing required field: files")
+    normalized_files: list[dict[str, str]] = []
+    for item in files:
+        if not isinstance(item, dict):
+            raise ValueError("External scaffold profile files must be objects with path/content")
+        rel_path = str(item.get("path", "") or "").strip()
+        content = str(item.get("content", "") or "")
+        if not rel_path:
+            raise ValueError("External scaffold profile file missing required field: path")
+        normalized_files.append({"path": rel_path, "content": content})
+    return {"name": name, "files": normalized_files}
+
+
 def _resolve_profile_name(stack_id: str) -> str:
     return _PROFILE_NAME_BY_STACK_ID.get(stack_id, stack_id)
 
 
-def _scaffold_files(stack_id: str, idea: str, test_command: str) -> dict[str, str]:
-    _ = resolve_stack_profile(stack_id)
-    profile = load_profile(_resolve_profile_name(stack_id))
+def _render_profile_files(profile: dict[str, Any], *, idea: str, test_command: str) -> dict[str, str]:
     files = profile.get("files", [])
     if not isinstance(files, list):
         raise ValueError("Invalid scaffold profile: files must be a list")
@@ -104,6 +136,31 @@ def _scaffold_files(stack_id: str, idea: str, test_command: str) -> dict[str, st
     return rendered
 
 
+def _scaffold_files(stack_id: str, idea: str, test_command: str) -> dict[str, str]:
+    _ = resolve_stack_profile(stack_id)
+    profile = load_profile(_resolve_profile_name(stack_id))
+    return _render_profile_files(profile, idea=idea, test_command=test_command)
+
+
+def _is_windows_abs_path(value: str) -> bool:
+    return bool(re.match(r"^[a-zA-Z]:[\\/]", value))
+
+
+def _is_safe_target_relative_path(target: Path, rel_path: str) -> bool:
+    raw = str(rel_path or "").strip()
+    if not raw:
+        return False
+    if Path(raw).is_absolute() or _is_windows_abs_path(raw):
+        return False
+    resolved_target = target.resolve()
+    resolved_candidate = (target / raw).resolve()
+    try:
+        resolved_candidate.relative_to(resolved_target)
+    except Exception:
+        return False
+    return True
+
+
 def create_scaffold(
     *,
     target: Path,
@@ -113,6 +170,7 @@ def create_scaffold(
     idea: str,
     test_command: str,
     confirm: bool,
+    profile_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_cwd = cwd.resolve()
     resolved_target = target.resolve()
@@ -122,7 +180,13 @@ def create_scaffold(
     if target.exists() and any(target.iterdir()):
         return {"ok": False, "code": 2, "message": "Refusing scaffold: target exists and is not empty."}
 
-    files = _scaffold_files(stack_id=stack_id, idea=idea, test_command=test_command)
+    if profile_override is not None:
+        files = _render_profile_files(profile_override, idea=idea, test_command=test_command)
+    else:
+        files = _scaffold_files(stack_id=stack_id, idea=idea, test_command=test_command)
+    for rel_path in files:
+        if not _is_safe_target_relative_path(target, rel_path):
+            return {"ok": False, "code": 2, "message": f"Refusing scaffold: unsafe file path: {rel_path}"}
     manifest_files = sorted(list(files.keys()) + [".aegis/create_manifest.yml"])
     manifest = _create_manifest(
         stack=stack_id,

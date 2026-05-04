@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 
 from aegis_code import cli
-from aegis_code.create_scaffold import create_scaffold, load_profile
+from aegis_code.create_scaffold import create_scaffold, load_external_profile, load_profile
 from aegis_code.create_plan import build_create_plan, format_create_plan
 from aegis_code.models import CommandResult
 from aegis_code.scaffolds import available_stack_ids
@@ -205,6 +205,124 @@ def test_scaffold_files_created_from_profile(tmp_path: Path) -> None:
     assert (target / "src" / "main.py").exists()
     content = (target / "src" / "main.py").read_text(encoding="utf-8")
     assert "hello from cli" in content
+
+
+def test_load_external_profile_success(tmp_path: Path) -> None:
+    profile_path = tmp_path / "my-profile.yml"
+    profile_path.write_text(
+        "name: my-profile\n"
+        "files:\n"
+        "  - path: README.md\n"
+        "    content: \"# Hello\\n\"\n",
+        encoding="utf-8",
+    )
+    profile = load_external_profile(profile_path)
+    assert profile["name"] == "my-profile"
+    assert profile["files"][0]["path"] == "README.md"
+
+
+def test_load_external_profile_missing_required_fields(tmp_path: Path) -> None:
+    profile_path = tmp_path / "bad-profile.yml"
+    profile_path.write_text("files: []\n", encoding="utf-8")
+    try:
+        load_external_profile(profile_path)
+    except ValueError as exc:
+        assert "missing required field: name" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError for missing required fields")
+
+
+def test_cli_create_from_preview_only(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    profile_path = tmp_path / "my-profile.yml"
+    profile_path.write_text(
+        "name: my-profile\n"
+        "files:\n"
+        "  - path: README.md\n"
+        "    content: \"# Hello\\n\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.cli.run_shell_command", lambda **_: (_ for _ in ()).throw(AssertionError("no commands")))
+    monkeypatch.setattr("aegis_code.cli.run_configured_tests", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no commands")))
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no commands")))
+    exit_code = cli.main(["create", "--from", str(profile_path)])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Scaffold preview only" in out
+    assert "Applied: false" in out
+    assert not (tmp_path / "my-profile").exists()
+
+
+def test_cli_create_from_confirm_writes_files(monkeypatch, tmp_path: Path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    profile_path = tmp_path / "my-profile.yml"
+    profile_path.write_text(
+        "name: my-profile\n"
+        "files:\n"
+        "  - path: README.md\n"
+        "    content: \"# Hello\\n\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.cli.run_shell_command", lambda **_: (_ for _ in ()).throw(AssertionError("no commands")))
+    monkeypatch.setattr("aegis_code.cli.run_configured_tests", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no commands")))
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("no commands")))
+    exit_code = cli.main(["create", "--from", str(profile_path), "--target", str(tmp_path / "new-app"), "--confirm"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Scaffold created." in out
+    assert "Applied: true" in out
+    assert (tmp_path / "new-app" / "README.md").exists()
+
+
+def test_scaffold_rejects_parent_traversal_path(tmp_path: Path) -> None:
+    target = tmp_path / "new-app"
+    result = create_scaffold(
+        target=target,
+        cwd=tmp_path,
+        stack_id="external:bad",
+        stack_version="external",
+        idea="bad",
+        test_command="",
+        confirm=True,
+        profile_override={"name": "bad", "files": [{"path": "../evil.py", "content": "x"}]},
+    )
+    assert result.get("ok") is False
+    assert result.get("code") == 2
+    assert "unsafe file path" in str(result.get("message", ""))
+
+
+def test_scaffold_rejects_unix_absolute_path(tmp_path: Path) -> None:
+    target = tmp_path / "new-app"
+    result = create_scaffold(
+        target=target,
+        cwd=tmp_path,
+        stack_id="external:bad",
+        stack_version="external",
+        idea="bad",
+        test_command="",
+        confirm=True,
+        profile_override={"name": "bad", "files": [{"path": "/root/file.py", "content": "x"}]},
+    )
+    assert result.get("ok") is False
+    assert result.get("code") == 2
+    assert "unsafe file path" in str(result.get("message", ""))
+
+
+def test_scaffold_rejects_windows_absolute_path(tmp_path: Path) -> None:
+    target = tmp_path / "new-app"
+    result = create_scaffold(
+        target=target,
+        cwd=tmp_path,
+        stack_id="external:bad",
+        stack_version="external",
+        idea="bad",
+        test_command="",
+        confirm=True,
+        profile_override={"name": "bad", "files": [{"path": "C:\\something\\file.py", "content": "x"}]},
+    )
+    assert result.get("ok") is False
+    assert result.get("code") == 2
+    assert "unsafe file path" in str(result.get("message", ""))
 
 
 def test_cli_create_validate_requires_confirm(monkeypatch, tmp_path: Path, capsys) -> None:

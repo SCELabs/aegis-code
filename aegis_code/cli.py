@@ -25,7 +25,7 @@ from aegis_code.context_state import (
     show_context,
 )
 from aegis_code.create_plan import build_create_plan, format_create_plan
-from aegis_code.create_scaffold import create_scaffold, list_scaffold_profiles
+from aegis_code.create_scaffold import create_scaffold, list_scaffold_profiles, load_external_profile
 from aegis_code.maintain import build_maintenance_report, format_maintenance_report
 from aegis_code.next_actions import build_next_actions, format_next_actions
 from aegis_code.onboard import run_onboard
@@ -242,6 +242,7 @@ def _build_create_parser() -> argparse.ArgumentParser:
     parser.add_argument("idea", nargs="?", default=None, help="Project idea to plan.")
     parser.add_argument("--list", action="store_true", help="List available scaffold profiles and exit.")
     parser.add_argument("--list-stacks", action="store_true", help="List available stack profiles and exit.")
+    parser.add_argument("--from", dest="from_profile", default=None, help="Path to local scaffold profile (YAML/JSON).")
     parser.add_argument("--stack", default=None, help="Optional stack profile id override.")
     parser.add_argument("--target", default=None, help="Optional scaffold target directory (requires --confirm).")
     parser.add_argument("--confirm", action="store_true", help="Confirm writing scaffold files to --target.")
@@ -587,6 +588,42 @@ def handle_create(argv: Sequence[str]) -> int:
         for profile in list_stacks():
             print(f"- {profile.get('id', 'unknown')}@{profile.get('version', 'unknown')}")
         return 0
+    if args.from_profile:
+        if args.validate:
+            print("Validation is not supported with --from (no command execution mode).")
+            return 2
+        try:
+            profile = load_external_profile(Path(args.from_profile))
+        except ValueError as exc:
+            print(str(exc))
+            return 2
+        profile_name = str(profile.get("name", "scaffold") or "scaffold")
+        idea_text = str(args.idea or profile_name)
+        if args.target:
+            target_path = Path(args.target)
+        else:
+            safe_name = "".join(ch.lower() if ch.isalnum() else "-" for ch in profile_name).strip("-")
+            target_path = Path(safe_name or "new-project")
+        result = create_scaffold(
+            target=target_path,
+            cwd=Path.cwd(),
+            stack_id=f"external:{profile_name}",
+            stack_version="external",
+            idea=idea_text,
+            test_command="",
+            confirm=bool(args.confirm),
+            profile_override=profile,
+        )
+        print("")
+        print(f"Scaffold target: {result.get('target', str(target_path))}")
+        print(result.get("message", ""))
+        files = result.get("files", []) or result.get("written", [])
+        if files:
+            print("Files:")
+            for item in files:
+                print(f"- {item}")
+        print(f"Applied: {'true' if result.get('applied', False) else 'false'}")
+        return int(result.get("code", 2))
     if not args.idea:
         parser.print_usage()
         print("error: the following arguments are required: idea")
