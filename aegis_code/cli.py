@@ -50,6 +50,7 @@ from aegis_code.policy import (
 from aegis_code.config import ensure_project_files, project_paths, update_model_tier
 from aegis_code.report import read_latest_markdown, write_reports
 from aegis_code.runtime import TaskOptions, run_task
+from aegis_code.scaffold_export import export_scaffold_profile
 from aegis_code.scaffolds import list_stacks
 from aegis_code.secrets import (
     clear_key,
@@ -339,6 +340,16 @@ def _build_workspace_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--safe", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--confirm", action="store_true")
+    return parser
+
+
+def _build_scaffold_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code scaffold")
+    subparsers = parser.add_subparsers(dest="scaffold_command")
+    export_parser = subparsers.add_parser("export", prog="aegis-code scaffold export")
+    export_parser.add_argument("--source", required=True)
+    export_parser.add_argument("--output", required=True)
+    export_parser.add_argument("--name", default=None)
     return parser
 
 
@@ -1372,6 +1383,34 @@ def handle_workspace(argv: Sequence[str]) -> int:
 
         print("Error: must specify either --dry-run or --confirm")
         return 2
+    parser.print_help()
+    return 1
+
+
+def handle_scaffold(argv: Sequence[str]) -> int:
+    parser = _build_scaffold_parser()
+    args = parser.parse_args(list(argv))
+    if args.scaffold_command == "export":
+        result = export_scaffold_profile(
+            source=Path(args.source),
+            output=Path(args.output),
+            name=args.name,
+        )
+        if not bool(result.get("ok", False)):
+            print(str(result.get("message", "Scaffold export failed.")))
+            return 2
+        skipped = result.get("skipped", [])
+        skipped_count = len(skipped) if isinstance(skipped, list) else 0
+        print("Scaffold profile exported:")
+        print(f"- source: {args.source}")
+        print(f"- output: {result.get('profile_path') or args.output}")
+        print(f"- files: {int(result.get('file_count', 0) or 0)}")
+        print(f"- skipped: {skipped_count}")
+        if skipped_count > 0:
+            print("Skipped files:")
+            for item in skipped[:10]:
+                print(f"- {item}")
+        return 0
     parser.print_help()
     return 1
 
@@ -2542,6 +2581,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_keys(args[1:])
     if command == "workspace":
         return handle_workspace(args[1:])
+    if command == "scaffold":
+        return handle_scaffold(args[1:])
     if command == "apply":
         return handle_apply(args[1:])
     if command == "diff":
