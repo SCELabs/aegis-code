@@ -35,6 +35,9 @@ def _blocked_status(patch_diff: dict[str, Any]) -> bool:
 
 def build_next_actions(payload: dict[str, Any], cwd: Path | None = None) -> dict:
     data = _extract_payload(payload, cwd)
+    environment_issues = data.get("environment_issues", [])
+    if not isinstance(environment_issues, list):
+        environment_issues = []
     patch_diff = data.get("patch_diff", {}) if isinstance(data.get("patch_diff"), dict) else {}
     patch_quality = data.get("patch_quality", {}) if isinstance(data.get("patch_quality"), dict) else {}
     verification = data.get("verification", {}) if isinstance(data.get("verification"), dict) else {}
@@ -48,6 +51,14 @@ def build_next_actions(payload: dict[str, Any], cwd: Path | None = None) -> dict
     verification_available = bool(verification.get("available", False))
     has_failure_count = "failure_count" in final_failures
     failure_count = int(final_failures.get("failure_count", 0) or 0)
+
+    if len(environment_issues) > 0:
+        actions = [
+            "Resolve environment issues listed above",
+            "Re-run: aegis-code doctor",
+            "Then run: aegis-code probe --run",
+        ]
+        return {"actions": actions, "rule": "environment_issues"}
 
     if patch_safety in {"LOW", "BLOCKED"} or quality_safety in {"LOW", "BLOCKED"} or _blocked_status(patch_diff):
         actions = [

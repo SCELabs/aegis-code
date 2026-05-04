@@ -15,6 +15,7 @@ from aegis_code.budget import can_spend, clear_budget, get_budget_state, load_bu
 from aegis_code.config import load_config
 from aegis_code.compare import build_comparison, format_comparison, load_last_runs
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.environment import diagnose_environment
 from aegis_code.fix.state import FixLoopState
 from aegis_code.fix.signatures import build_failure_signature
 from aegis_code.context_state import (
@@ -854,6 +855,7 @@ def handle_doctor(argv: Sequence[str]) -> int:
     paths = project_paths(cwd)
     latest = paths["latest_json"]
     backups = list_backups(cwd=cwd).get("backups", [])
+    env = diagnose_environment(cwd)
 
     aegis_key_configured = bool(os.environ.get("AEGIS_API_KEY", "").strip())
     provider_env = str(cfg.providers.api_key_env or "OPENAI_API_KEY")
@@ -892,7 +894,36 @@ def handle_doctor(argv: Sequence[str]) -> int:
     print(f"- Latest run: {'found' if latest.exists() else 'missing'}")
     print(f"- Backups: {len(backups)}")
     print("")
-    print(format_next_actions(build_next_actions({}, cwd=cwd)))
+    print("Environment:")
+    py = env.get("python", {}) if isinstance(env.get("python", {}), dict) else {}
+    nd = env.get("node", {}) if isinstance(env.get("node", {}), dict) else {}
+    nm = env.get("npm", {}) if isinstance(env.get("npm", {}), dict) else {}
+    gt = env.get("git", {}) if isinstance(env.get("git", {}), dict) else {}
+    print(f"- Python: {py.get('version') or 'missing'}")
+    print(f"- Node: {nd.get('version') or 'missing'}")
+    print(f"- npm: {nm.get('version') or 'missing'}")
+    print(f"- Git: {gt.get('version') or 'missing'}")
+    issues = env.get("issues", []) if isinstance(env.get("issues", []), list) else []
+    if issues:
+        print("")
+        print("Environment issues:")
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            print(f"- {issue.get('warning', '')}")
+            print(f"  Suggestion: {issue.get('suggestion', '')}")
+    print("")
+    print(
+        format_next_actions(
+            build_next_actions(
+                {
+                    "environment": env,
+                    "environment_issues": env.get("issues", []) if isinstance(env.get("issues", []), list) else [],
+                },
+                cwd=cwd,
+            )
+        )
+    )
     return 0
 
 

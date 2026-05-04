@@ -59,6 +59,47 @@ def test_default_fallback_next_action() -> None:
     assert "2. Check project status: aegis-code status" in text
 
 
+def test_environment_issues_next_action_priority() -> None:
+    data = build_next_actions(
+        {
+            "environment_issues": [
+                {
+                    "warning": "Python 3.14 may lack prebuilt wheels for some native dependencies.",
+                    "suggestion": "Use Python 3.11 or 3.12 for best compatibility.",
+                }
+            ],
+            "verification": {"available": False},
+        }
+    )
+    text = format_next_actions(data)
+    assert "1. Resolve environment issues listed above" in text
+    assert "2. Re-run: aegis-code doctor" in text
+    assert "3. Then run: aegis-code probe --run" in text
+
+
+def test_environment_issues_override_probe_and_tests_suggestions() -> None:
+    data = build_next_actions(
+        {
+            "environment_issues": [{"warning": "x", "suggestion": "y"}],
+            "status": "completed_tests_failed",
+            "final_failures": {"failure_count": 3},
+            "verification": {"available": False},
+        }
+    )
+    assert data.get("rule") == "environment_issues"
+    text = format_next_actions(data)
+    assert "Resolve environment issues listed above" in text
+    assert "Inspect failures: aegis-code report" not in text
+    assert "Probe project capabilities: aegis-code probe --run" not in text
+
+
+def test_no_environment_issues_uses_normal_behavior() -> None:
+    data = build_next_actions({"verification": {"available": False}})
+    assert data.get("rule") == "no_verification"
+    text = format_next_actions(data)
+    assert "Probe project capabilities: aegis-code probe --run" in text
+
+
 def test_status_output_includes_next_safe_action(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     runs = tmp_path / ".aegis" / "runs"

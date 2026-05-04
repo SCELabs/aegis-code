@@ -50,3 +50,27 @@ def test_doctor_shows_provider_name_and_base_url(tmp_path: Path, monkeypatch, ca
     assert "- Provider:" in out
     assert "name: openai-compatible" in out
     assert "base_url: http://localhost:11434/v1" in out
+
+
+def test_doctor_output_includes_environment_section(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "aegis_code.cli.diagnose_environment",
+        lambda _cwd: {
+            "python": {"available": True, "version": "Python 3.12.0", "warning": None, "suggestion": None},
+            "node": {"available": False, "version": None, "warning": None, "suggestion": None},
+            "npm": {"available": False, "version": None, "warning": None, "suggestion": None},
+            "git": {"available": True, "version": "git version 2.46.0", "warning": None, "suggestion": None},
+            "build_tools": {"available": None, "warning": None, "suggestion": None},
+            "issues": [{"warning": "Node.js/npm required for this project but not available.", "suggestion": "Install Node.js 18+ and rerun aegis-code probe --run."}],
+        },
+    )
+    exit_code = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Environment:" in out
+    assert "Python: Python 3.12.0" in out
+    assert "Node: missing" in out
+    assert "npm: missing" in out
+    assert "Git: git version 2.46.0" in out
+    assert "Environment issues:" in out
