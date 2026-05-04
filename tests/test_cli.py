@@ -258,6 +258,49 @@ def test_task_prints_runtime_adapter_error_fields(tmp_path: Path, monkeypatch, c
     assert "Error: boom" in out
 
 
+def test_task_prints_aegis_guidance_when_available(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": True,
+            "status": "dry_run_planned",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": False, "test_command": "n/a"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {
+                "mode": "local",
+                "aegis_client_available": False,
+                "fallback_reason": "import_missing",
+                "error_type": None,
+                "error_message": None,
+            },
+            "aegis_guidance": {
+                "available": True,
+                "actions": ["narrow scope"],
+                "explanation": "Try a smaller patch.",
+                "used_fallback": False,
+            },
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x", "--dry-run"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Aegis Guidance:" in out
+    assert "Try a smaller patch." in out
+
+
 def test_task_prints_task_driven_patch_note(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
 

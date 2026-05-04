@@ -44,6 +44,40 @@ def test_provider_disabled_by_default(tmp_path: Path) -> None:
     assert payload["patch_diff"]["attempted"] is False
 
 
+def test_runtime_passes_advisory_aegis_guidance_to_provider_prompt(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.get_aegis_guidance",
+        lambda **_: {
+            "available": True,
+            "actions": ["narrow scope"],
+            "explanation": "Try a smaller patch.",
+            "used_fallback": False,
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(options=TaskOptions(task="x", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert isinstance(captured.get("aegis_execution"), dict)
+    assert captured["aegis_execution"]["available"] is True
+    assert payload["aegis_guidance"]["available"] is True
+
+
 def test_missing_api_key_returns_unavailable(monkeypatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = generate_patch_diff_openai(

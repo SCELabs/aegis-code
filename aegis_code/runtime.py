@@ -12,6 +12,7 @@ from copy import deepcopy
 from typing import Any
 
 from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, client_from_env
+from aegis_code.aegis_adapter import get_aegis_guidance
 from aegis_code.budget import BudgetState
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
@@ -1025,6 +1026,7 @@ def build_run_payload(
     }
     patch_diff: dict[str, Any] = _patch_diff_default()
     patch_quality: dict[str, Any] | None = None
+    aegis_guidance: dict[str, Any] = {"available": False, "actions": [], "explanation": "", "used_fallback": False}
     provider_skipped = False
     skip_reason = ""
     next_action: str | None = None
@@ -1523,6 +1525,18 @@ def build_run_payload(
         and should_patch_flow
         and (has_context_files or has_proposed_changes)
     ):
+        aegis_guidance = get_aegis_guidance(
+            task=options.task,
+            context={
+                "aegis": {"enabled": bool(getattr(config.aegis, "enabled", False))},
+                "failure_context": failure_context,
+                "patch_plan": patch_plan,
+            },
+            failures=final_failures,
+            runtime_policy={"selected_mode": mode},
+            timeout_ms=int(getattr(config.aegis, "timeout_ms", 2000) or 2000),
+            max_retries=int(getattr(config.aegis, "max_retries", 1) or 1),
+        )
         sll_pre_call = run_sll_analysis(str(options.task or ""))
         sll_risk = classify_sll_risk(sll_pre_call)
         task_type = str(patch_plan.get("task_type", "general") or "general")
@@ -1580,7 +1594,7 @@ def build_run_payload(
                 failures=final_failures,
                 context=failure_context,
                 patch_plan=patch_plan,
-                aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                aegis_execution=aegis_guidance,
                 api_key_env=config.providers.api_key_env,
                 base_url=str(config.providers.base_url or ""),
                 sll_guidance=None,
@@ -1812,7 +1826,7 @@ def build_run_payload(
                     failures=final_failures,
                     context=failure_context,
                     patch_plan=enhanced_patch_plan,
-                    aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                    aegis_execution=aegis_guidance,
                     api_key_env=config.providers.api_key_env,
                     base_url=str(config.providers.base_url or ""),
                     sll_guidance=sll_fix_guidance,
@@ -2130,7 +2144,7 @@ def build_run_payload(
                     failures=final_failures,
                     context=failure_context,
                     patch_plan=regen_plan,
-                    aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
+                    aegis_execution=aegis_guidance,
                     api_key_env=config.providers.api_key_env,
                     base_url=str(config.providers.base_url or ""),
                     sll_guidance=sll_fix_guidance,
@@ -2389,6 +2403,7 @@ def build_run_payload(
         "patch_quality": patch_quality,
         "apply_safety": apply_safety,
         "verification": verification,
+        "aegis_guidance": aegis_guidance,
         "provider_skipped": provider_skipped,
         "skip_reason": skip_reason or None,
         "next_action": next_action,

@@ -1782,6 +1782,10 @@ def handle_task(argv: Sequence[str]) -> int:
         f"{payload.get('selected_model_tier', 'mid')} -> {payload.get('selected_model', 'unknown')}"
     )
     print(f"Status: {payload['status']}")
+    advisory = payload.get("aegis_guidance", {}) if isinstance(payload.get("aegis_guidance"), dict) else {}
+    if bool(advisory.get("available", False)):
+        print("Aegis Guidance:")
+        print(f"- {str(advisory.get('explanation', '') or '').strip()}")
     if bool(payload.get("provider_skipped", False)):
         print("Provider call skipped:")
         print(f"- reason: {payload.get('skip_reason') or 'unspecified'}")

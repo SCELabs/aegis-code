@@ -21,6 +21,9 @@ class CommandsConfig:
 class AegisConfig:
     base_url: str = "https://aegis-backend-production-4b47.up.railway.app"
     control_enabled: str | bool = "auto"
+    enabled: bool = False
+    timeout_ms: int = 2000
+    max_retries: int = 1
 
 
 @dataclass(slots=True)

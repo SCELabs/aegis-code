@@ -26,6 +26,9 @@ def test_load_config_uses_defaults_when_missing(tmp_path: Path) -> None:
     assert cfg.providers.timeout_seconds == 60
     assert cfg.patches.generate_diff is False
     assert cfg.aegis.control_enabled == "auto"
+    assert cfg.aegis.enabled is False
+    assert cfg.aegis.timeout_ms == 2000
+    assert cfg.aegis.max_retries == 1
 
 
 def test_load_config_reads_legacy_enhanced_runtime_flag(tmp_path: Path) -> None:
