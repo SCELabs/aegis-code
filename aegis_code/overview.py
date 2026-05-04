@@ -35,7 +35,9 @@ def build_overview(cwd: Path | None = None) -> dict[str, Any]:
         "verification_reason": str(caps.get("reason") or "n/a"),
         "observed_capabilities": "present" if observed else "missing",
         "observed_selected_test_command": (
-            str(observed.get("selected_test_command") or "n/a") if isinstance(observed, dict) else "n/a"
+            str(observed.get("test_command") or observed.get("selected_test_command") or "n/a")
+            if isinstance(observed, dict)
+            else "n/a"
         ),
         "budget": budget,
         "context": {

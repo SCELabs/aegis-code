@@ -21,6 +21,8 @@ def test_load_config_uses_defaults_when_missing(tmp_path: Path) -> None:
     assert cfg.models.mid == "openai:gpt-4.1-mini"
     assert cfg.commands.test == "pytest -q"
     assert cfg.providers.enabled is False
+    assert cfg.providers.provider == "openai"
+    assert cfg.providers.base_url == ""
     assert cfg.providers.timeout_seconds == 60
     assert cfg.patches.generate_diff is False
     assert cfg.aegis.control_enabled == "auto"
@@ -36,3 +38,19 @@ def test_load_config_reads_legacy_enhanced_runtime_flag(tmp_path: Path) -> None:
     cfg = load_config(tmp_path)
     assert cfg.aegis.base_url == "https://example.test"
     assert cfg.aegis.control_enabled is True
+
+
+def test_load_config_reads_openai_compatible_provider_base_url(tmp_path: Path) -> None:
+    ensure_project_files(cwd=tmp_path, force=True)
+    cfg_path = project_paths(tmp_path)["config_path"]
+    cfg_path.write_text(
+        "providers:\n"
+        "  enabled: true\n"
+        "  provider: \"openai-compatible\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n"
+        "  base_url: \"http://localhost:11434/v1\"\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.providers.provider == "openai-compatible"
+    assert cfg.providers.base_url == "http://localhost:11434/v1"

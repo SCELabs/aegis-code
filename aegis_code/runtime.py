@@ -15,6 +15,7 @@ from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env
 from aegis_code.budget import BudgetState
 from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
+from aegis_code.probe import get_capabilities
 from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
@@ -38,8 +39,11 @@ from aegis_code.providers import generate_patch_diff
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
 from aegis_code.secrets import list_scoped_keys, resolve_key, resolve_key_source
-from aegis_code.sll_adapter import analyze_failures_sll
+from aegis_code.short_circuit import should_skip_provider
+from aegis_code.sll_guidance import build_sll_fix_guidance
+from aegis_code.sll_adapter import analyze_failures_sll, classify_sll_risk, run_sll_analysis
 from aegis_code.tools.tests import run_configured_tests
+from aegis_code.verification import resolve_verification_command
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
 _PROVIDER_HEARTBEAT_SECONDS = 2.0
@@ -992,7 +996,8 @@ def build_run_payload(
     guidance_allow_escalation = guidance.get("allow_escalation")
     guidance_context_mode = str(guidance.get("context_mode", "") or "").strip().lower() or None
 
-    capabilities = detect_capabilities(cwd or Path.cwd())
+    capabilities = get_capabilities(cwd or Path.cwd())
+    detected_capabilities = detect_capabilities(cwd or Path.cwd())
     mode = options.mode or config.mode
     budget = BudgetState(total=options.budget if options.budget is not None else config.budget_per_task)
 
@@ -1003,6 +1008,14 @@ def build_run_payload(
     final_failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
     failure_context: dict[str, Any] = {"files": []}
     sll_analysis: dict[str, Any] = {"available": False}
+    sll_pre_call: dict[str, Any] = {"available": False}
+    sll_post_call: dict[str, Any] = {"available": False}
+    sll_risk = "low"
+    sll_fix_guidance: dict[str, Any] = {
+        "strategy": "unknown",
+        "constraints": [],
+        "notes": "No structural guidance available.",
+    }
     symptoms: list[str] = ["unstable_workflow"]
     test_attempts: list[dict[str, Any]] = []
     patch_plan: dict[str, Any] = {
@@ -1012,6 +1025,9 @@ def build_run_payload(
     }
     patch_diff: dict[str, Any] = _patch_diff_default()
     patch_quality: dict[str, Any] | None = None
+    provider_skipped = False
+    skip_reason = ""
+    next_action: str | None = None
     retry_policy: dict[str, Any] = {
         "max_retries": 0,
         "allow_escalation": False,
@@ -1019,12 +1035,17 @@ def build_run_payload(
         "retry_count": 0,
         "stopped_reason": "not_evaluated",
     }
+    resolved_verification = resolve_verification_command((cwd or Path.cwd()).resolve())
+    selected_test_command = str(resolved_verification.get("command") or "").strip()
     verification: dict[str, Any] = {
-        "available": bool(config.commands.test.strip()),
-        "test_command": config.commands.test.strip() or None,
-        "detected_stack": capabilities.get("detected_stack"),
-        "confidence": capabilities.get("confidence", "low"),
-        "reason": capabilities.get("reason", "no verification command configured"),
+        "available": bool(resolved_verification.get("available", False)),
+        "test_command": selected_test_command or None,
+        "command": selected_test_command or None,
+        "source": str(resolved_verification.get("source", "none") or "none"),
+        "observed": bool(resolved_verification.get("observed", False)),
+        "detected_stack": capabilities.get("detected_stack") or detected_capabilities.get("detected_stack"),
+        "confidence": capabilities.get("verification_confidence", detected_capabilities.get("confidence", "low")),
+        "reason": str(resolved_verification.get("source", "none") or "none"),
     }
 
     if options.dry_run:
@@ -1048,7 +1069,7 @@ def build_run_payload(
         ]
         status = "dry_run_planned"
     else:
-        test_command = config.commands.test.strip()
+        test_command = selected_test_command
         decision = None
         if test_command:
             _progress(options, f"running verification command: {test_command}")
@@ -1459,6 +1480,42 @@ def build_run_payload(
         }
         should_attempt_provider_diff = False
 
+    provider_skip_decision = should_skip_provider(options, (cwd or Path.cwd()).resolve())
+    if (
+        should_attempt_provider_diff
+        and provider_enabled
+        and should_patch_flow
+        and bool(provider_skip_decision.get("skip", False))
+    ):
+        provider_skipped = True
+        skip_reason = str(provider_skip_decision.get("reason", "skipped_provider") or "skipped_provider")
+        next_action = (
+            str(provider_skip_decision.get("action", "")).strip()
+            if provider_skip_decision.get("action") is not None
+            else None
+        )
+        status = "skipped_provider"
+        patch_diff = {
+            "attempted": False,
+            "available": False,
+            "status": "skipped",
+            "regenerated": False,
+            "regeneration_attempted": False,
+            "aegis_corrective_control_applied": False,
+            "corrective_control_status": "not_triggered",
+            "corrective_control_reason": "not_triggered",
+            "corrective_control_error": None,
+            "provider": config.providers.provider,
+            "model": selected_model,
+            "plan_consistent": None,
+            "plan_missing_targets": [],
+            "path": None,
+            "error": skip_reason,
+            "preview": "",
+            "reason": skip_reason,
+        }
+        should_attempt_provider_diff = False
+
     if (
         should_attempt_provider_diff
         and provider_enabled
@@ -1466,6 +1523,8 @@ def build_run_payload(
         and should_patch_flow
         and (has_context_files or has_proposed_changes)
     ):
+        sll_pre_call = run_sll_analysis(str(options.task or ""))
+        sll_risk = classify_sll_risk(sll_pre_call)
         task_type = str(patch_plan.get("task_type", "general") or "general")
         test_task = task_type == "test_generation" or is_test_generation_task(options.task)
         impl_with_tests_task = task_type == "implementation_with_tests"
@@ -1523,6 +1582,8 @@ def build_run_payload(
                 patch_plan=patch_plan,
                 aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
                 api_key_env=config.providers.api_key_env,
+                base_url=str(config.providers.base_url or ""),
+                sll_guidance=None,
                 max_context_chars=int(config.patches.max_context_chars),
             ),
             timeout_seconds=provider_timeout_seconds,
@@ -1536,6 +1597,10 @@ def build_run_payload(
                 "error": "provider_timeout",
             }
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
+        sll_post_call = run_sll_analysis(initial_diff)
+        sll_risk = classify_sll_risk(sll_post_call)
+        if int(final_failures.get("failure_count", 0) or 0) > 0:
+            sll_fix_guidance = build_sll_fix_guidance(sll_post_call)
         _progress(options, "validating diff")
         validation_result = inspect_diff(initial_diff, cwd=(cwd or Path.cwd())) if initial_diff else {"valid": False, "errors": ["empty_diff"]}
         repair_result = {
@@ -1749,6 +1814,8 @@ def build_run_payload(
                     patch_plan=enhanced_patch_plan,
                     aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
                     api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                    sll_guidance=sll_fix_guidance,
                     max_context_chars=int(config.patches.max_context_chars),
                 ),
                 timeout_seconds=provider_timeout_seconds,
@@ -2065,6 +2132,8 @@ def build_run_payload(
                     patch_plan=regen_plan,
                     aegis_execution=decision.execution if isinstance(decision.execution, dict) else {},
                     api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                    sll_guidance=sll_fix_guidance,
                     max_context_chars=int(config.patches.max_context_chars),
                 ),
                 timeout_seconds=provider_timeout_seconds,
@@ -2311,11 +2380,18 @@ def build_run_payload(
         "failures": failures,
         "failure_context": failure_context,
         "sll_analysis": sll_analysis,
+        "sll_pre_call": sll_pre_call,
+        "sll_post_call": sll_post_call,
+        "sll_risk": sll_risk,
+        "sll_fix_guidance": sll_fix_guidance,
         "patch_plan": patch_plan,
         "patch_diff": patch_diff,
         "patch_quality": patch_quality,
         "apply_safety": apply_safety,
         "verification": verification,
+        "provider_skipped": provider_skipped,
+        "skip_reason": skip_reason or None,
+        "next_action": next_action,
         "status": status,
         "notes": notes,
         "execution_budget_pressure": execution_budget,
@@ -2349,6 +2425,17 @@ def build_run_payload(
         "task_driven_patch_proposal": task_driven_patch_proposal,
         "key_usage": _key_usage_metadata((cwd or Path.cwd()).resolve(), config),
     }
+    patch_diff_payload = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+    diff_path = str(patch_diff_payload.get("path", "") or "").strip()
+    if diff_path:
+        try:
+            diff_text_for_sll = Path(diff_path).read_text(encoding="utf-8", errors="replace")
+            payload["sll_post_call"] = run_sll_analysis(diff_text_for_sll)
+            payload["sll_risk"] = classify_sll_risk(payload["sll_post_call"])
+            if int((payload.get("final_failures", {}) if isinstance(payload.get("final_failures", {}), dict) else {}).get("failure_count", 0) or 0) > 0:
+                payload["sll_fix_guidance"] = build_sll_fix_guidance(payload["sll_post_call"])
+        except Exception:
+            pass
     return payload
 
 

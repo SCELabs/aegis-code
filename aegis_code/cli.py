@@ -63,12 +63,14 @@ from aegis_code.setup import check_setup, run_setup
 from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
 from aegis_code.tools.shell import run_shell_command
-from aegis_code.probe import run_project_probe
+from aegis_code.probe import get_capabilities, run_project_probe
 from aegis_code.usage import get_usage_warning, load_usage
+from aegis_code.verification import resolve_verification_command
 from aegis_code.workspace import (
     add_project,
     compare_workspace_runs,
     get_detailed_status,
+    get_workspace_next_actions,
     get_status,
     get_workspace_overview,
     init_workspace,
@@ -90,6 +92,50 @@ def _display_path(path: Path | str, cwd: Path | None = None) -> str:
 
 def _yesno(value: bool) -> str:
     return "yes" if bool(value) else "no"
+
+
+def _normalized_verification_block(verification: dict[str, object] | None) -> dict[str, object]:
+    data = verification or {}
+    command = data.get("command") or data.get("test_command")
+    return {
+        "command": str(command).strip() if isinstance(command, str) and str(command).strip() else None,
+        "source": str(data.get("source", "none") or "none"),
+        "observed": bool(data.get("observed", False)),
+        "available": bool(data.get("available", False)),
+        "stack": data.get("detected_stack"),
+    }
+
+
+def _print_verification_block(verification: dict[str, object] | None, *, compact: bool = False) -> None:
+    data = _normalized_verification_block(verification)
+    if compact:
+        print(
+            f"- Verification: command={data.get('command') or 'n/a'} "
+            f"source={data.get('source', 'none')} observed={'true' if bool(data.get('observed', False)) else 'false'}"
+        )
+        return
+    print("- Verification:")
+    print(f"  - command: {data.get('command') or 'n/a'}")
+    print(f"  - source: {data.get('source', 'none')}")
+    print(f"  - observed: {'true' if bool(data.get('observed', False)) else 'false'}")
+    print(f"  - available: {data.get('available', False)}")
+    print(f"  - stack: {data.get('stack') or 'n/a'}")
+
+
+def _print_provider_block(provider_name: str, base_url: str) -> None:
+    print("- Provider:")
+    print(f"  - name: {provider_name}")
+    print(f"  - base_url: {base_url}")
+
+
+def _print_sll_block(payload: dict[str, object]) -> None:
+    sll_pre_call = payload.get("sll_pre_call", {}) if isinstance(payload.get("sll_pre_call"), dict) else {}
+    sll_post_call = payload.get("sll_post_call", {}) if isinstance(payload.get("sll_post_call"), dict) else {}
+    sll_for_display = sll_post_call if bool(sll_post_call.get("available", False)) else sll_pre_call
+    if bool(sll_for_display.get("available", False)):
+        print("SLL:")
+        print(f"- regime: {sll_for_display.get('regime', 'unknown')}")
+        print(f"- risk: {payload.get('sll_risk', 'low')}")
 
 
 def _format_adapter_summary(adapter: dict[str, object] | None) -> str:
@@ -283,6 +329,7 @@ def _build_workspace_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--detailed", action="store_true")
     subparsers.add_parser("overview", prog="aegis-code workspace overview")
     subparsers.add_parser("compare", prog="aegis-code workspace compare")
+    subparsers.add_parser("next", prog="aegis-code workspace next")
     subparsers.add_parser("refresh-context", prog="aegis-code workspace refresh-context")
     run_parser = subparsers.add_parser("run", prog="aegis-code workspace run")
     run_parser.add_argument("task")
@@ -393,10 +440,11 @@ def handle_init(argv: Sequence[str]) -> int:
     parser = _build_init_parser()
     args = parser.parse_args(list(argv))
     cfg_path = project_paths()["config_path"]
+    capabilities = get_capabilities(Path.cwd())
     detected = detect_capabilities(Path.cwd())
     detected_test_command = (
-        str(detected.get("test_command", "") or "")
-        if bool(detected.get("verification_available", False))
+        str(capabilities.get("test_command", "") or detected.get("test_command", "") or "")
+        if bool(capabilities.get("verification_available", False) or detected.get("verification_available", False))
         else ""
     )
     should_write_config = args.force or not cfg_path.exists()
@@ -434,6 +482,7 @@ def handle_report(argv: Sequence[str]) -> int:
 def handle_status(argv: Sequence[str]) -> int:
     parser = _build_status_parser()
     parser.parse_args(list(argv))
+    cfg = load_config(Path.cwd())
     paths = project_paths()
     latest = paths["latest_json"]
     if not latest.exists():
@@ -445,6 +494,8 @@ def handle_status(argv: Sequence[str]) -> int:
     patch_diff = payload.get("patch_diff", {}) or {}
     patch_quality = payload.get("patch_quality")
     verification = payload.get("verification", {}) or {}
+    resolved_verification = resolve_verification_command(Path.cwd())
+    capabilities = get_capabilities(Path.cwd())
     detected = detect_capabilities(Path.cwd())
     ver_available = verification.get("available")
     ver_command = verification.get("test_command")
@@ -457,18 +508,19 @@ def handle_status(argv: Sequence[str]) -> int:
     )
     if not has_verification:
         verification = {
-            "available": bool(detected.get("verification_available", False)),
-            "test_command": detected.get("test_command"),
-            "detected_stack": detected.get("detected_stack"),
+            "available": bool(capabilities.get("verification_available", detected.get("verification_available", False))),
+            "test_command": resolved_verification.get("command") or capabilities.get("test_command") or detected.get("test_command"),
+            "command": resolved_verification.get("command"),
+            "detected_stack": capabilities.get("detected_stack") or detected.get("detected_stack"),
+            "source": resolved_verification.get("source", "none"),
+            "observed": bool(resolved_verification.get("observed", False)),
         }
 
     print("Status:")
     print(f"- Task: {payload.get('task', '')}")
     print(f"- Run status: {payload.get('status', '')}")
     print(f"- Failure count: {payload.get('failures', {}).get('failure_count', 0)}")
-    print(
-        f"- Verification: available={verification.get('available', False)} command={verification.get('test_command') or 'n/a'} stack={verification.get('detected_stack') or 'n/a'}"
-    )
+    _print_verification_block(verification)
     print(
         f"- SLL: available={sll.get('available', False)} regime={sll.get('regime', 'n/a') if sll.get('available', False) else 'n/a'}"
     )
@@ -480,6 +532,9 @@ def handle_status(argv: Sequence[str]) -> int:
     else:
         print("- Patch quality confidence: n/a")
     print(f"- Backup count: {len(backups)}")
+    _print_provider_block(str(cfg.providers.provider or "openai"), str(cfg.providers.base_url or "n/a"))
+    print("")
+    print(format_next_actions(build_next_actions(payload, cwd=Path.cwd())))
     return 0
 
 
@@ -608,13 +663,18 @@ def handle_create(argv: Sequence[str]) -> int:
 
     probe_payload = run_project_probe(cwd=target_path, run_tests=False)
     detected_for_validation = detect_capabilities(target_path)
-    probe_selected = str(probe_payload.get("selected_test_command") or "").strip()
+    probe_selected = str(probe_payload.get("test_command") or probe_payload.get("selected_test_command") or "").strip()
     verification_info = probe_payload.get("verification", {}) if isinstance(probe_payload.get("verification", {}), dict) else {}
-    probe_verification_available = bool(verification_info.get("available", False))
+    probe_verification_available = bool(
+        probe_payload.get("verification_available", False) or verification_info.get("available", False)
+    )
     verification_command = probe_selected if probe_verification_available else ""
     if not verification_command and probe_verification_available:
         verification_command = str(detected_for_validation.get("test_command") or "").strip()
-    environment_issue = bool(verification_info.get("environment_issue", False))
+    environment_issue = bool(
+        verification_info.get("environment_issue", False)
+        or (bool(probe_selected) and not bool(probe_payload.get("runtime_available", False)))
+    )
     if environment_issue and not probe_selected:
         tests_status = "not available"
         stabilization_status = "skipped"
@@ -629,6 +689,8 @@ def handle_create(argv: Sequence[str]) -> int:
         print("")
         print("Next:")
         print(f"- cd {target_path}")
+        print("")
+        print(format_next_actions(build_next_actions({"verification": {"available": False}}, cwd=target_path)))
         return 0
     if not verification_command:
         tests_status = "not available"
@@ -665,6 +727,19 @@ def handle_create(argv: Sequence[str]) -> int:
 
     tests_status = "failed"
     print("Validation: tests failed. Running Aegis stabilization...")
+    print("")
+    print(
+        format_next_actions(
+            build_next_actions(
+                {
+                    "status": "completed_tests_failed",
+                    "final_failures": {"failure_count": 1},
+                    "verification": {"available": True},
+                },
+                cwd=target_path,
+            )
+        )
+    )
     cfg = load_config(target_path)
     base_mode = cfg.mode
     final_mode = select_runtime_mode(base_mode, cwd=target_path)
@@ -704,6 +779,8 @@ def handle_create(argv: Sequence[str]) -> int:
     print("Next:")
     print(f"- cd {target_path}")
     print(f"- {verification_command}")
+    print("")
+    print(format_next_actions(build_next_actions(payload, cwd=target_path)))
     return 0
 
 
@@ -712,7 +789,9 @@ def handle_doctor(argv: Sequence[str]) -> int:
     parser.parse_args(list(argv))
     cwd = Path.cwd()
     cfg = load_config(cwd)
-    caps = detect_capabilities(cwd)
+    caps = get_capabilities(cwd)
+    detected = detect_capabilities(cwd)
+    resolved_verification = resolve_verification_command(cwd)
     sll = check_sll_available()
     paths = project_paths(cwd)
     latest = paths["latest_json"]
@@ -731,21 +810,31 @@ def handle_doctor(argv: Sequence[str]) -> int:
     print("Aegis Code Doctor")
     print("")
     print("Repo:")
-    print(f"- Stack: {caps.get('detected_stack') or 'unknown'}")
-    print(f"- Language: {caps.get('language') or 'unknown'}")
-    print(f"- Verification: {'available' if caps.get('verification_available', False) else 'unavailable'}")
-    print(f"- Test command: {caps.get('test_command') or 'none'}")
-    print(f"- Confidence: {caps.get('confidence', 'low')}")
-    print(f"- Reason: {caps.get('reason', '')}")
+    print(f"- Stack: {caps.get('detected_stack') or detected.get('detected_stack') or 'unknown'}")
+    print(f"- Language: {caps.get('language') or detected.get('language') or 'unknown'}")
+    _print_verification_block(
+        {
+            "command": resolved_verification.get("command"),
+            "source": resolved_verification.get("source", "none"),
+            "observed": bool(resolved_verification.get("observed", False)),
+            "available": bool(resolved_verification.get("available", False)),
+            "detected_stack": caps.get("detected_stack") or detected.get("detected_stack"),
+        }
+    )
+    print(f"- Confidence: {caps.get('verification_confidence') or detected.get('confidence', 'low')}")
+    print(f"- Runtime available: {'yes' if bool(caps.get('runtime_available', False)) else 'no'}")
     print("")
     print("Integrations:")
     print(f"- Aegis API key: {'configured' if aegis_key_configured else 'missing'}")
     print(f"- SLL: {'available' if sll.get('available', False) else 'unavailable'}")
     print(f"- Patch provider: {provider_state}")
+    _print_provider_block(str(cfg.providers.provider or "openai"), str(cfg.providers.base_url or "n/a"))
     print("")
     print("State:")
     print(f"- Latest run: {'found' if latest.exists() else 'missing'}")
     print(f"- Backups: {len(backups)}")
+    print("")
+    print(format_next_actions(build_next_actions({}, cwd=cwd)))
     return 0
 
 
@@ -833,7 +922,22 @@ def _write_budget_skipped_report(
         "patch_plan": {"strategy": "Skipped due to budget control.", "confidence": 0.0, "proposed_changes": []},
         "patch_diff": {"attempted": False, "available": False, "path": None, "error": None, "preview": ""},
         "patch_quality": None,
-        "verification": {"available": False, "test_command": None, "detected_stack": None, "reason": "budget_skipped"},
+        "verification": {
+            "command": None,
+            "test_command": None,
+            "available": False,
+            "source": "none",
+            "observed": False,
+            "detected_stack": None,
+            "reason": "budget_skipped",
+        },
+        "provider_skipped": True,
+        "skip_reason": "budget_skipped",
+        "next_action": "Check budget: aegis-code budget status",
+        "sll_pre_call": {"available": False},
+        "sll_post_call": {"available": False},
+        "sll_risk": "low",
+        "sll_fix_guidance": {"strategy": "unknown", "constraints": [], "notes": "No structural guidance available."},
         "runtime_policy": runtime_policy,
         "budget_state": budget_state,
         "project_context": {"available": False, "included_paths": [], "total_chars": 0},
@@ -1123,6 +1227,25 @@ def handle_workspace(argv: Sequence[str]) -> int:
         print(f"- Failed: {result.get('failed', 0)}")
         print(f"- Aegis mode: {result.get('aegis_mode', 0)}")
         print(f"- Local mode: {result.get('local_mode', 0)}")
+        return 0
+    if args.workspace_command == "next":
+        result = get_workspace_next_actions(cwd=cwd)
+        if not result.get("exists", False):
+            print("No workspace found. Run `aegis-code workspace init`.")
+            return 1
+        print("Workspace priority:")
+        projects = result.get("projects", [])
+        for idx, item in enumerate(projects, start=1):
+            name = str(item.get("name", ""))
+            reason = str(item.get("reason", ""))
+            signal = item.get("signal")
+            action = str(item.get("action", "No action needed"))
+            print("")
+            print(f"{idx}. {name}")
+            print(f"   - {reason}")
+            if isinstance(signal, str) and signal.strip():
+                print(f"   - {signal.strip()}")
+            print(f"   → {action}")
         return 0
     if args.workspace_command == "refresh-context":
         result = refresh_workspace_context(cwd=cwd)
@@ -1626,6 +1749,9 @@ def handle_task(argv: Sequence[str]) -> int:
         f"{payload.get('selected_model_tier', 'mid')} -> {payload.get('selected_model', 'unknown')}"
     )
     print(f"Status: {payload['status']}")
+    if bool(payload.get("provider_skipped", False)):
+        print("Provider call skipped:")
+        print(f"- reason: {payload.get('skip_reason') or 'unspecified'}")
     failure_count = payload.get("failures", {}).get("failure_count", 0)
     symptoms = payload.get("symptoms", [])
     retry_policy = payload.get("retry_policy", {})
@@ -1633,14 +1759,17 @@ def handle_task(argv: Sequence[str]) -> int:
     patch_diff = payload.get("patch_diff", {})
     patch_quality = payload.get("patch_quality")
     sll_analysis = payload.get("sll_analysis", {})
+    sll_fix_guidance = payload.get("sll_fix_guidance", {}) if isinstance(payload.get("sll_fix_guidance"), dict) else {}
     print(f"Failure count: {failure_count}")
     verification = payload.get("verification", {}) or {}
-    print(
-        "Verification: "
-        f"available={verification.get('available', False)} command={verification.get('test_command', 'n/a')}"
-    )
+    _print_verification_block(verification, compact=True)
     print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
     print(f"SLL available: {sll_analysis.get('available', False)}")
+    _print_sll_block(payload)
+    if bool((patch_diff or {}).get("regeneration_attempted", False)) and str(sll_fix_guidance.get("strategy", "unknown")) != "unknown":
+        print("SLL Fix Guidance:")
+        print(f"- strategy: {sll_fix_guidance.get('strategy', 'unknown')}")
+        print(f"- notes: {sll_fix_guidance.get('notes', '')}")
     print(
         "Retry attempted/count: "
         f"{retry_policy.get('retry_attempted', False)}/{retry_policy.get('retry_count', 0)}"
@@ -1689,6 +1818,8 @@ def handle_task(argv: Sequence[str]) -> int:
     _print_aegis_impact_if_relevant(payload)
     _print_aegis_usage_if_available(payload, cwd)
     _print_task_final_summary(payload, cwd)
+    print("")
+    print(format_next_actions(build_next_actions(payload, cwd=cwd)))
     return 0
 
 
@@ -2150,7 +2281,7 @@ def handle_fix(argv: Sequence[str]) -> int:
 def handle_next(argv: Sequence[str]) -> int:
     parser = _build_next_parser()
     parser.parse_args(list(argv))
-    payload = build_next_actions(cwd=Path.cwd())
+    payload = build_next_actions({}, cwd=Path.cwd())
     print(format_next_actions(payload))
     return 0
 
@@ -2262,66 +2393,25 @@ def handle_probe(argv: Sequence[str]) -> int:
     args = parser.parse_args(list(argv))
     cwd = Path.cwd()
     payload = run_project_probe(cwd=cwd, run_tests=bool(args.run))
-    runtimes = payload.get("runtimes", {}) if isinstance(payload.get("runtimes", {}), dict) else {}
-    verification = payload.get("verification", {}) if isinstance(payload.get("verification", {}), dict) else {}
-
     print("Aegis Probe")
+    print(f"- Detected stack: {payload.get('detected_stack') or 'unknown'}")
+    print(f"- Test command: {payload.get('test_command') or 'none'}")
+    print(f"- Verification available: {'yes' if bool(payload.get('verification_available', False)) else 'no'}")
+    print(f"- Runtime available: {'yes' if bool(payload.get('runtime_available', False)) else 'no'}")
     print("")
-    print("Detected:")
-    print(f"- Stack: {payload.get('detected_stack') or 'unknown'}")
-    print(f"- Package manager: {payload.get('package_manager') or 'none'}")
+    print("Capabilities:")
+    print(f"- python: {'true' if bool(payload.get('python_available', False)) else 'false'}")
+    print(f"- node: {'true' if bool(payload.get('node_available', False)) else 'false'}")
+    print(f"- git: {'true' if bool(payload.get('git_available', False)) else 'false'}")
+    print(f"- package manager: {'true' if bool(payload.get('package_manager_available', False)) else 'false'}")
     print("")
-    print("Runtime:")
-    for name in ("python", "pip", "npm", "pnpm", "yarn", "bun", "pytest", "make"):
-        info = runtimes.get(name, {}) if isinstance(runtimes.get(name, {}), dict) else {}
-        state = "found" if bool(info.get("available", False)) else "missing"
-        print(f"- {name}: {state}")
+    print("Commands:")
+    print(f"- test: {'available' if bool(payload.get('test_command_available', False)) else 'unavailable'}")
+    print(f"- build: {'available' if bool(payload.get('build_command_available', False)) else 'unavailable'}")
+    print(f"- lint: {'available' if bool(payload.get('lint_command_available', False)) else 'unavailable'}")
+    print(f"- format: {'available' if bool(payload.get('format_command_available', False)) else 'unavailable'}")
     print("")
-    print("Install candidates:")
-    install_candidates = payload.get("install_candidates", [])
-    if isinstance(install_candidates, list) and install_candidates:
-        for item in install_candidates:
-            if isinstance(item, dict):
-                available = bool(item.get("available", False))
-                if available:
-                    print(f"- {item.get('command', '')}")
-                else:
-                    block_reason = str(item.get("block_reason", "") or "blocked")
-                    print(f"- {item.get('command', '')} (blocked: {block_reason})")
-    else:
-        print("- none")
-    print("")
-    print("Test candidates:")
-    test_candidates = payload.get("test_candidates", [])
-    if isinstance(test_candidates, list) and test_candidates:
-        for item in test_candidates:
-            if isinstance(item, dict):
-                available = bool(item.get("available", False))
-                if available:
-                    print(f"- {item.get('command', '')}")
-                else:
-                    block_reason = str(item.get("block_reason", "") or "blocked")
-                    print(f"- {item.get('command', '')} (blocked: {block_reason})")
-    else:
-        print("- none")
-    print("")
-    print("Observed:")
-    print(f"- Verification: {'available' if bool(verification.get('available', False)) else 'unavailable'}")
-    print(f"- Selected test command: {payload.get('selected_test_command') or 'none'}")
-    print(f"- Confidence: {verification.get('confidence') or 'low'}")
-    print("")
-    print("Saved:")
-    print("- .aegis/capabilities.json")
-
-    observed_runs = payload.get("observed_runs", [])
-    if bool(args.run) and isinstance(observed_runs, list) and observed_runs:
-        print("")
-        print("Observed runs:")
-        for item in observed_runs:
-            if isinstance(item, dict):
-                print(
-                    f"- {item.get('command', '')} | status={item.get('status')} | exit={item.get('exit_code')}"
-                )
+    print(format_next_actions(build_next_actions(payload, cwd=cwd)))
     return 0
 
 

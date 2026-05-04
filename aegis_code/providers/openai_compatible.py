@@ -11,8 +11,9 @@ from aegis_code.providers.base import (
 )
 
 
-def generate_patch_diff_openai(
+def generate_patch_diff_openai_compatible(
     *,
+    provider: str = "openai-compatible",
     model: str,
     task: str,
     failures: dict[str, Any],
@@ -20,33 +21,36 @@ def generate_patch_diff_openai(
     patch_plan: dict[str, Any],
     aegis_execution: dict[str, Any],
     api_key_env: str,
+    base_url: str,
     sll_guidance: dict[str, Any] | None = None,
     max_context_chars: int,
 ) -> dict[str, Any]:
     trimmed_model = _strip_provider_prefix(model)
-    api_key = os.getenv(api_key_env, "")
-    if not api_key:
+    resolved_base_url = str(base_url or "").strip()
+    if not resolved_base_url:
         return {
             "available": False,
-            "provider": "openai",
+            "provider": "openai-compatible",
             "model": trimmed_model,
             "diff": "",
-            "error": f"Missing API key env: {api_key_env}",
+            "error": "Missing base_url for provider: openai-compatible",
         }
+
+    api_key = os.getenv(api_key_env, "").strip() or "dummy"
 
     try:
         from openai import OpenAI
     except Exception:
         return {
             "available": False,
-            "provider": "openai",
+            "provider": "openai-compatible",
             "model": trimmed_model,
             "diff": "",
             "error": "openai package is not installed.",
         }
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, base_url=resolved_base_url)
         prompt = build_diff_prompt(
             task=task,
             failures=failures,
@@ -72,14 +76,14 @@ def generate_patch_diff_openai(
         if not is_plausible_diff(diff_text):
             return {
                 "available": False,
-                "provider": "openai",
+                "provider": "openai-compatible",
                 "model": trimmed_model,
                 "diff": "",
                 "error": "Provider output did not look like a unified diff.",
             }
         return {
             "available": True,
-            "provider": "openai",
+            "provider": "openai-compatible",
             "model": trimmed_model,
             "diff": diff_text,
             "error": None,
@@ -87,7 +91,7 @@ def generate_patch_diff_openai(
     except Exception as exc:
         return {
             "available": False,
-            "provider": "openai",
+            "provider": "openai-compatible",
             "model": trimmed_model,
             "diff": "",
             "error": str(exc),

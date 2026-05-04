@@ -4,196 +4,114 @@ import json
 from pathlib import Path
 from typing import Any
 
-from aegis_code.budget import get_budget_state
 from aegis_code.config import project_paths
-from aegis_code.context.capabilities import detect_capabilities
-from aegis_code.context_state import show_context
-from aegis_code.workspace import load_workspace
 
 
-def _latest_run_payload(cwd: Path) -> dict[str, Any] | None:
-    latest_path = project_paths(cwd)["latest_json"]
-    if not latest_path.exists():
+def _latest_payload(cwd: Path) -> dict[str, Any] | None:
+    latest = project_paths(cwd)["latest_json"]
+    if not latest.exists():
         return None
     try:
-        payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        data = json.loads(latest.read_text(encoding="utf-8"))
     except Exception:
         return None
-    return payload if isinstance(payload, dict) else None
+    return data if isinstance(data, dict) else None
 
 
-def _read_signals(cwd: Path) -> dict[str, Any]:
-    paths = project_paths(cwd)
-    config_exists = paths["config_path"].exists()
+def _extract_payload(payload: dict[str, Any] | None, cwd: Path | None) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    if cwd is not None:
+        loaded = _latest_payload(cwd)
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
 
-    capabilities = detect_capabilities(cwd)
-    verification_available = bool(capabilities.get("verification_available", False)) and bool(
-        str(capabilities.get("test_command", "") or "").strip()
-    )
 
-    context = show_context(cwd)
-    context_available = bool(context.get("exists", False))
+def _blocked_status(patch_diff: dict[str, Any]) -> bool:
+    status = str(patch_diff.get("status", "") or "").strip().lower()
+    return status in {"blocked", "hard_invalid", "invalid"}
 
-    latest_payload = _latest_run_payload(cwd)
-    latest_run_exists = latest_payload is not None
 
-    failures = latest_payload.get("failures", {}) if latest_payload else {}
-    if not isinstance(failures, dict):
-        failures = {}
-    failure_count = int(failures.get("failure_count", 0) or 0)
+def build_next_actions(payload: dict[str, Any], cwd: Path | None = None) -> dict:
+    data = _extract_payload(payload, cwd)
+    patch_diff = data.get("patch_diff", {}) if isinstance(data.get("patch_diff"), dict) else {}
+    patch_quality = data.get("patch_quality", {}) if isinstance(data.get("patch_quality"), dict) else {}
+    verification = data.get("verification", {}) if isinstance(data.get("verification"), dict) else {}
+    final_failures = data.get("final_failures", {}) if isinstance(data.get("final_failures"), dict) else {}
+    status = str(data.get("status", "") or "")
 
-    patch_diff = latest_payload.get("patch_diff", {}) if latest_payload else {}
-    if not isinstance(patch_diff, dict):
-        patch_diff = {}
     patch_available = bool(patch_diff.get("available", False))
-    patch_path = str(patch_diff.get("path", "") or "")
+    patch_attempted = bool(patch_diff.get("attempted", False))
+    patch_safety = str(patch_diff.get("apply_safety", "") or "").strip().upper()
+    quality_safety = str(patch_quality.get("apply_safety", "") or "").strip().upper()
+    verification_available = bool(verification.get("available", False))
+    has_failure_count = "failure_count" in final_failures
+    failure_count = int(final_failures.get("failure_count", 0) or 0)
 
-    budget = get_budget_state(cwd)
-    budget_remaining = budget.get("remaining_estimate")
-    if budget_remaining is not None:
-        budget_remaining = float(budget_remaining)
+    if patch_safety in {"LOW", "BLOCKED"} or quality_safety in {"LOW", "BLOCKED"} or _blocked_status(patch_diff):
+        actions = [
+            "Do not apply this patch yet.",
+            "Inspect why: aegis-code apply --check",
+            "Regenerate carefully: aegis-code fix --max-cycles 1",
+        ]
+        return {"actions": actions, "rule": "blocked_or_low_patch"}
 
-    workspace_exists = load_workspace(cwd) is not None
+    if patch_available:
+        actions = [
+            "Inspect: aegis-code diff --stat",
+            "Validate: aegis-code apply --check",
+            "Apply safely: aegis-code apply --confirm --run-tests",
+        ]
+        return {"actions": actions, "rule": "patch_available"}
 
-    return {
-        "config_exists": config_exists,
-        "verification_available": verification_available,
-        "context_available": context_available,
-        "latest_run_exists": latest_run_exists,
-        "failure_count": failure_count,
-        "patch_available": patch_available,
-        "patch_path": patch_path,
-        "budget_remaining": budget_remaining,
-        "workspace_exists": workspace_exists,
-    }
+    if status == "budget_skipped":
+        actions = [
+            "Check budget: aegis-code budget status",
+            "Raise or clear budget if appropriate: aegis-code budget set <amount>",
+        ]
+        return {"actions": actions, "rule": "budget_skipped"}
 
+    if ("tests_failed" in status) or failure_count > 0:
+        actions = [
+            "Inspect failures: aegis-code report",
+            "Generate bounded fix: aegis-code fix --max-cycles 1",
+            "Apply only after check: aegis-code apply --check",
+        ]
+        return {"actions": actions, "rule": "tests_failed"}
 
-def _action(title: str, command: str, reason: str) -> dict[str, str]:
-    return {"title": title, "command": command, "reason": reason}
+    if ("tests_passed" in status) or (has_failure_count and failure_count == 0 and verification_available):
+        actions = [
+            "Review summary: aegis-code status",
+            "Compare with previous run: aegis-code compare",
+        ]
+        return {"actions": actions, "rule": "tests_passed"}
 
+    if patch_attempted and not patch_available:
+        actions = [
+            "Review report: aegis-code report",
+            "Check setup: aegis-code doctor",
+            "Retry with clearer scope or refreshed context: aegis-code context refresh",
+        ]
+        return {"actions": actions, "rule": "patch_attempted_unavailable"}
 
-def build_next_actions(cwd: Path) -> dict:
-    signals = _read_signals(cwd)
-    actions: list[dict[str, str]] = []
+    if not verification_available:
+        actions = [
+            "Probe project capabilities: aegis-code probe --run",
+            "Or set commands.test in .aegis/aegis-code.yml",
+        ]
+        return {"actions": actions, "rule": "no_verification"}
 
-    if not signals["config_exists"]:
-        actions.append(
-            _action(
-                "Initialize Aegis project files",
-                "aegis-code init",
-                "Project config is missing at .aegis/aegis-code.yml.",
-            )
-        )
-
-    if not signals["verification_available"]:
-        actions.append(
-            _action(
-                "Configure verification command",
-                "configure commands.test in .aegis/aegis-code.yml",
-                "No verification command is available for deterministic checks.",
-            )
-        )
-
-    if not signals["context_available"]:
-        actions.append(
-            _action(
-                "Refresh project context",
-                "aegis-code context refresh",
-                "Project context files are missing.",
-            )
-        )
-
-    if not signals["latest_run_exists"]:
-        actions.append(
-            _action(
-                "Run an initial task",
-                'aegis-code "<task>"',
-                "No latest run report exists yet.",
-            )
-        )
-    elif signals["failure_count"] > 0:
-        actions.append(
-            _action(
-                "Address latest failures",
-                "aegis-code fix",
-                "Latest run recorded test failures.",
-            )
-        )
-    elif signals["patch_available"]:
-        patch_path = signals["patch_path"] or "<path>"
-        actions.append(
-            _action(
-                "Review proposed patch diff",
-                f"aegis-code apply --check {patch_path}",
-                "Latest run includes an available patch diff.",
-            )
-        )
-
-    if signals["budget_remaining"] is not None and signals["budget_remaining"] < 0.10:
-        actions.append(
-            _action(
-                "Check budget guardrails",
-                "aegis-code budget status",
-                "Remaining budget is low; runtime may select cheapest mode.",
-            )
-        )
-
-    if not actions:
-        actions.append(
-            _action(
-                "Inspect project structure",
-                'aegis-code "analyze project structure"',
-                "Core local signals are healthy and no blocking issue was detected.",
-            )
-        )
-        if signals["workspace_exists"]:
-            actions.append(
-                _action(
-                    "Review multi-project state",
-                    "aegis-code workspace overview",
-                    "Workspace file is present and can provide cross-project status.",
-                )
-            )
-
-    actions = actions[:5]
-
-    return {
-        "actions": actions,
-        "signals": {
-            "config_exists": signals["config_exists"],
-            "verification_available": signals["verification_available"],
-            "context_available": signals["context_available"],
-            "latest_run_exists": signals["latest_run_exists"],
-            "failure_count": signals["failure_count"],
-            "budget_remaining": signals["budget_remaining"],
-        },
-    }
+    actions = [
+        "Review report: aegis-code report",
+        "Check project status: aegis-code status",
+    ]
+    return {"actions": actions, "rule": "default"}
 
 
 def format_next_actions(data: dict) -> str:
     actions = data.get("actions", [])
-    signals = data.get("signals", {})
-
-    lines = ["Suggested next actions:", ""]
+    lines = ["Next safe action:"]
     for idx, item in enumerate(actions, start=1):
-        lines.append(f"{idx}. {item.get('title', '')}")
-        lines.append(f"   command: {item.get('command', '')}")
-        lines.append(f"   reason: {item.get('reason', '')}")
-        lines.append("")
-
-    budget_remaining = signals.get("budget_remaining")
-    budget_display = "n/a" if budget_remaining is None else str(budget_remaining)
-
-    lines.extend(
-        [
-            "Signals:",
-            f"- Config: {'found' if signals.get('config_exists', False) else 'missing'}",
-            f"- Verification: {'available' if signals.get('verification_available', False) else 'missing'}",
-            f"- Context: {'available' if signals.get('context_available', False) else 'missing'}",
-            f"- Latest run: {'found' if signals.get('latest_run_exists', False) else 'missing'}",
-            f"- Failures: {int(signals.get('failure_count', 0) or 0)}",
-            f"- Budget remaining: {budget_display}",
-        ]
-    )
-
+        lines.append(f"{idx}. {str(item)}")
     return "\n".join(lines)

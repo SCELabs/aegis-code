@@ -54,6 +54,7 @@ def test_missing_api_key_returns_unavailable(monkeypatch) -> None:
         patch_plan={"proposed_changes": [{"file": "x"}]},
         aegis_execution={},
         api_key_env="OPENAI_API_KEY",
+        sll_guidance=None,
         max_context_chars=1000,
     )
     assert result["available"] is False
@@ -96,6 +97,7 @@ def test_invalid_diff_is_rejected(monkeypatch) -> None:
         patch_plan={"proposed_changes": [{"file": "x"}]},
         aegis_execution={},
         api_key_env="OPENAI_API_KEY",
+        sll_guidance=None,
         max_context_chars=1000,
     )
     assert result["available"] is False
@@ -167,6 +169,40 @@ def test_no_provider_call_when_tests_pass(monkeypatch, tmp_path: Path) -> None:
         client=_Client(),
     )
     assert payload["patch_diff"]["attempted"] is False
+
+
+def test_runtime_passes_provider_base_url_into_generate_patch_diff(monkeypatch, tmp_path: Path) -> None:
+    aegis_dir = tmp_path / ".aegis"
+    aegis_dir.mkdir(parents=True, exist_ok=True)
+    (aegis_dir / "aegis-code.yml").write_text(
+        "providers:\n"
+        "  enabled: true\n"
+        "  provider: \"openai-compatible\"\n"
+        "  api_key_env: \"OPENAI_API_KEY\"\n"
+        "  base_url: \"http://localhost:11434/v1\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": False,
+            "provider": "openai-compatible",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "unavailable",
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    _ = build_run_payload(options=TaskOptions(task="x", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert captured.get("provider") == "openai-compatible"
+    assert captured.get("base_url") == "http://localhost:11434/v1"
 
 
 def test_task_driven_patch_plan_when_tests_pass(monkeypatch, tmp_path: Path) -> None:

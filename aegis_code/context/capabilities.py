@@ -274,19 +274,24 @@ def _apply_observed_override(root: Path, detected: dict[str, Any]) -> dict[str, 
         observed = json.loads(observed_path.read_text(encoding="utf-8"))
     except Exception:
         return detected
-    if not isinstance(observed, dict) or int(observed.get("version", 0) or 0) != 1:
+    if not isinstance(observed, dict):
         return detected
-    verification = observed.get("verification", {})
-    selected = str(observed.get("selected_test_command", "") or "").strip()
-    if not isinstance(verification, dict):
-        return detected
-    if not bool(verification.get("available", False)) or not selected:
+    selected = str(observed.get("test_command", "") or observed.get("selected_test_command", "") or "").strip()
+    verification_available = bool(
+        observed.get("verification_available", False)
+        or (isinstance(observed.get("verification"), dict) and observed.get("verification", {}).get("available", False))
+    )
+    if not verification_available or not selected:
         return detected
     patched = dict(detected)
     patched["test_command"] = selected
     patched["verification_available"] = True
-    patched["confidence"] = str(verification.get("confidence", patched.get("confidence", "medium")) or "medium")
-    patched["reason"] = str(verification.get("reason", "observed_capabilities") or "observed_capabilities")
+    patched["confidence"] = str(
+        observed.get("verification_confidence")
+        or (observed.get("verification", {}) if isinstance(observed.get("verification"), dict) else {}).get("confidence")
+        or patched.get("confidence", "medium")
+    )
+    patched["reason"] = "observed_capabilities"
     if patched.get("detected_stack") in {None, "", "unknown"} and observed.get("detected_stack"):
         patched["detected_stack"] = observed.get("detected_stack")
     if (patched.get("package_manager") in {None, "", "n/a"}) and observed.get("package_manager"):

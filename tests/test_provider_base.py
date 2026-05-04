@@ -149,6 +149,23 @@ def test_build_diff_prompt_adds_regeneration_constraints() -> None:
         aegis_execution={},
     )
     assert "Regeneration constraints:" in prompt
+
+
+def test_build_diff_prompt_adds_sll_guidance_block_when_present() -> None:
+    prompt = build_diff_prompt(
+        task="fix failing test",
+        failures={"failure_count": 1},
+        context={"files": []},
+        patch_plan={"proposed_changes": []},
+        aegis_execution={},
+        sll_guidance={
+            "strategy": "narrow_scope",
+            "constraints": ["Modify fewer files", "Prefer minimal diffs"],
+            "notes": "Output shows incoherent structure; reduce scope and complexity.",
+        },
+    )
+    assert "SLL Fix Guidance:" in prompt
+    assert "- Strategy: narrow_scope" in prompt
     assert "- Produce valid diff" in prompt
 
 

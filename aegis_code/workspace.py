@@ -407,6 +407,135 @@ def compare_workspace_runs(cwd: Path) -> dict:
     }
 
 
+def get_workspace_next_actions(cwd: Path) -> dict:
+    data = load_workspace(cwd)
+    if data is None:
+        return {"exists": False}
+
+    projects = data.get("projects", [])
+    suggestions: list[dict[str, object]] = []
+    for index, item in enumerate(projects):
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", ""))
+        name = str(item.get("name", Path(path).name if path else ""))
+        project_path = Path(path) if path else None
+        if project_path is None or not project_path.exists():
+            suggestions.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "priority": "LOW",
+                    "reason": "project missing or moved",
+                    "signal": None,
+                    "action": "Project missing or moved",
+                }
+            )
+            continue
+
+        latest_path = project_path / ".aegis" / "runs" / "latest.json"
+        if not latest_path.exists():
+            suggestions.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "priority": "MEDIUM",
+                    "reason": "not initialized (missing latest run)",
+                    "signal": None,
+                    "action": "Run: aegis-code probe --run",
+                }
+            )
+            continue
+
+        try:
+            payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        verification = payload.get("verification", {})
+        verification_available = bool(verification.get("available", False)) if isinstance(verification, dict) else False
+        final_failures = payload.get("final_failures", {})
+        failure_count = 0
+        if isinstance(final_failures, dict):
+            try:
+                failure_count = int(final_failures.get("failure_count", 0) or 0)
+            except Exception:
+                failure_count = 0
+        provider_skipped = bool(payload.get("provider_skipped", False))
+        sll_risk = str(payload.get("sll_risk", "") or "").lower()
+
+        if not verification_available:
+            suggestions.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "priority": "HIGH",
+                    "reason": "no verification available",
+                    "signal": None,
+                    "action": "Run: aegis-code probe --run",
+                }
+            )
+            continue
+        if failure_count > 0:
+            suggestions.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "priority": "HIGH",
+                    "reason": f"tests failing ({failure_count} failures)",
+                    "signal": f"failures: {failure_count}",
+                    "action": "Run: aegis-code fix --max-cycles 1",
+                }
+            )
+            continue
+        if provider_skipped:
+            suggestions.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "priority": "MEDIUM",
+                    "reason": "provider step skipped",
+                    "signal": None,
+                    "action": "Review skip reason and resolve before retry",
+                }
+            )
+            continue
+        if sll_risk == "high":
+            suggestions.append(
+                {
+                    "index": index,
+                    "name": name,
+                    "priority": "MEDIUM",
+                    "reason": "SLL risk: high",
+                    "signal": None,
+                    "action": "Investigate instability before large changes",
+                }
+            )
+            continue
+        suggestions.append(
+            {
+                "index": index,
+                "name": name,
+                "priority": "LOW",
+                "reason": "stable, tests passing",
+                "signal": None,
+                "action": "No action needed",
+            }
+        )
+
+    order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    sorted_suggestions = sorted(
+        suggestions,
+        key=lambda item: (
+            order.get(str(item.get("priority", "LOW")), 2),
+            int(item.get("index", 0) or 0),
+        ),
+    )
+    return {"exists": True, "projects": sorted_suggestions}
+
+
 def _is_run_passed(payload: dict) -> bool:
     final_failures = payload.get("final_failures")
     if isinstance(final_failures, dict) and "failure_count" in final_failures:

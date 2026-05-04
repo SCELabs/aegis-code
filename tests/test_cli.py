@@ -831,3 +831,78 @@ def test_diff_command_invalid_diff_stat(tmp_path: Path, monkeypatch, capsys) -> 
     assert "Reason: invalid_diff" in out
     assert "File stats unavailable for invalid diff." in out
     assert "Run `aegis-code diff --full` to inspect raw provider output." in out
+
+
+def test_task_output_shows_sll_regime_and_risk_when_available(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_passed",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": False, "available": False, "status": "skipped"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "sll_pre_call": {"available": True, "regime": "boundary"},
+            "sll_post_call": {"available": False},
+            "sll_risk": "watch",
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "SLL:" in out
+    assert "- regime: boundary" in out
+    assert "- risk: watch" in out
+
+
+def test_task_output_shows_sll_fix_guidance_when_regeneration_attempted(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    def _fake_run_task(**_: object):
+        return {
+            "task": "x",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": False, "status": "invalid", "regeneration_attempted": True},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "sll_pre_call": {"available": False},
+            "sll_post_call": {"available": True, "regime": "fragmentation"},
+            "sll_risk": "high",
+            "sll_fix_guidance": {"strategy": "narrow_scope", "constraints": [], "notes": "reduce scope"},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["x"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "SLL Fix Guidance:" in out
+    assert "- strategy: narrow_scope" in out
+    assert "- notes: reduce scope" in out

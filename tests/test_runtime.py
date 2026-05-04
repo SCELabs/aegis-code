@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
@@ -261,6 +262,8 @@ def test_runtime_no_test_command_marks_unverified_and_skips_patch_diff(tmp_path:
     assert payload["status"] == "completed_no_commands"
     assert payload["verification"]["available"] is False
     assert payload["verification"]["test_command"] is None
+    assert payload["verification"]["source"] == "none"
+    assert payload["verification"]["observed"] is False
     assert payload["test_attempts"] == []
     assert payload["failures"]["failure_count"] == 0
     assert payload["patch_diff"]["attempted"] is False
@@ -285,6 +288,139 @@ def test_runtime_local_default_failing_status(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
     payload = run_task(options=TaskOptions(task="local fail"), cwd=tmp_path, client=_CapturingClient())
     assert payload["status"] == "completed_tests_failed"
+
+
+def test_runtime_payload_includes_verification_source_and_observed(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text('commands:\n  test: ""\n', encoding="utf-8")
+    (tmp_path / ".aegis" / "capabilities.json").write_text(
+        json.dumps({"test_command": "pytest -q", "test_command_observed": True}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(options=TaskOptions(task="verify source"), cwd=tmp_path, client=_CapturingClient())
+    assert payload["verification"]["command"] == "pytest -q"
+    assert payload["verification"]["source"] == "capabilities"
+    assert payload["verification"]["observed"] is True
+
+
+def test_runtime_payload_includes_sll_pre_call_and_risk(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.should_skip_provider", lambda _o, _c: {"skip": False, "reason": "none", "action": None})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_sll_analysis",
+        lambda _text: {
+            "available": True,
+            "regime": "boundary",
+            "coherence": 0.7,
+            "collapse_risk": 0.2,
+            "fragmentation_risk": 0.6,
+            "drift_risk": 0.1,
+            "recommendation": None,
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.classify_sll_risk", lambda _data: "watch")
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {"available": False, "provider": "openai", "model": "gpt-4.1-mini", "diff": "", "error": "x"},
+    )
+    payload = build_run_payload(options=TaskOptions(task="sll payload", propose_patch=True), cwd=tmp_path, client=_CapturingClient())
+    assert payload["sll_pre_call"]["available"] is True
+    assert payload["sll_risk"] == "watch"
+
+
+def test_runtime_no_crash_when_sll_missing(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.should_skip_provider", lambda _o, _c: {"skip": False, "reason": "none", "action": None})
+    monkeypatch.setattr("aegis_code.runtime.run_sll_analysis", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {"available": False, "provider": "openai", "model": "gpt-4.1-mini", "diff": "", "error": "x"},
+    )
+    payload = build_run_payload(options=TaskOptions(task="sll missing", propose_patch=True), cwd=tmp_path, client=_CapturingClient())
+    assert payload["sll_pre_call"]["available"] is False
+    assert payload["sll_risk"] == "low"
+
+
+def test_runtime_payload_includes_sll_fix_guidance_after_failure(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.should_skip_provider", lambda _o, _c: {"skip": False, "reason": "none", "action": None})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_sll_analysis",
+        lambda _text: {
+            "available": True,
+            "regime": "fragmentation",
+            "coherence": 0.2,
+            "collapse_risk": 0.2,
+            "fragmentation_risk": 0.9,
+            "drift_risk": 0.1,
+            "recommendation": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {"available": False, "provider": "openai", "model": "gpt-4.1-mini", "diff": "", "error": "x"},
+    )
+    payload = build_run_payload(options=TaskOptions(task="sll fix guidance", propose_patch=True), cwd=tmp_path, client=_CapturingClient())
+    assert payload["sll_fix_guidance"]["strategy"] == "narrow_scope"
+
+
+def test_prompt_includes_sll_guidance_only_in_fix_loop_regeneration(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.should_skip_provider", lambda _o, _c: {"skip": False, "reason": "none", "action": None})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_sll_analysis",
+        lambda _text: {
+            "available": True,
+            "regime": "fragmentation",
+            "coherence": 0.2,
+            "collapse_risk": 0.2,
+            "fragmentation_risk": 0.9,
+            "drift_risk": 0.1,
+            "recommendation": None,
+        },
+    )
+    calls: list[dict[str, object]] = []
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            return {"available": True, "provider": "openai", "model": "gpt-4.1-mini", "diff": "not a diff", "error": None}
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    _ = build_run_payload(options=TaskOptions(task="regen with guidance", propose_patch=True), cwd=tmp_path, client=_CapturingClient())
+    assert len(calls) >= 2
+    assert calls[0].get("sll_guidance") is None
+    second = calls[1].get("sll_guidance")
+    assert isinstance(second, dict)
+    assert second.get("strategy") == "narrow_scope"
 
 
 def test_runtime_payload_includes_project_context_metadata(monkeypatch, tmp_path: Path) -> None:

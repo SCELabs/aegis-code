@@ -177,6 +177,8 @@ def check_setup(cwd: Path) -> dict:
         "verification_reason": detected.get("reason"),
         "observed_capabilities_present": bool(observed is not None),
         "observed_selected_test_command": (
-            str(observed.get("selected_test_command", "")).strip() if isinstance(observed, dict) else ""
+            str(observed.get("test_command", "") or observed.get("selected_test_command", "")).strip()
+            if isinstance(observed, dict)
+            else ""
         ),
     }

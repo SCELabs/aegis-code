@@ -28,6 +28,7 @@ class ProvidersConfig:
     enabled: bool = False
     provider: str = "openai"
     api_key_env: str = "OPENAI_API_KEY"
+    base_url: str = ""
     timeout_seconds: int = 60
 
 

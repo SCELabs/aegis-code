@@ -4,125 +4,74 @@ import json
 from pathlib import Path
 
 from aegis_code import cli
-from aegis_code.next_actions import build_next_actions
+from aegis_code.next_actions import build_next_actions, format_next_actions
 
 
-def _write_latest(tmp_path: Path, payload: dict) -> None:
+def test_patch_available_next_action() -> None:
+    data = build_next_actions({"patch_diff": {"available": True}})
+    text = format_next_actions(data)
+    assert "Next safe action:" in text
+    assert "1. Inspect: aegis-code diff --stat" in text
+    assert "2. Validate: aegis-code apply --check" in text
+    assert "3. Apply safely: aegis-code apply --confirm --run-tests" in text
+
+
+def test_blocked_low_patch_next_action() -> None:
+    data = build_next_actions({"patch_diff": {"available": True, "apply_safety": "LOW"}})
+    text = format_next_actions(data)
+    assert "1. Do not apply this patch yet." in text
+    assert "2. Inspect why: aegis-code apply --check" in text
+    assert "3. Regenerate carefully: aegis-code fix --max-cycles 1" in text
+
+
+def test_no_verification_next_action() -> None:
+    data = build_next_actions({"verification": {"available": False}})
+    text = format_next_actions(data)
+    assert "1. Probe project capabilities: aegis-code probe --run" in text
+    assert "2. Or set commands.test in .aegis/aegis-code.yml" in text
+
+
+def test_tests_failed_next_action() -> None:
+    data = build_next_actions(
+        {
+            "status": "completed_tests_failed",
+            "final_failures": {"failure_count": 2},
+            "verification": {"available": True},
+        }
+    )
+    text = format_next_actions(data)
+    assert "1. Inspect failures: aegis-code report" in text
+    assert "2. Generate bounded fix: aegis-code fix --max-cycles 1" in text
+    assert "3. Apply only after check: aegis-code apply --check" in text
+
+
+def test_budget_skipped_next_action() -> None:
+    data = build_next_actions({"status": "budget_skipped"})
+    text = format_next_actions(data)
+    assert "1. Check budget: aegis-code budget status" in text
+    assert "2. Raise or clear budget if appropriate: aegis-code budget set <amount>" in text
+
+
+def test_default_fallback_next_action() -> None:
+    data = build_next_actions({"verification": {"available": True}})
+    text = format_next_actions(data)
+    assert "1. Review report: aegis-code report" in text
+    assert "2. Check project status: aegis-code status" in text
+
+
+def test_status_output_includes_next_safe_action(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
     runs = tmp_path / ".aegis" / "runs"
     runs.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "task": "x",
+        "status": "completed_tests_passed",
+        "failures": {"failure_count": 0},
+        "final_failures": {"failure_count": 0},
+        "verification": {"available": True, "test_command": "python -m pytest -q", "detected_stack": "python"},
+    }
     (runs / "latest.json").write_text(json.dumps(payload), encoding="utf-8")
-
-
-def test_next_suggests_init_when_config_missing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    data = build_next_actions(tmp_path)
-
-    commands = [item["command"] for item in data["actions"]]
-    assert "aegis-code init" in commands
-
-
-def test_next_suggests_context_refresh_when_context_missing(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    aegis = tmp_path / ".aegis"
-    aegis.mkdir(parents=True, exist_ok=True)
-    (aegis / "aegis-code.yml").write_text("commands:\n  test: \"python -m pytest -q\"\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-
-    data = build_next_actions(tmp_path)
-
-    commands = [item["command"] for item in data["actions"]]
-    assert "aegis-code context refresh" in commands
-
-
-def test_next_suggests_run_when_no_latest_run(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".aegis" / "aegis-code.yml").write_text("mode: balanced\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    context_dir = tmp_path / ".aegis" / "context"
-    context_dir.mkdir(parents=True, exist_ok=True)
-    (context_dir / "project_summary.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "architecture.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "constraints.md").write_text("x\n", encoding="utf-8")
-
-    data = build_next_actions(tmp_path)
-
-    commands = [item["command"] for item in data["actions"]]
-    assert 'aegis-code "<task>"' in commands
-
-
-def test_next_suggests_fix_when_failures_exist(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".aegis" / "aegis-code.yml").write_text("mode: balanced\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    context_dir = tmp_path / ".aegis" / "context"
-    context_dir.mkdir(parents=True, exist_ok=True)
-    (context_dir / "project_summary.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "architecture.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "constraints.md").write_text("x\n", encoding="utf-8")
-    _write_latest(tmp_path, {"failures": {"failure_count": 2}})
-
-    data = build_next_actions(tmp_path)
-
-    commands = [item["command"] for item in data["actions"]]
-    assert "aegis-code fix" in commands
-
-
-def test_next_suggests_apply_check_when_patch_available(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".aegis" / "aegis-code.yml").write_text("mode: balanced\n", encoding="utf-8")
-    (tmp_path / "tests").mkdir()
-    context_dir = tmp_path / ".aegis" / "context"
-    context_dir.mkdir(parents=True, exist_ok=True)
-    (context_dir / "project_summary.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "architecture.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "constraints.md").write_text("x\n", encoding="utf-8")
-    _write_latest(
-        tmp_path,
-        {
-            "failures": {"failure_count": 0},
-            "patch_diff": {"available": True, "path": ".aegis/runs/latest.diff"},
-        },
-    )
-
-    data = build_next_actions(tmp_path)
-
-    commands = [item["command"] for item in data["actions"]]
-    assert "aegis-code apply --check .aegis/runs/latest.diff" in commands
-
-
-def test_next_includes_budget_low_signal(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    aegis = tmp_path / ".aegis"
-    aegis.mkdir(parents=True, exist_ok=True)
-    (aegis / "aegis-code.yml").write_text("mode: balanced\n", encoding="utf-8")
-    (aegis / "budget.json").write_text(
-        json.dumps({"limit": 1.0, "spent_estimate": 0.95, "currency": "USD", "events": []}),
-        encoding="utf-8",
-    )
-    (tmp_path / "tests").mkdir()
-    context_dir = aegis / "context"
-    context_dir.mkdir(parents=True, exist_ok=True)
-    (context_dir / "project_summary.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "architecture.md").write_text("x\n", encoding="utf-8")
-    (context_dir / "constraints.md").write_text("x\n", encoding="utf-8")
-    _write_latest(tmp_path, {"failures": {"failure_count": 0}, "patch_diff": {"available": False}})
-
-    data = build_next_actions(tmp_path)
-
-    commands = [item["command"] for item in data["actions"]]
-    assert "aegis-code budget status" in commands
-
-
-def test_cli_next_outputs_suggestions(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    exit_code = cli.main(["next"])
+    exit_code = cli.main(["status"])
     out = capsys.readouterr().out
-
     assert exit_code == 0
-    assert "Suggested next actions:" in out
-    assert "Signals:" in out
+    assert "Next safe action:" in out

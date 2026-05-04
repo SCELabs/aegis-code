@@ -637,3 +637,130 @@ def test_workspace_compare_no_workspace(tmp_path: Path, monkeypatch, capsys) -> 
     out = capsys.readouterr().out
     assert exit_code == 1
     assert "No workspace found. Run `aegis-code workspace init`." in out
+
+
+def test_workspace_next_no_verification_suggests_probe(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    runs = project / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(
+        json.dumps({"verification": {"available": False}, "final_failures": {"failure_count": 0}}),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "next"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "no verification available" in out
+    assert "Run: aegis-code probe --run" in out
+
+
+def test_workspace_next_failing_tests_suggests_fix(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    runs = project / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 3}}),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "next"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "tests failing (3 failures)" in out
+    assert "Run: aegis-code fix --max-cycles 1" in out
+
+
+def test_workspace_next_provider_skipped_suggests_review(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    runs = project / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "verification": {"available": True},
+                "final_failures": {"failure_count": 0},
+                "provider_skipped": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "next"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "provider step skipped" in out
+    assert "Review skip reason and resolve before retry" in out
+
+
+def test_workspace_next_passing_tests_suggests_no_action(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    runs = project / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 0}}),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    exit_code = cli.main(["workspace", "next"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "stable, tests passing" in out
+    assert "No action needed" in out
+
+
+def test_workspace_next_missing_project_handled(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    project = tmp_path / "api-service"
+    project.mkdir(parents=True, exist_ok=True)
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(project)]) == 0
+    project.rmdir()
+    exit_code = cli.main(["workspace", "next"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "project missing or moved" in out
+    assert "Project missing or moved" in out
+
+
+def test_workspace_next_sorting_order_high_medium_low_stable(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    high = tmp_path / "high-failures"
+    medium = tmp_path / "medium-provider"
+    low = tmp_path / "low-passing"
+    for project in [high, medium, low]:
+        project.mkdir(parents=True, exist_ok=True)
+        (project / ".aegis" / "runs").mkdir(parents=True, exist_ok=True)
+    (high / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 1}}),
+        encoding="utf-8",
+    )
+    (medium / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 0}, "provider_skipped": True}),
+        encoding="utf-8",
+    )
+    (low / ".aegis" / "runs" / "latest.json").write_text(
+        json.dumps({"verification": {"available": True}, "final_failures": {"failure_count": 0}}),
+        encoding="utf-8",
+    )
+    assert cli.main(["workspace", "init"]) == 0
+    assert cli.main(["workspace", "add", str(low)]) == 0
+    assert cli.main(["workspace", "add", str(high)]) == 0
+    assert cli.main(["workspace", "add", str(medium)]) == 0
+    exit_code = cli.main(["workspace", "next"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert out.index("1. high-failures") < out.index("2. medium-provider")
+    assert out.index("2. medium-provider") < out.index("3. low-passing")

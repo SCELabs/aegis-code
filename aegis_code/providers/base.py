@@ -65,6 +65,7 @@ def build_diff_prompt(
     context: dict[str, Any],
     patch_plan: dict[str, Any],
     aegis_execution: dict[str, Any],
+    sll_guidance: dict[str, Any] | None = None,
 ) -> str:
     test_constraints: list[str] = []
     regen_constraints: list[str] = []
@@ -145,8 +146,23 @@ def build_diff_prompt(
     prompt_context: dict[str, Any] = context
     if task_type == "test_generation":
         prompt_context = _shape_test_generation_context(task=task, context=context, patch_plan=patch_plan)
+    sll_lines = ""
+    if isinstance(sll_guidance, dict) and sll_guidance:
+        strategy = str(sll_guidance.get("strategy", "unknown") or "unknown")
+        constraints = sll_guidance.get("constraints", [])
+        notes = str(sll_guidance.get("notes", "") or "")
+        rendered_constraints = []
+        if isinstance(constraints, list):
+            rendered_constraints = [f"  - {str(item)}" for item in constraints if str(item).strip()]
+        sll_lines = (
+            "SLL Fix Guidance:\n"
+            f"- Strategy: {strategy}\n"
+            + ("- Constraints:\n" + "\n".join(rendered_constraints) + "\n" if rendered_constraints else "")
+            + (f"- Notes:\n  {notes}\n" if notes else "")
+        )
     return (
         "You generate a unified git diff only.\n"
+        "- Produce valid diff\n"
         "Do not output markdown fences or explanations.\n"
         "If unsure, output an empty string.\n\n"
         f"Task: {task}\n"
@@ -156,6 +172,7 @@ def build_diff_prompt(
         f"Aegis execution guidance: {aegis_execution}\n"
         + ("\n".join(test_constraints) + "\n" if test_constraints else "")
         + ("Regeneration constraints:\n" + "\n".join(regen_constraints) + "\n" if regen_constraints else "")
+        + sll_lines
     )
 
 

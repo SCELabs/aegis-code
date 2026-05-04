@@ -50,6 +50,7 @@ def default_config_yaml(test_command: str = "pytest -q") -> str:
         "  enabled: false\n"
         "  provider: \"openai\"\n"
         "  api_key_env: \"OPENAI_API_KEY\"\n"
+        "  base_url: \"\"\n"
         "  timeout_seconds: 60\n"
         "patches:\n"
         "  generate_diff: false\n"
