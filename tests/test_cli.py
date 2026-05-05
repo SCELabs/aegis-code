@@ -816,6 +816,89 @@ def test_cli_provider_timeout_override_passed_to_task_options(tmp_path: Path, mo
     assert getattr(options, "provider_timeout_seconds", None) == 42
 
 
+def test_patch_command_builds_explicit_scope_contract(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text("x = 1\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["scope"] = getattr(options, "scope_contract", None)
+        captured["command"] = getattr(options, "command", None)
+        return {
+            "task": "implement todo CLI commands",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "x"},
+            "structured_patch": {"status": "failed"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "src/main.py", "implement todo CLI commands"])
+    _ = capsys.readouterr()
+    assert exit_code == 1
+    assert captured["command"] == "patch"
+    scope = captured["scope"]
+    assert isinstance(scope, dict)
+    assert scope["allowed_targets"] == ["src/main.py"]
+    assert scope["allow_new_files"] is False
+    assert scope["allowed_operations"] == ["replace"]
+
+
+def test_patch_command_allows_missing_targets_when_allow_create(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    captured: dict[str, object] = {}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["scope"] = getattr(options, "scope_contract", None)
+        return {
+            "task": "create config loader",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": True, "status": "generated", "path": ".aegis/runs/latest.diff"},
+            "structured_patch": {"status": "accepted"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "src/config.py", "--allow-create", "create config loader"])
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    scope = captured["scope"]
+    assert isinstance(scope, dict)
+    assert scope["allow_new_files"] is True
+    assert "create" in scope["allowed_operations"]
+
+
 def test_diff_command_invalid_diff_preview(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     runs = tmp_path / ".aegis" / "runs"

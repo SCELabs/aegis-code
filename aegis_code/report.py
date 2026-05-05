@@ -42,6 +42,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     patch_plan = payload.get("patch_plan", {})
     patch_diff = payload.get("patch_diff", {})
     structured_patch = payload.get("structured_patch", {}) if isinstance(payload.get("structured_patch"), dict) else {}
+    patch_safety = payload.get("patch_safety", {}) if isinstance(payload.get("patch_safety"), dict) else {}
     patch_quality = payload.get("patch_quality")
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
@@ -321,7 +322,10 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append("```")
     elif str(patch_diff.get("status", "")) == "blocked":
         lines.append("- Status: `blocked`")
-        lines.append("- Reason: `structured_output_invalid`")
+        lines.append(f"- Reason: `{patch_diff.get('error', 'structured_output_invalid')}`")
+        missing_targets = patch_diff.get("missing_targets", [])
+        if isinstance(missing_targets, list) and missing_targets:
+            lines.append(f"- Missing targets: `{', '.join(str(item) for item in missing_targets)}`")
         if structured_patch.get("failure_reason"):
             lines.append(f"- Failure reason: `{structured_patch.get('failure_reason')}`")
         if patch_plan.get("allowed_targets"):
@@ -438,6 +442,27 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             lines.append(f"- Issues: `{', '.join(str(item) for item in issues)}`")
         else:
             lines.append("- Issues: none")
+
+    lines.extend(
+        [
+            "",
+            "## Patch Safety Review",
+            "",
+        ]
+    )
+    safety_level = str(patch_safety.get("highest_severity", "pass") or "pass").upper()
+    lines.append(f"- Safety: `{safety_level}`")
+    safety_issues = patch_safety.get("issues", [])
+    if isinstance(safety_issues, list) and safety_issues:
+        lines.append("- Warnings:")
+        for issue in safety_issues:
+            if not isinstance(issue, dict):
+                continue
+            lines.append(f"- `{issue.get('file', '?')}` | `{issue.get('type', 'unknown')}`")
+            lines.append(f"  - Message: {issue.get('message', '')}")
+            lines.append(f"  - Line: `{issue.get('line', '')}`")
+            if issue.get("suggestion"):
+                lines.append(f"  - Suggestion: {issue.get('suggestion')}")
 
     if task_driven_patch_proposal:
         lines.extend(

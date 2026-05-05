@@ -89,17 +89,26 @@ def _build_retry_task(task: str, reason: str, errors: list[str], contract: Propo
     )
 
 
-def _validate_contract(converted: dict[str, Any], contract: ProposalContract) -> list[str]:
+def _validate_contract(parsed_edits: dict[str, Any], converted: dict[str, Any], contract: ProposalContract) -> list[str]:
     errors: list[str] = []
+    changes = parsed_edits.get("changes", []) if isinstance(parsed_edits, dict) else []
+    if not isinstance(changes, list):
+        changes = []
+    for item in changes:
+        if not isinstance(item, dict):
+            continue
+        mode = str(item.get("mode", "") or "").strip().lower()
+        if mode and contract.allowed_operations and mode not in set(contract.allowed_operations):
+            errors.append("unsupported_mode")
+            break
+        if mode == "create" and not contract.allow_new_files:
+            errors.append("unsupported_mode")
+            break
     files = converted.get("files", [])
     if not isinstance(files, list):
         files = []
     if contract.max_files is not None and len(files) > int(contract.max_files):
         errors.append("too_many_files")
-    if not contract.allow_new_files:
-        for warning in converted.get("warnings", []):
-            if str(warning).startswith("created:"):
-                errors.append("forbidden_create")
     return errors
 
 
@@ -124,7 +133,7 @@ def build_proposal_contract(
                     path = str(item.get("file", "")).strip()
                     if path:
                         allowed_targets.append(path)
-    allow_new_files = any(str(item.get("change_type", "")).strip().lower() == "create" for item in patch_plan.get("proposed_changes", []) if isinstance(item, dict))
+    allow_new_files = bool(patch_plan.get("allow_new_files", False)) or any(str(item.get("change_type", "")).strip().lower() == "create" for item in patch_plan.get("proposed_changes", []) if isinstance(item, dict))
     lowered_task = str(task or "").lower()
     if any(token in lowered_task for token in ("create ", "add file", "new module", "scaffold")):
         allow_new_files = True
@@ -132,10 +141,14 @@ def build_proposal_contract(
         allow_new_files = False
     if task_type == "test_generation":
         allow_new_files = all(str(path).startswith("tests/") for path in allowed_targets) if allowed_targets else True
-    max_files = len(allowed_targets) if allowed_targets else None
+    max_files = int(patch_plan.get("max_files", 0) or 0) if isinstance(patch_plan.get("max_files"), int) else (len(allowed_targets) if allowed_targets else None)
+    if isinstance(max_files, int) and max_files <= 0:
+        max_files = None
+    configured_ops = [str(item).strip().lower() for item in patch_plan.get("allowed_operations", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_operations", []), list) else []
+    allowed_operations = configured_ops or (["create", "replace"] if allow_new_files else ["replace"])
     return ProposalContract(
         allowed_targets=allowed_targets,
-        allowed_operations=["replace", "create"],
+        allowed_operations=allowed_operations,
         forbidden_operations=["delete", "rename"],
         max_files=max_files,
         allow_new_files=allow_new_files,
@@ -193,7 +206,7 @@ def run_structured_proposal_controller(
                 allowed_targets=contract.allowed_targets or None,
             )
             errors = [str(item) for item in converted.get("errors", [])]
-            errors.extend(_validate_contract(converted, contract))
+            errors.extend(_validate_contract(parsed.get("edits", {}), converted, contract))
             reason = classify_structured_failure(errors)
             last_result = ProposalAttemptResult(
                 ok=not errors and bool(converted.get("ok", False)),

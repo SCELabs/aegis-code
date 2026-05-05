@@ -41,6 +41,7 @@ from aegis_code.providers import generate_structured_edits
 from aegis_code.patches.proposal_controller import build_proposal_contract, run_structured_proposal_controller
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
+from aegis_code.safety.patch_review import safety_report_to_dict, scan_diff
 from aegis_code.secrets import list_scoped_keys, resolve_key, resolve_key_source
 from aegis_code.short_circuit import should_skip_provider
 from aegis_code.sll_guidance import build_sll_fix_guidance
@@ -68,6 +69,8 @@ class TaskOptions:
     aegis_guidance: dict[str, Any] | None = None
     progress_callback: Any | None = None
     provider_timeout_seconds: int | None = None
+    command: str | None = None
+    scope_contract: dict[str, Any] | None = None
 
 
 def _progress(options: TaskOptions, message: str) -> None:
@@ -1038,8 +1041,11 @@ def build_run_payload(
         "retry_attempted": False,
         "retry_count": 0,
         "next_actions": [],
+        "allowed_targets": [],
+        "missing_targets": [],
     }
     patch_quality: dict[str, Any] | None = None
+    patch_safety: dict[str, Any] | None = None
     aegis_guidance: dict[str, Any] = {"available": False, "actions": [], "explanation": "", "used_fallback": False}
     provider_skipped = False
     skip_reason = ""
@@ -1306,7 +1312,12 @@ def build_run_payload(
 
     should_attempt_provider_diff = bool(options.propose_patch or config.patches.generate_diff)
     final_failure_count = int(final_failures.get("failure_count", 0) or 0)
-    task_driven_patch_proposal = bool(options.propose_patch and final_failure_count == 0 and is_constructive_task(options.task))
+    explicit_patch_command = str(options.command or "").strip().lower() == "patch"
+    task_driven_patch_proposal = bool(
+        options.propose_patch
+        and final_failure_count == 0
+        and (explicit_patch_command or is_constructive_task(options.task))
+    )
     should_patch_flow = bool(final_failure_count > 0 or task_driven_patch_proposal)
     if task_driven_patch_proposal:
         _progress(options, "building task context")
@@ -1470,6 +1481,46 @@ def build_run_payload(
                 }
             )
 
+    explicit_scope = options.scope_contract if isinstance(options.scope_contract, dict) else {}
+    explicit_scope_active = str(options.command or "").strip().lower() == "patch" and str(explicit_scope.get("source", "")) == "cli_explicit"
+    if explicit_scope_active:
+        scope_targets = [str(item) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
+        scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))
+        scope_allow_new = bool(explicit_scope.get("allow_new_files", False))
+        scope_ops = [str(item) for item in explicit_scope.get("allowed_operations", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_operations", []), list) else (["create", "replace"] if scope_allow_new else ["replace"])
+        scope_missing = [str(item) for item in explicit_scope.get("missing_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("missing_targets", []), list) else []
+        patch_plan["allowed_targets"] = scope_targets
+        patch_plan["max_files"] = scope_max_files
+        patch_plan["allow_new_files"] = scope_allow_new
+        patch_plan["allowed_operations"] = scope_ops
+        structured_patch["allowed_targets"] = scope_targets
+        structured_patch["missing_targets"] = scope_missing
+        block_reason = str(explicit_scope.get("block_reason", "") or "").strip() or None
+        if block_reason is not None:
+            patch_quality = None
+            remove_latest_diff(cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
+            structured_patch["status"] = "failed"
+            structured_patch["failure_reason"] = block_reason
+            structured_patch["next_actions"] = [
+                "use existing files",
+                "enable --allow-create",
+                "correct file paths",
+            ]
+            patch_diff.update(
+                {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "invalid_diff_path": None,
+                    "error": "requested_target_missing",
+                    "missing_targets": scope_missing,
+                    "preview": "",
+                }
+            )
+            should_attempt_provider_diff = False
+            should_patch_flow = False
     provider_enabled = bool(config.providers.enabled or options.propose_patch)
     has_context_files = bool(failure_context.get("files", []))
     has_proposed_changes = bool(patch_plan.get("proposed_changes", []))
@@ -1877,16 +1928,17 @@ def build_run_payload(
                 regen_instructions = test_constraints.get("regeneration_instructions", [])
                 if isinstance(regen_instructions, list):
                     enhanced_constraints.extend(str(item) for item in regen_instructions)
-                allowed_targets = test_constraints.get("allowed_targets", [])
-                if isinstance(allowed_targets, list) and allowed_targets:
-                    enhanced_patch_plan["allowed_targets"] = [str(item) for item in allowed_targets]
-                else:
-                    enhanced_patch_plan["allowed_targets"] = [
-                        path for path in _extract_context_paths(failure_context) if path.startswith("tests/")
-                    ]
+                if not explicit_scope_active:
+                    allowed_targets = test_constraints.get("allowed_targets", [])
+                    if isinstance(allowed_targets, list) and allowed_targets:
+                        enhanced_patch_plan["allowed_targets"] = [str(item) for item in allowed_targets]
+                    else:
+                        enhanced_patch_plan["allowed_targets"] = [
+                            path for path in _extract_context_paths(failure_context) if path.startswith("tests/")
+                        ]
             if impl_with_tests_task:
                 planned_targets = sorted(_collect_plan_targets(patch_plan))
-                if planned_targets:
+                if planned_targets and not explicit_scope_active:
                     enhanced_patch_plan["allowed_targets"] = planned_targets
                 enhanced_constraints.extend(
                     [
@@ -1914,7 +1966,7 @@ def build_run_payload(
                     regeneration["aegis_guidance_applied"] = True
                     if isinstance(corrective.get("constraints"), list):
                         enhanced_constraints.extend(str(item) for item in corrective.get("constraints", []))
-                    if isinstance(corrective.get("allowed_targets"), list) and corrective.get("allowed_targets"):
+                    if (not explicit_scope_active) and isinstance(corrective.get("allowed_targets"), list) and corrective.get("allowed_targets"):
                         enhanced_patch_plan["allowed_targets"] = [
                             str(item) for item in corrective.get("allowed_targets", [])
                         ]
@@ -2218,7 +2270,7 @@ def build_run_payload(
                 "Ensure patch aligns with patch plan targets.",
                 "Include every planned target file in the diff.",
             ]
-            if planned_targets:
+            if planned_targets and not explicit_scope_active:
                 regen_plan["allowed_targets"] = planned_targets
 
             if _control_requested(config, (cwd or Path.cwd()).resolve()):
@@ -2234,7 +2286,7 @@ def build_run_payload(
                     actions = control.get("actions", {})
                     if isinstance(actions, dict):
                         allowed = actions.get("allowed_targets")
-                        if isinstance(allowed, list) and allowed:
+                        if (not explicit_scope_active) and isinstance(allowed, list) and allowed:
                             regen_plan["allowed_targets"] = [str(item) for item in allowed if str(item).strip()]
                         max_additions = actions.get("max_additions")
                         if isinstance(max_additions, int) and max_additions > 0:
@@ -2583,12 +2635,16 @@ def build_run_payload(
     if diff_path:
         try:
             diff_text_for_sll = Path(diff_path).read_text(encoding="utf-8", errors="replace")
+            patch_safety = safety_report_to_dict(scan_diff(diff_text_for_sll))
+            payload["patch_safety"] = patch_safety
             payload["sll_post_call"] = run_sll_analysis(diff_text_for_sll)
             payload["sll_risk"] = classify_sll_risk(payload["sll_post_call"])
             if int((payload.get("final_failures", {}) if isinstance(payload.get("final_failures", {}), dict) else {}).get("failure_count", 0) or 0) > 0:
                 payload["sll_fix_guidance"] = build_sll_fix_guidance(payload["sll_post_call"])
         except Exception:
             pass
+    if "patch_safety" not in payload:
+        payload["patch_safety"] = patch_safety or {"highest_severity": "pass", "issues": []}
     return payload
 
 

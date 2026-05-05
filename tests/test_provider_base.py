@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aegis_code.providers.base import _trim_context, build_diff_prompt, is_plausible_diff
+from aegis_code.providers.base import _trim_context, build_diff_prompt, build_structured_edit_prompt, is_plausible_diff
 from aegis_code.providers.context_builder import build_failure_fix_context
 
 
@@ -290,3 +290,27 @@ def test_fix_context_does_not_include_entire_large_test_file() -> None:
     source = str(shaped["files"][0].get("failing_test_source", ""))
     assert "def test_aegis_intentional_semantic_failure" in source
     assert "test_noise_0" not in source
+
+
+def test_build_diff_prompt_includes_safety_constraints() -> None:
+    prompt = build_diff_prompt(
+        task="implement cli",
+        failures={},
+        context={"files": []},
+        patch_plan={"task_type": "general", "proposed_changes": []},
+        aegis_execution={},
+    )
+    assert "Safety constraints:" in prompt
+    assert "Do not write outside the project root unless explicitly requested." in prompt
+
+
+def test_build_structured_prompt_includes_safety_constraints() -> None:
+    prompt = build_structured_edit_prompt(
+        task="implement cli",
+        failures={},
+        context={"files": []},
+        patch_plan={"task_type": "general", "proposed_changes": []},
+        aegis_execution={},
+    )
+    assert "Safety constraints:" in prompt
+    assert "Avoid Path.home()" in prompt

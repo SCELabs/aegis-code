@@ -204,6 +204,9 @@ def execute_task(
             runtime_policy=task_options.runtime_policy,
             aegis_guidance=guidance,
             progress_callback=task_options.progress_callback,
+            provider_timeout_seconds=task_options.provider_timeout_seconds,
+            command=task_options.command,
+            scope_contract=task_options.scope_contract,
         )
 
     local_result = _run_task_local(

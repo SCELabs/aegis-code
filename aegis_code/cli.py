@@ -2,6 +2,7 @@
 
 import argparse
 import ast
+from dataclasses import asdict
 from difflib import unified_diff
 import getpass
 import importlib.util
@@ -52,6 +53,7 @@ from aegis_code.policy import (
 from aegis_code.config import ensure_project_files, project_paths, update_model_tier
 from aegis_code.report import read_latest_markdown, write_reports
 from aegis_code.runtime import TaskOptions, run_task
+from aegis_code.scope import build_scope_contract_from_cli
 from aegis_code.scaffold_export import export_scaffold_profile
 from aegis_code.scaffolds import list_stacks
 from aegis_code.secrets import (
@@ -452,6 +454,33 @@ def _build_task_parser() -> argparse.ArgumentParser:
         "--propose-patch",
         action="store_true",
         help="Attempt provider-backed diff proposal (proposal-only).",
+    )
+    parser.add_argument("--session", default=None, help="Optional session id/name.")
+    parser.add_argument("--no-report", action="store_true", help="Skip writing latest report files.")
+    parser.add_argument("--quiet", action="store_true", help="Suppress progress updates.")
+    parser.add_argument("--provider-timeout", type=int, default=None, help="Provider call timeout in seconds.")
+    return parser
+
+
+def _build_patch_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="aegis-code patch")
+    parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
+    parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
+    parser.add_argument("--allow-create", action="store_true", help="Allow creating missing target files.")
+    parser.add_argument("task", help="Task prompt for patch proposal generation.")
+    parser.add_argument("--budget", type=float, default=None, help="Budget cap for this task.")
+    parser.add_argument(
+        "--mode",
+        choices=["cheapest", "balanced", "premium-fallback", "local-first"],
+        default=None,
+        help="Runtime mode hint.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Plan only; skip commands.")
+    parser.add_argument(
+        "--analyze-failures",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable failure-aware parsing/context/planning (default: enabled).",
     )
     parser.add_argument("--session", default=None, help="Optional session id/name.")
     parser.add_argument("--no-report", action="store_true", help="Skip writing latest report files.")
@@ -1511,6 +1540,26 @@ def handle_apply(argv: Sequence[str]) -> int:
             return "blocked_safety"
         return None
 
+    def _latest_patch_safety_for_path(path: Path) -> dict[str, object] | None:
+        latest_json = project_paths(cwd)["latest_json"]
+        if not latest_json.exists():
+            return None
+        try:
+            payload = json.loads(latest_json.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+        diff_path = str(patch_diff.get("path", "") or "").strip()
+        if not diff_path:
+            return None
+        try:
+            if Path(diff_path).resolve() != path.resolve():
+                return None
+        except Exception:
+            return None
+        patch_safety = payload.get("patch_safety", {})
+        return patch_safety if isinstance(patch_safety, dict) else None
+
     if args.check:
         if args.check == "__LATEST__":
             latest = _resolve_latest_accepted_diff_or_print()
@@ -1538,6 +1587,16 @@ def handle_apply(argv: Sequence[str]) -> int:
         result_for_display = dict(result)
         result_for_display["path"] = _display_path(Path(str(result.get("path", ""))), cwd=cwd)
         print(format_apply_check_result(result_for_display))
+        patch_safety = _latest_patch_safety_for_path(path)
+        if isinstance(patch_safety, dict):
+            severity = str(patch_safety.get("highest_severity", "pass") or "pass").upper()
+            print(f"Safety: {severity}")
+            issues = patch_safety.get("issues", [])
+            if severity == "WARN" and isinstance(issues, list) and issues:
+                print("Warnings:")
+                for issue in issues:
+                    if isinstance(issue, dict):
+                        print(f"- {issue.get('file', '?')}: {issue.get('message', '')}")
         if not result.get("valid", False):
             errors = result.get("errors", [])
             reason = str(errors[0]) if isinstance(errors, list) and errors else "invalid_diff"
@@ -2003,6 +2062,52 @@ def handle_task(argv: Sequence[str]) -> int:
     print("")
     print(format_next_actions(build_next_actions(payload, cwd=cwd)))
     return 0
+
+
+def handle_patch(argv: Sequence[str]) -> int:
+    parser = _build_patch_parser()
+    args = parser.parse_args(list(argv))
+    cwd = Path.cwd()
+    cfg = load_config(cwd)
+    base_mode = args.mode or cfg.mode
+    final_mode = select_runtime_mode(base_mode, cwd=cwd)
+    reason = get_mode_reason(base_mode, final_mode, cwd=cwd)
+    if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
+        return 0
+    if not args.files:
+        print("Patch blocked: explicit scope required. Use --file at least once.")
+        return 2
+    scope_contract = build_scope_contract_from_cli(
+        files=[str(item) for item in args.files],
+        allow_create=bool(args.allow_create),
+        max_files=args.max_files,
+        cwd=cwd.resolve(),
+    )
+    options = TaskOptions(
+        task=args.task,
+        budget=args.budget,
+        mode=final_mode,
+        dry_run=args.dry_run,
+        analyze_failures=args.analyze_failures,
+        propose_patch=True,
+        session=args.session,
+        no_report=args.no_report,
+        project_context=load_runtime_context(cwd=cwd),
+        budget_state=get_budget_state(cwd=cwd),
+        runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+        progress_callback=(None if args.quiet else (lambda _m: None)),
+        provider_timeout_seconds=args.provider_timeout,
+        command="patch",
+        scope_contract=asdict(scope_contract),
+    )
+    payload = run_task(options=options, cwd=cwd)
+    patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+    print(f"Patch status: {patch_diff.get('status', 'skipped')}")
+    if patch_diff.get("error"):
+        print(f"Patch error: {patch_diff.get('error')}")
+    if patch_diff.get("missing_targets"):
+        print(f"Missing targets: {', '.join(str(item) for item in patch_diff.get('missing_targets', []))}")
+    return 0 if str(patch_diff.get("status", "")) != "blocked" else 1
 
 
 def handle_fix(argv: Sequence[str]) -> int:
@@ -2670,6 +2775,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_restore(args[1:])
     if command == "fix":
         return handle_fix(args[1:])
+    if command == "patch":
+        return handle_patch(args[1:])
     if command == "next":
         return handle_next(args[1:])
     if command == "usage":

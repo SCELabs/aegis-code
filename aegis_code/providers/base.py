@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from aegis_code.patches.constraints import build_patch_constraints
+from aegis_code.safety.patch_review import render_safety_constraints_for_prompt
 from aegis_code.providers.context_builder import (
     build_named_test_file_context,
     extract_named_test_file,
@@ -165,6 +166,7 @@ def build_diff_prompt(
         "- Produce valid diff\n"
         "Do not output markdown fences or explanations.\n"
         "If unsure, output an empty string.\n\n"
+        f"{render_safety_constraints_for_prompt(task)}\n"
         f"Task: {task}\n"
         f"Failures: {failures}\n"
         f"Context: {prompt_context}\n"
@@ -206,6 +208,7 @@ def build_structured_edit_prompt(
         "- do not include delete or rename\n"
         "- do not include .aegis, .git, caches, venv paths\n"
         "- prefer modifying existing src/main.py and tests/test_cli.py for simple feature work\n"
+        f"{render_safety_constraints_for_prompt(task)}"
         f"{allowed_text}"
         f"Task: {task}\n"
         f"Failures: {failures}\n"

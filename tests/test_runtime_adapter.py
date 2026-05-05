@@ -421,3 +421,52 @@ def test_execute_task_fallback_persists_local_adapter_metadata_to_reports(monkey
     assert "Status: `fallback`" in latest_md
     assert "Client available: `False`" in latest_md
     assert "Reason: `import_missing`" in latest_md
+
+
+def test_execute_task_preserves_patch_command_fields_when_guidance_applied(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {"command": None, "scope_contract": None}
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("aegis:\n  control_enabled: true\n", encoding="utf-8")
+
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = cwd, client, write_report
+        seen["command"] = getattr(options, "command", None)
+        seen["scope_contract"] = getattr(options, "scope_contract", None)
+        return _fake_local_payload(options)
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            return {"context_mode": "minimal", "max_retries": 1}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    monkeypatch.setattr("aegis_code.runtime._run_task_local", _fake_local)
+
+    execute_task(
+        TaskOptions(
+            task="store todos in home",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/main.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+    )
+    assert seen["command"] == "patch"
+    assert isinstance(seen["scope_contract"], dict)
+    assert seen["scope_contract"]["source"] == "cli_explicit"
