@@ -2742,9 +2742,43 @@ def test_runtime_accepts_structured_patch_before_unified_diff(monkeypatch, tmp_p
     assert payload["structured_patch"]["status"] == "accepted"
     assert payload["patch_diff"]["status"] == "generated"
     assert payload["patch_diff"]["available"] is True
+    assert (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
 
 
-def test_runtime_falls_back_to_unified_diff_when_structured_invalid(monkeypatch, tmp_path: Path) -> None:
+def test_runtime_blocks_when_structured_invalid_and_does_not_fallback(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (
+            calls.__setitem__("count", calls["count"] + 1)
+            or {
+                "available": True,
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "text": "not json",
+                "error": None,
+            }
+        ),
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert calls["count"] == 2
+    assert payload["structured_patch"]["status"] == "failed"
+    assert payload["structured_patch"]["failure_reason"] in {"invalid_json", "invalid_schema"}
+    assert payload["structured_patch"]["retry_attempted"] is True
+    assert payload["structured_patch"]["retry_count"] == 1
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["available"] is False
+    assert payload["patch_diff"]["error"] == "structured_output_invalid"
+
+
+def test_runtime_structured_unavailable_can_fallback_to_unified(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
         lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
@@ -2753,11 +2787,11 @@ def test_runtime_falls_back_to_unified_diff_when_structured_invalid(monkeypatch,
     monkeypatch.setattr(
         "aegis_code.runtime.generate_structured_edits",
         lambda **_: {
-            "available": True,
+            "available": False,
             "provider": "openai",
             "model": "gpt-4.1-mini",
-            "text": "not json",
-            "error": None,
+            "text": "",
+            "error": "openai package is not installed",
         },
     )
     monkeypatch.setattr(
@@ -2771,6 +2805,6 @@ def test_runtime_falls_back_to_unified_diff_when_structured_invalid(monkeypatch,
         },
     )
     payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
-    assert payload["structured_patch"]["status"] == "invalid_json"
+    assert payload["structured_patch"]["status"] == "skipped"
     assert payload["structured_patch"]["fallback"] == "unified_diff"
     assert payload["patch_diff"]["status"] == "generated"

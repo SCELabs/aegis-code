@@ -38,7 +38,7 @@ from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
 from aegis_code.providers import generate_patch_diff
 from aegis_code.providers import generate_structured_edits
-from aegis_code.patches.structured_edits import parse_structured_edit_response, structured_edits_to_diff
+from aegis_code.patches.proposal_controller import build_proposal_contract, run_structured_proposal_controller
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
 from aegis_code.secrets import list_scoped_keys, resolve_key, resolve_key_source
@@ -1034,6 +1034,10 @@ def build_run_payload(
         "errors": [],
         "files": [],
         "fallback": None,
+        "failure_reason": None,
+        "retry_attempted": False,
+        "retry_count": 0,
+        "next_actions": [],
     }
     patch_quality: dict[str, Any] | None = None
     aegis_guidance: dict[str, Any] = {"available": False, "actions": [], "explanation": "", "used_fallback": False}
@@ -1596,68 +1600,98 @@ def build_run_payload(
         _progress(options, f"generating provider diff with {selected_model}")
         provider_result: dict[str, Any]
         use_unified_fallback = True
+        structured_blocked = False
         if bool(options.propose_patch) and task_type != "docs_task":
-            structured_patch["attempted"] = True
-            structured_result, structured_timed_out = _run_with_provider_heartbeat(
-                options,
-                "structured patch generation",
-                lambda: generate_structured_edits(
-                    provider=config.providers.provider,
-                    model=selected_model,
-                    task=options.task,
-                    failures=final_failures,
-                    context=failure_context,
-                    patch_plan=patch_plan,
-                    aegis_execution=aegis_guidance,
-                    api_key_env=config.providers.api_key_env,
-                    base_url=str(config.providers.base_url or ""),
-                    max_context_chars=int(config.patches.max_context_chars),
-                ),
-                timeout_seconds=provider_timeout_seconds,
+            contract = build_proposal_contract(
+                task=options.task,
+                patch_plan=patch_plan,
+                verification_command=selected_test_command or None,
+                stack_hints=detected_capabilities if isinstance(detected_capabilities, dict) else {},
             )
-            if structured_timed_out:
-                structured_result = {
+
+            def _attempt_structured_edits(override_task: str) -> dict[str, Any]:
+                result, timed_out = _run_with_provider_heartbeat(
+                    options,
+                    "structured patch generation",
+                    lambda: generate_structured_edits(
+                        provider=config.providers.provider,
+                        model=selected_model,
+                        task=override_task,
+                        failures=final_failures,
+                        context=failure_context,
+                        patch_plan=patch_plan,
+                        aegis_execution=aegis_guidance,
+                        api_key_env=config.providers.api_key_env,
+                        base_url=str(config.providers.base_url or ""),
+                        max_context_chars=int(config.patches.max_context_chars),
+                    ),
+                    timeout_seconds=provider_timeout_seconds,
+                )
+                if timed_out:
+                    return {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "text": "",
+                        "error": "provider_timeout",
+                    }
+                if isinstance(result, dict):
+                    return result
+                return {
                     "available": False,
                     "provider": config.providers.provider,
                     "model": selected_model,
                     "text": "",
-                    "error": "provider_timeout",
+                    "error": "provider_error",
                 }
-            if bool(structured_result.get("available", False)):
-                parsed = parse_structured_edit_response(str(structured_result.get("text", "") or ""))
-                if not bool(parsed.get("ok", False)):
-                    structured_patch["status"] = "invalid_json"
-                    structured_patch["errors"] = [str(item) for item in parsed.get("errors", [])]
-                else:
-                    allowed_targets = patch_plan.get("allowed_targets", []) if isinstance(patch_plan.get("allowed_targets", []), list) else None
-                    converted = structured_edits_to_diff(
-                        parsed.get("edits", {}),
-                        cwd=(cwd or Path.cwd()).resolve(),
-                        allowed_targets=allowed_targets,
-                    )
-                    structured_patch["files"] = [str(item) for item in converted.get("files", [])]
-                    if bool(converted.get("ok", False)):
-                        structured_patch["available"] = True
-                        structured_patch["status"] = "accepted"
-                        use_unified_fallback = False
-                        provider_result = {
-                            "available": True,
-                            "provider": config.providers.provider,
-                            "model": selected_model,
-                            "diff": str(converted.get("diff", "") or ""),
-                            "error": None,
-                        }
-                    else:
-                        errors = [str(item) for item in converted.get("errors", [])]
-                        structured_patch["errors"] = errors
-                        if any(str(item).startswith("invalid_path:") for item in errors):
-                            structured_patch["status"] = "invalid_paths"
-                        else:
-                            structured_patch["status"] = "invalid_diff"
+
+            controller = run_structured_proposal_controller(
+                task=options.task,
+                cwd=(cwd or Path.cwd()).resolve(),
+                contract=contract,
+                attempt_fn=_attempt_structured_edits,
+            )
+            structured_patch["attempted"] = bool(controller.get("attempted", False))
+            structured_patch["status"] = str(controller.get("status", "skipped"))
+            structured_patch["errors"] = [str(item) for item in controller.get("errors", [])]
+            structured_patch["failure_reason"] = controller.get("failure_reason")
+            structured_patch["retry_attempted"] = bool(controller.get("retry_attempted", False))
+            structured_patch["retry_count"] = int(controller.get("retry_count", 0) or 0)
+            result_obj = controller.get("result")
+            if hasattr(result_obj, "files"):
+                structured_patch["files"] = [str(item) for item in getattr(result_obj, "files", [])]
+            if bool(controller.get("available", False)) and hasattr(result_obj, "diff"):
+                structured_patch["available"] = True
+                structured_patch["status"] = "accepted"
+                use_unified_fallback = False
+                provider_result = {
+                    "available": True,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": str(getattr(result_obj, "diff", "") or ""),
+                    "error": None,
+                }
             else:
-                structured_patch["status"] = "skipped"
-                if structured_result.get("error"):
-                    structured_patch["errors"] = [str(structured_result.get("error"))]
+                provider_unavailable = str(controller.get("failure_reason", "")) == "provider_unavailable"
+                if provider_unavailable:
+                    structured_patch["status"] = "skipped"
+                    use_unified_fallback = True
+                else:
+                    structured_blocked = True
+                    use_unified_fallback = False
+                    structured_patch["status"] = "failed"
+                    structured_patch["next_actions"] = [
+                        "refine task scope",
+                        "remove or adjust file constraints",
+                        "inspect allowed targets",
+                    ]
+                    provider_result = {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": "",
+                        "error": "structured_output_invalid",
+                    }
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(
                 options,
@@ -1685,7 +1719,9 @@ def build_run_payload(
                     "diff": "",
                     "error": "provider_timeout",
                 }
-            if bool(options.propose_patch) and structured_patch.get("attempted", False):
+            if bool(options.propose_patch) and (
+                structured_patch.get("attempted", False) or str(structured_patch.get("status", "")) == "skipped"
+            ):
                 structured_patch["fallback"] = "unified_diff"
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
         sll_post_call = run_sll_analysis(initial_diff)
@@ -1826,7 +1862,7 @@ def build_run_payload(
         if docs_wrapped_applied:
             provider_used = {**provider_result, "available": True, "error": None}
 
-        if regenerate:
+        if regenerate and not structured_blocked:
             _progress(options, "attempting regeneration")
             regeneration["attempted"] = True
             regeneration["attempt"] = 1
@@ -2153,6 +2189,7 @@ def build_run_payload(
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
             and not bool(regeneration.get("attempted", False))
+            and not structured_blocked
         ):
             _progress(options, "attempting regeneration")
             regeneration["triggered"] = True
@@ -2384,6 +2421,21 @@ def build_run_payload(
 
         # Keep top-level summary flags aligned with the final regeneration state,
         # including post-invalid regeneration paths.
+        if structured_blocked:
+            remove_latest_diff(cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
+            patch_quality = None
+            patch_diff.update(
+                {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "invalid_diff_path": None,
+                    "error": "structured_output_invalid",
+                    "preview": "",
+                }
+            )
         if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):
             patch_diff["regeneration_trigger_reason"] = regeneration.get("trigger_reason") or regeneration.get("reason")
         if patch_diff.get("status") == "invalid":

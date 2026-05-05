@@ -41,6 +41,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     sll_analysis = payload.get("sll_analysis")
     patch_plan = payload.get("patch_plan", {})
     patch_diff = payload.get("patch_diff", {})
+    structured_patch = payload.get("structured_patch", {}) if isinstance(payload.get("structured_patch"), dict) else {}
     patch_quality = payload.get("patch_quality")
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
@@ -318,6 +319,18 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
         lines.append("```diff")
         lines.append(preview[:800] if preview else "(empty)")
         lines.append("```")
+    elif str(patch_diff.get("status", "")) == "blocked":
+        lines.append("- Status: `blocked`")
+        lines.append("- Reason: `structured_output_invalid`")
+        if structured_patch.get("failure_reason"):
+            lines.append(f"- Failure reason: `{structured_patch.get('failure_reason')}`")
+        if patch_plan.get("allowed_targets"):
+            lines.append(f"- Allowed targets: `{', '.join(str(item) for item in patch_plan.get('allowed_targets', []))}`")
+        next_actions = structured_patch.get("next_actions", [])
+        if isinstance(next_actions, list) and next_actions:
+            lines.append("- Next safe actions:")
+            for action in next_actions:
+                lines.append(f"  - `{action}`")
     elif str(patch_diff.get("status", "")) == "invalid":
         lines.append("- Status: `invalid`")
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
