@@ -2715,3 +2715,62 @@ def test_destructive_docs_rewrite_is_hard_invalid(monkeypatch, tmp_path: Path) -
     assert payload["patch_diff"]["error"] == "destructive_docs_rewrite"
     assert payload["patch_diff"]["repair_attempted"] is False
     assert payload["apply_safety"] == "BLOCKED"
+
+
+def test_runtime_accepts_structured_patch_before_unified_diff(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "tests" / "test_example.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("def test_example():\n    assert 1 == 2\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"changes":[{"path":"tests/test_example.py","mode":"replace","content":"def test_example():\\n    assert 1 == 1\\n"}]}',
+            "error": None,
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["structured_patch"]["attempted"] is True
+    assert payload["structured_patch"]["status"] == "accepted"
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["available"] is True
+
+
+def test_runtime_falls_back_to_unified_diff_when_structured_invalid(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": "not json",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "diff --git a/tests/test_example.py b/tests/test_example.py\n--- a/tests/test_example.py\n+++ b/tests/test_example.py\n@@ -1 +1 @@\n-a\n+b\n",
+            "error": None,
+        },
+    )
+    payload = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_Client())
+    assert payload["structured_patch"]["status"] == "invalid_json"
+    assert payload["structured_patch"]["fallback"] == "unified_diff"
+    assert payload["patch_diff"]["status"] == "generated"

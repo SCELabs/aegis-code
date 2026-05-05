@@ -37,6 +37,8 @@ from aegis_code.patches.diff_writer import (
 from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
 from aegis_code.providers import generate_patch_diff
+from aegis_code.providers import generate_structured_edits
+from aegis_code.patches.structured_edits import parse_structured_edit_response, structured_edits_to_diff
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
 from aegis_code.secrets import list_scoped_keys, resolve_key, resolve_key_source
@@ -302,8 +304,8 @@ def _build_docs_wrapped_readme_diff(raw_output: str, cwd: Path) -> str:
     new_text = str(raw_output or "")
     if new_text and not new_text.endswith("\n"):
         new_text += "\n"
-    old_lines = old_text.splitlines(keepends=True)
-    new_lines = new_text.splitlines(keepends=True)
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
     fromfile = "a/README.md" if exists else "/dev/null"
     diff_lines = list(
         unified_diff(
@@ -1025,6 +1027,14 @@ def build_run_payload(
         "proposed_changes": [],
     }
     patch_diff: dict[str, Any] = _patch_diff_default()
+    structured_patch: dict[str, Any] = {
+        "attempted": False,
+        "available": False,
+        "status": "skipped",
+        "errors": [],
+        "files": [],
+        "fallback": None,
+    }
     patch_quality: dict[str, Any] | None = None
     aegis_guidance: dict[str, Any] = {"available": False, "actions": [], "explanation": "", "used_fallback": False}
     provider_skipped = False
@@ -1584,32 +1594,99 @@ def build_run_payload(
             "corrective_control_error": None,
         }
         _progress(options, f"generating provider diff with {selected_model}")
-        provider_result, provider_timed_out = _run_with_provider_heartbeat(
-            options,
-            "patch generation",
-            lambda: generate_patch_diff(
-                provider=config.providers.provider,
-                model=selected_model,
-                task=options.task,
-                failures=final_failures,
-                context=failure_context,
-                patch_plan=patch_plan,
-                aegis_execution=aegis_guidance,
-                api_key_env=config.providers.api_key_env,
-                base_url=str(config.providers.base_url or ""),
-                sll_guidance=None,
-                max_context_chars=int(config.patches.max_context_chars),
-            ),
-            timeout_seconds=provider_timeout_seconds,
-        )
-        if provider_timed_out:
-            provider_result = {
-                "available": False,
-                "provider": config.providers.provider,
-                "model": selected_model,
-                "diff": "",
-                "error": "provider_timeout",
-            }
+        provider_result: dict[str, Any]
+        use_unified_fallback = True
+        if bool(options.propose_patch) and task_type != "docs_task":
+            structured_patch["attempted"] = True
+            structured_result, structured_timed_out = _run_with_provider_heartbeat(
+                options,
+                "structured patch generation",
+                lambda: generate_structured_edits(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    task=options.task,
+                    failures=final_failures,
+                    context=failure_context,
+                    patch_plan=patch_plan,
+                    aegis_execution=aegis_guidance,
+                    api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                    max_context_chars=int(config.patches.max_context_chars),
+                ),
+                timeout_seconds=provider_timeout_seconds,
+            )
+            if structured_timed_out:
+                structured_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "text": "",
+                    "error": "provider_timeout",
+                }
+            if bool(structured_result.get("available", False)):
+                parsed = parse_structured_edit_response(str(structured_result.get("text", "") or ""))
+                if not bool(parsed.get("ok", False)):
+                    structured_patch["status"] = "invalid_json"
+                    structured_patch["errors"] = [str(item) for item in parsed.get("errors", [])]
+                else:
+                    allowed_targets = patch_plan.get("allowed_targets", []) if isinstance(patch_plan.get("allowed_targets", []), list) else None
+                    converted = structured_edits_to_diff(
+                        parsed.get("edits", {}),
+                        cwd=(cwd or Path.cwd()).resolve(),
+                        allowed_targets=allowed_targets,
+                    )
+                    structured_patch["files"] = [str(item) for item in converted.get("files", [])]
+                    if bool(converted.get("ok", False)):
+                        structured_patch["available"] = True
+                        structured_patch["status"] = "accepted"
+                        use_unified_fallback = False
+                        provider_result = {
+                            "available": True,
+                            "provider": config.providers.provider,
+                            "model": selected_model,
+                            "diff": str(converted.get("diff", "") or ""),
+                            "error": None,
+                        }
+                    else:
+                        errors = [str(item) for item in converted.get("errors", [])]
+                        structured_patch["errors"] = errors
+                        if any(str(item).startswith("invalid_path:") for item in errors):
+                            structured_patch["status"] = "invalid_paths"
+                        else:
+                            structured_patch["status"] = "invalid_diff"
+            else:
+                structured_patch["status"] = "skipped"
+                if structured_result.get("error"):
+                    structured_patch["errors"] = [str(structured_result.get("error"))]
+        if use_unified_fallback:
+            provider_result, provider_timed_out = _run_with_provider_heartbeat(
+                options,
+                "patch generation",
+                lambda: generate_patch_diff(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    task=options.task,
+                    failures=final_failures,
+                    context=failure_context,
+                    patch_plan=patch_plan,
+                    aegis_execution=aegis_guidance,
+                    api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                    sll_guidance=None,
+                    max_context_chars=int(config.patches.max_context_chars),
+                ),
+                timeout_seconds=provider_timeout_seconds,
+            )
+            if provider_timed_out:
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": "provider_timeout",
+                }
+            if bool(options.propose_patch) and structured_patch.get("attempted", False):
+                structured_patch["fallback"] = "unified_diff"
         initial_diff = normalize_unified_diff(str(provider_result.get("diff", "") or "").strip()).strip()
         sll_post_call = run_sll_analysis(initial_diff)
         sll_risk = classify_sll_risk(sll_post_call)
@@ -2408,6 +2485,7 @@ def build_run_payload(
         "sll_fix_guidance": sll_fix_guidance,
         "patch_plan": patch_plan,
         "patch_diff": patch_diff,
+        "structured_patch": structured_patch,
         "patch_quality": patch_quality,
         "apply_safety": apply_safety,
         "verification": verification,

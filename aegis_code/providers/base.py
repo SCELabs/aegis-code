@@ -176,6 +176,45 @@ def build_diff_prompt(
     )
 
 
+def build_structured_edit_prompt(
+    *,
+    task: str,
+    failures: dict[str, Any],
+    context: dict[str, Any],
+    patch_plan: dict[str, Any],
+    aegis_execution: dict[str, Any],
+) -> str:
+    allowed_targets = patch_plan.get("allowed_targets", [])
+    allowed_text = ""
+    if isinstance(allowed_targets, list) and allowed_targets:
+        allowed_text = f"Allowed paths only: {', '.join(str(item) for item in allowed_targets)}\n"
+    return (
+        "Return only JSON. No markdown. No explanations.\n"
+        "Schema:\n"
+        "{\n"
+        '  "changes": [\n'
+        "    {\n"
+        '      "path": "src/main.py",\n'
+        '      "mode": "replace",\n'
+        '      "content": "full file content"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Rules:\n"
+        "- full replacement content per file\n"
+        "- mode must be replace or create\n"
+        "- do not include delete or rename\n"
+        "- do not include .aegis, .git, caches, venv paths\n"
+        "- prefer modifying existing src/main.py and tests/test_cli.py for simple feature work\n"
+        f"{allowed_text}"
+        f"Task: {task}\n"
+        f"Failures: {failures}\n"
+        f"Context: {context}\n"
+        f"Patch plan: {patch_plan}\n"
+        f"Aegis execution guidance: {aegis_execution}\n"
+    )
+
+
 def is_plausible_diff(text: str) -> bool:
     value = text.strip()
     if not value:

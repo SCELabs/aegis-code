@@ -4,10 +4,19 @@ from pathlib import Path
 from typing import Any
 
 from aegis_code.patches.diff_inspector import inspect_diff
+from aegis_code.patches.patch_applier import validate_patch_applier_parse
 
 
 def check_patch_text(diff_text: str, cwd: Path | None = None) -> dict[str, Any]:
     result = inspect_diff(diff_text, cwd=cwd)
+    parse_validation = validate_patch_applier_parse(diff_text)
+    if not bool(parse_validation.get("ok", False)):
+        parse_errors = [str(item) for item in parse_validation.get("errors", [])]
+        existing_errors = result.get("errors", [])
+        if not isinstance(existing_errors, list):
+            existing_errors = []
+        result["errors"] = sorted(set([str(item) for item in existing_errors] + parse_errors))
+        result["valid"] = False
     warnings = result.get("warnings", [])
     blockers = []
     if not bool(result.get("valid", False)) or bool(result.get("errors", [])):

@@ -5,6 +5,7 @@ from pathlib import Path
 from aegis_code import cli
 from aegis_code.models import CommandResult
 from aegis_code.patches.apply_check import check_patch_file, format_apply_check_result
+from aegis_code.patches.patch_applier import apply_patch_file
 
 
 def test_check_patch_file_valid(tmp_path: Path) -> None:
@@ -179,6 +180,30 @@ def test_check_patch_file_malformed_hunk_header_is_blocked(tmp_path: Path) -> No
     assert result["valid"] is False
     assert "malformed_hunk_header" in result["errors"]
     assert result["apply_blocked"] is True
+
+
+def test_check_patch_file_catches_patch_applier_malformed_hunk_line(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("a\n", encoding="utf-8")
+    diff_file = tmp_path / "malformed-hunk-line.diff"
+    diff_file.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+        "oops\n",
+        encoding="utf-8",
+    )
+    check = check_patch_file(diff_file, cwd=tmp_path)
+    apply = apply_patch_file(diff_file, cwd=tmp_path)
+    assert check["apply_blocked"] is True
+    assert "invalid_diff" in check["apply_block_reasons"]
+    assert "malformed_hunk_line" in check["errors"]
+    assert apply["applied"] is False
+    assert "malformed_hunk_line" in apply["errors"]
 
 
 def test_format_apply_check_result_contains_summary_fields() -> None:

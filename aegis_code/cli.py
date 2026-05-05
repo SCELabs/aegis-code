@@ -1931,6 +1931,7 @@ def handle_task(argv: Sequence[str]) -> int:
     retry_policy = payload.get("retry_policy", {})
     has_patch_plan = bool(payload.get("patch_plan", {}).get("proposed_changes"))
     patch_diff = payload.get("patch_diff", {})
+    structured_patch = payload.get("structured_patch", {}) if isinstance(payload.get("structured_patch"), dict) else {}
     patch_quality = payload.get("patch_quality")
     sll_analysis = payload.get("sll_analysis", {})
     sll_fix_guidance = payload.get("sll_fix_guidance", {}) if isinstance(payload.get("sll_fix_guidance"), dict) else {}
@@ -1950,6 +1951,13 @@ def handle_task(argv: Sequence[str]) -> int:
     )
     print(f"Patch plan available: {has_patch_plan}")
     print(f"Patch diff attempted: {patch_diff.get('attempted', False)}")
+    if structured_patch:
+        print("Structured patch:")
+        print(f"- attempted: {structured_patch.get('attempted', False)}")
+        print(f"- status: {structured_patch.get('status', 'skipped')}")
+        print(f"- files: {len(structured_patch.get('files', []) if isinstance(structured_patch.get('files', []), list) else [])}")
+        if structured_patch.get("fallback"):
+            print(f"- fallback: {structured_patch.get('fallback')}")
     print(f"Regeneration attempted: {patch_diff.get('regeneration_attempted', False)}")
     if patch_diff.get("regeneration_attempted", False):
         print(f"Aegis corrective control: {patch_diff.get('corrective_control_status', 'not_triggered')}")

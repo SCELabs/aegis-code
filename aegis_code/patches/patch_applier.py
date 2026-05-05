@@ -1,97 +1,21 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from aegis_code.patches.apply_check import check_patch_file
-
-_HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
-
-
-def _norm(path: str) -> str:
-    value = path.strip().replace("\\", "/")
-    if value.startswith("a/") or value.startswith("b/"):
-        value = value[2:]
-    return value
+from aegis_code.patches.diff_inspector import inspect_diff
+from aegis_code.patches.diff_parser import parse_apply_diff
 
 
-def _parse_diff(diff_text: str) -> tuple[list[dict[str, Any]], list[str]]:
-    errors: list[str] = []
-    lines = diff_text.splitlines()
-    files: list[dict[str, Any]] = []
-    i = 0
-    current: dict[str, Any] | None = None
-    while i < len(lines):
-        line = lines[i]
-        if line.startswith("diff --git "):
-            tokens = line.split()
-            if len(tokens) < 4:
-                errors.append("malformed_diff_header")
-                i += 1
-                continue
-            current = {
-                "old_path": _norm(tokens[2]),
-                "new_path": _norm(tokens[3]),
-                "hunks": [],
-                "additions": 0,
-                "deletions": 0,
-            }
-            files.append(current)
-            i += 1
-            continue
-
-        if current is None:
-            i += 1
-            continue
-
-        if line.startswith("--- "):
-            path = line[4:].strip()
-            current["old_path"] = None if path == "/dev/null" else _norm(path)
-            i += 1
-            continue
-        if line.startswith("+++ "):
-            path = line[4:].strip()
-            current["new_path"] = None if path == "/dev/null" else _norm(path)
-            i += 1
-            continue
-
-        hunk_match = _HUNK_RE.match(line)
-        if hunk_match:
-            hunk = {
-                "old_start": int(hunk_match.group("old_start")),
-                "old_count": int(hunk_match.group("old_count") or "1"),
-                "new_start": int(hunk_match.group("new_start")),
-                "new_count": int(hunk_match.group("new_count") or "1"),
-                "lines": [],
-            }
-            i += 1
-            while i < len(lines):
-                content = lines[i]
-                if content.startswith("diff --git ") or _HUNK_RE.match(content):
-                    break
-                if content.startswith((" ", "-", "+")):
-                    hunk["lines"].append((content[:1], content[1:]))
-                    if content.startswith("+") and not content.startswith("+++"):
-                        current["additions"] += 1
-                    if content.startswith("-") and not content.startswith("---"):
-                        current["deletions"] += 1
-                elif content.startswith("\\ No newline"):
-                    pass
-                else:
-                    errors.append("malformed_hunk_line")
-                    break
-                i += 1
-            current["hunks"].append(hunk)
-            continue
-
-        i += 1
-
-    if not files:
-        errors.append("no_file_targets")
-    return files, sorted(set(errors))
+def validate_patch_applier_parse(diff_text: str) -> dict[str, Any]:
+    files, errors = parse_apply_diff(diff_text)
+    return {
+        "ok": len(errors) == 0,
+        "errors": list(errors),
+        "file_count": len(files),
+    }
 
 
 def _ensure_within_root(path: Path, root: Path) -> bool:
@@ -142,7 +66,7 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
     }
 
     try:
-        check_result = check_patch_file(path, cwd=root)
+        diff_text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         result["errors"] = ["diff_file_not_found"]
         return result
@@ -150,6 +74,7 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
         result["errors"] = [str(exc)]
         return result
 
+    check_result = inspect_diff(diff_text, cwd=root)
     result["warnings"] = list(check_result.get("warnings", []))
     if not check_result.get("valid", False) or check_result.get("errors"):
         result["errors"] = list(check_result.get("errors", []))
@@ -163,8 +88,7 @@ def apply_patch_file(path: Path, cwd: Path | None = None) -> dict[str, Any]:
         result["errors"] = ["binary_diff_unsupported"]
         return result
 
-    diff_text = path.read_text(encoding="utf-8")
-    files, parse_errors = _parse_diff(diff_text)
+    files, parse_errors = parse_apply_diff(diff_text)
     if parse_errors:
         result["errors"] = parse_errors
         return result

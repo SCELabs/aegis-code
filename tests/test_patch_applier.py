@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code import cli
-from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
+from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result, validate_patch_applier_parse
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -87,6 +87,20 @@ def test_apply_hunk_count_mismatch_refuses_before_mutation(tmp_path: Path) -> No
     assert result["applied"] is False
     assert "hunk_count_mismatch" in result["errors"]
     assert target.read_text(encoding="utf-8") == before
+
+
+def test_validate_patch_applier_parse_reports_malformed_hunk_line() -> None:
+    validation = validate_patch_applier_parse(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1 +1 @@\n"
+        "-a\n"
+        "+b\n"
+        "oops\n"
+    )
+    assert validation["ok"] is False
+    assert "malformed_hunk_line" in validation["errors"]
 
 
 def test_apply_unsafe_path_refuses(tmp_path: Path) -> None:
