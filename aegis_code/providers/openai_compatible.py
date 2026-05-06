@@ -108,6 +108,7 @@ def generate_structured_edits_openai_compatible(
     api_key_env: str,
     base_url: str,
     max_context_chars: int,
+    operation: str | None = None,
 ) -> dict[str, Any]:
     trimmed_model = _strip_provider_prefix(model)
     resolved_base_url = str(base_url or "").strip()
@@ -126,6 +127,7 @@ def generate_structured_edits_openai_compatible(
             context=_trim_context(context, max_context_chars),
             patch_plan=patch_plan,
             aegis_execution=aegis_execution,
+            operation=operation,
         )
         response = client.chat.completions.create(
             model=trimmed_model,

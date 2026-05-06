@@ -70,6 +70,7 @@ def generate_structured_edits(
     api_key_env: str,
     base_url: str,
     max_context_chars: int,
+    operation: str | None = None,
 ) -> dict[str, Any]:
     selected = provider.strip().lower()
     if selected == "openai":
@@ -82,6 +83,7 @@ def generate_structured_edits(
             aegis_execution=aegis_execution,
             api_key_env=api_key_env,
             max_context_chars=max_context_chars,
+            operation=operation,
         )
     if selected == "openai-compatible":
         return generate_structured_edits_openai_compatible(
@@ -95,6 +97,7 @@ def generate_structured_edits(
             api_key_env=api_key_env,
             base_url=base_url,
             max_context_chars=max_context_chars,
+            operation=operation,
         )
     return {
         "available": False,

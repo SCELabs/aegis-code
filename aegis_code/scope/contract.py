@@ -34,6 +34,7 @@ def build_scope_contract_from_cli(
     allow_create: bool,
     max_files: int | None,
     cwd: Path,
+    operation: str | None = None,
 ) -> ScopeContract:
     normalized: list[str] = []
     for value in files:
@@ -42,8 +43,13 @@ def build_scope_contract_from_cli(
             normalized.append(rel)
     missing_targets = [path for path in normalized if not (cwd / path).exists()]
     resolved_max = int(max_files) if isinstance(max_files, int) and max_files > 0 else len(normalized)
-    allow_new_files = bool(allow_create)
-    allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]
+    normalized_operation = str(operation or "").strip().lower()
+    if normalized_operation == "append":
+        allow_new_files = False
+        allowed_operations = ["append"]
+    else:
+        allow_new_files = bool(allow_create)
+        allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]
     block_reason = "requested_target_missing" if missing_targets and not allow_new_files else None
     return ScopeContract(
         source="cli_explicit",

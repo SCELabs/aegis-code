@@ -103,6 +103,7 @@ def generate_structured_edits_openai(
     aegis_execution: dict[str, Any],
     api_key_env: str,
     max_context_chars: int,
+    operation: str | None = None,
 ) -> dict[str, Any]:
     trimmed_model = _strip_provider_prefix(model)
     api_key = os.getenv(api_key_env, "")
@@ -120,6 +121,7 @@ def generate_structured_edits_openai(
             context=_trim_context(context, max_context_chars),
             patch_plan=patch_plan,
             aegis_execution=aegis_execution,
+            operation=operation,
         )
         response = client.chat.completions.create(
             model=trimmed_model,

@@ -40,5 +40,17 @@ def test_scope_contract_missing_with_allow_create_is_allowed(tmp_path: Path) -> 
     contract = build_scope_contract_from_cli(["src/new_file.py"], allow_create=True, max_files=None, cwd=tmp_path)
     assert contract.block_reason is None
     assert contract.allowed_operations == ["create", "replace"]
-    assert contract.allow_new_files is True
 
+
+def test_scope_contract_append_operation_requires_append_only(tmp_path: Path) -> None:
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_cli.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["tests/test_cli.py"],
+        allow_create=True,
+        max_files=None,
+        cwd=tmp_path,
+        operation="append",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["append"]

@@ -72,6 +72,7 @@ class TaskOptions:
     provider_timeout_seconds: int | None = None
     command: str | None = None
     scope_contract: dict[str, Any] | None = None
+    patch_operation: str | None = None
 
 
 def _progress(options: TaskOptions, message: str) -> None:
@@ -374,6 +375,63 @@ def _maybe_wrap_docs_non_diff(
     validation = inspect_diff(wrapped, cwd=cwd)
     apply_blocked = bool(check_patch_text(wrapped, cwd=cwd).get("apply_blocked", False))
     return wrapped, validation, apply_blocked
+
+
+def _build_append_diff(*, target_path: str, original_text: str, appended_content: str) -> str:
+    append_text = str(appended_content or "")
+    if append_text and not append_text.endswith("\n"):
+        append_text += "\n"
+    candidate = str(original_text or "") + append_text
+    old_lines = str(original_text or "").splitlines()
+    new_lines = candidate.splitlines()
+    body = list(unified_diff(old_lines, new_lines, fromfile=f"a/{target_path}", tofile=f"b/{target_path}", lineterm=""))
+    if not body:
+        return ""
+    return "diff --git a/{0} b/{0}\n".format(target_path) + "\n".join(body) + "\n"
+
+
+def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | None]:
+    raw = str(text or "").strip()
+    if not raw:
+        return False, None, "append_output_invalid"
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.DOTALL | re.IGNORECASE)
+    payload_text = fenced.group(1).strip() if fenced else raw
+    if any(marker in payload_text for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
+        return False, None, "append_output_invalid"
+    try:
+        payload = json.loads(payload_text)
+    except Exception:
+        return False, None, "append_output_invalid"
+    if not isinstance(payload, dict):
+        return False, None, "append_output_invalid"
+    if "changes" in payload:
+        return False, None, "append_output_invalid"
+    content = payload.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return False, None, "append_output_invalid"
+    normalized = content if content.endswith("\n") else f"{content}\n"
+    if any(marker in normalized for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
+        return False, None, "append_output_invalid"
+    return True, normalized, None
+
+
+def _validate_append_diff(*, diff_text: str, original_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
+    inspected = inspect_diff(diff_text, cwd=cwd)
+    if not bool(inspected.get("valid", False)):
+        return False, "invalid_append_operation"
+    summary = inspected.get("summary", {}) if isinstance(inspected.get("summary"), dict) else {}
+    if int(summary.get("deletions", 0) or 0) != 0:
+        return False, "invalid_append_operation"
+    files = inspected.get("files", []) if isinstance(inspected.get("files"), list) else []
+    if len(files) != 1:
+        return False, "invalid_append_operation"
+    file_entry = files[0] if files and isinstance(files[0], dict) else {}
+    new_path = str(file_entry.get("new_path", "") or "")
+    if new_path != target_path:
+        return False, "invalid_append_operation"
+    if int(summary.get("additions", 0) or 0) <= 0:
+        return False, "invalid_append_operation"
+    return True, None
 
 
 def _patch_diff_default() -> dict[str, Any]:
@@ -1484,6 +1542,11 @@ def build_run_payload(
 
     explicit_scope = options.scope_contract if isinstance(options.scope_contract, dict) else {}
     explicit_scope_active = str(options.command or "").strip().lower() == "patch" and str(explicit_scope.get("source", "")) == "cli_explicit"
+    requested_operation = str(options.patch_operation or "").strip().lower()
+    if not requested_operation:
+        scope_ops_probe = [str(item).strip().lower() for item in explicit_scope.get("allowed_operations", [])] if isinstance(explicit_scope.get("allowed_operations", []), list) else []
+        if scope_ops_probe == ["append"]:
+            requested_operation = "append"
     if explicit_scope_active:
         scope_targets = [str(item) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
         scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))
@@ -1517,6 +1580,34 @@ def build_run_payload(
                     "invalid_diff_path": None,
                     "error": "requested_target_missing",
                     "missing_targets": scope_missing,
+                    "preview": "",
+                }
+            )
+            should_attempt_provider_diff = False
+            should_patch_flow = False
+    if requested_operation == "append":
+        explicit_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+        patch_plan["proposed_changes"] = [
+            {
+                "file": target,
+                "change_type": "modify",
+                "description": "Append-only update.",
+                "reason": "append_operation",
+            }
+            for target in explicit_targets
+        ]
+        if len(explicit_targets) != 1:
+            patch_quality = None
+            remove_latest_diff(cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
+            patch_diff.update(
+                {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "invalid_diff_path": None,
+                    "error": "append_requires_single_explicit_file",
                     "preview": "",
                 }
             )
@@ -1653,7 +1744,7 @@ def build_run_payload(
         provider_result: dict[str, Any]
         use_unified_fallback = True
         structured_blocked = False
-        if bool(options.propose_patch) and task_type != "docs_task":
+        if bool(options.propose_patch) and task_type != "docs_task" and requested_operation != "append":
             contract = build_proposal_contract(
                 task=options.task,
                 patch_plan=patch_plan,
@@ -1744,6 +1835,79 @@ def build_run_payload(
                         "diff": "",
                         "error": "structured_output_invalid",
                     }
+        if requested_operation == "append":
+            append_target = ""
+            if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
+                append_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
+            append_result, append_timed_out = _run_with_provider_heartbeat(
+                options,
+                "append content generation",
+                lambda: generate_structured_edits(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    task=options.task,
+                    failures=final_failures,
+                    context=failure_context,
+                    patch_plan=patch_plan,
+                    aegis_execution=aegis_guidance,
+                    api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                    max_context_chars=int(config.patches.max_context_chars),
+                    operation="append",
+                ),
+                timeout_seconds=provider_timeout_seconds,
+            )
+            if append_timed_out:
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": "provider_timeout",
+                }
+            elif not isinstance(append_result, dict) or not bool(append_result.get("available", False)):
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": str((append_result or {}).get("error", "provider_error")) if isinstance(append_result, dict) else "provider_error",
+                }
+            else:
+                append_text = str(append_result.get("text", "") or "")
+                append_ok, append_content, append_parse_error = _parse_append_provider_response(append_text)
+                if not append_ok or append_content is None:
+                    structured_blocked = True
+                    structured_patch["status"] = "failed"
+                    structured_patch["failure_reason"] = append_parse_error or "append_output_invalid"
+                    provider_result = {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": "",
+                        "error": append_parse_error or "append_output_invalid",
+                    }
+                else:
+                    target_file = ((cwd or Path.cwd()).resolve() / append_target).resolve()
+                    if not target_file.exists() or not target_file.is_file():
+                        provider_result = {"available": False, "provider": config.providers.provider, "model": selected_model, "diff": "", "error": "requested_target_missing"}
+                    else:
+                        original_text = target_file.read_text(encoding="utf-8", errors="replace")
+                        append_diff = _build_append_diff(target_path=append_target, original_text=original_text, appended_content=append_content)
+                        ok_append, append_error = _validate_append_diff(
+                            diff_text=append_diff,
+                            original_text=original_text,
+                            target_path=append_target,
+                            cwd=(cwd or Path.cwd()),
+                        )
+                        provider_result = {
+                            "available": bool(ok_append and append_diff),
+                            "provider": config.providers.provider,
+                            "model": selected_model,
+                            "diff": append_diff if ok_append else "",
+                            "error": append_error if not ok_append else None,
+                        }
+            use_unified_fallback = False
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(
                 options,
@@ -1898,6 +2062,9 @@ def build_run_payload(
         initial_issues = [str(item) for item in initial_quality.get("issues", [])]
         regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
         reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
+        if requested_operation == "append":
+            regenerate = False
+            reasons = []
         if docs_wrapped_applied:
             regenerate = False
             reasons = []
@@ -2241,6 +2408,7 @@ def build_run_payload(
         if (
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
+            and requested_operation != "append"
             and not bool(regeneration.get("attempted", False))
             and not structured_blocked
         ):
@@ -2478,6 +2646,7 @@ def build_run_payload(
             remove_latest_diff(cwd=cwd)
             remove_latest_invalid_diff(cwd=cwd)
             patch_quality = None
+            blocked_error = "append_output_invalid" if requested_operation == "append" else "structured_output_invalid"
             patch_diff.update(
                 {
                     "attempted": True,
@@ -2485,7 +2654,7 @@ def build_run_payload(
                     "status": "blocked",
                     "path": None,
                     "invalid_diff_path": None,
-                    "error": "structured_output_invalid",
+                    "error": blocked_error,
                     "preview": "",
                 }
             )
@@ -2592,6 +2761,7 @@ def build_run_payload(
         "patch_diff": patch_diff,
         "structured_patch": structured_patch,
         "patch_quality": patch_quality,
+        "patch_operation": {"operation": requested_operation} if requested_operation else None,
         "apply_safety": apply_safety,
         "verification": verification,
         "aegis_guidance": aegis_guidance,

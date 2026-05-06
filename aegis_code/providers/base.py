@@ -185,7 +185,28 @@ def build_structured_edit_prompt(
     context: dict[str, Any],
     patch_plan: dict[str, Any],
     aegis_execution: dict[str, Any],
+    operation: str | None = None,
 ) -> str:
+    if str(operation or "").strip().lower() == "append":
+        allowed_targets = patch_plan.get("allowed_targets", [])
+        target = str(allowed_targets[0]).strip() if isinstance(allowed_targets, list) and allowed_targets else ""
+        return (
+            "Return only JSON. No markdown. No explanations.\n"
+            "Schema:\n"
+            "{\n"
+            '  "content": "text to append at end of file"\n'
+            "}\n"
+            "Rules:\n"
+            "- return append content only, not full file content\n"
+            "- do not return unified diff\n"
+            f"- target path: {target}\n"
+            f"{render_safety_constraints_for_prompt(task)}"
+            f"Task: {task}\n"
+            f"Failures: {failures}\n"
+            f"Context: {context}\n"
+            f"Patch plan: {patch_plan}\n"
+            f"Aegis execution guidance: {aegis_execution}\n"
+        )
     allowed_targets = patch_plan.get("allowed_targets", [])
     allowed_text = ""
     if isinstance(allowed_targets, list) and allowed_targets:

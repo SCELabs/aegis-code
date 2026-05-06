@@ -482,6 +482,7 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
+    parser.add_argument("--operation", choices=["append"], default=None, help="Explicit patch operation mode.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
     parser.add_argument("--allow-create", action="store_true", help="Allow creating missing target files.")
     parser.add_argument("task", help="Task prompt for patch proposal generation.")
@@ -597,6 +598,9 @@ def handle_status(argv: Sequence[str]) -> int:
     print(
         f"- Patch diff: attempted={patch_diff.get('attempted', False)} available={patch_diff.get('available', False)} path={patch_diff.get('path', 'n/a')}"
     )
+    patch_operation = payload.get("patch_operation", {}) or {}
+    if isinstance(patch_operation, dict) and str(patch_operation.get("operation", "")).strip():
+        print(f"- Patch operation: {patch_operation.get('operation')}")
     if patch_quality:
         print(f"- Patch quality confidence: {patch_quality.get('confidence', 0.0)}")
     else:
@@ -1800,6 +1804,9 @@ def _print_task_final_summary(payload: dict[str, object], cwd: Path) -> None:
 
     print(f"Status: {status}")
     print(f"Task: {payload.get('task', '')}")
+    patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
+    if str(patch_operation.get("operation", "")).strip():
+        print(f"Patch operation: {patch_operation.get('operation')}")
 
     patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
     if not bool(patch_diff.get("available", False)):
@@ -2103,6 +2110,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         allow_create=bool(args.allow_create),
         max_files=args.max_files,
         cwd=cwd.resolve(),
+        operation=args.operation,
     )
     options = TaskOptions(
         task=args.task,
@@ -2120,10 +2128,14 @@ def handle_patch(argv: Sequence[str]) -> int:
         provider_timeout_seconds=args.provider_timeout,
         command="patch",
         scope_contract=asdict(scope_contract),
+        patch_operation=args.operation,
     )
     payload = run_task(options=options, cwd=cwd)
     patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+    patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
     print(f"Patch status: {patch_diff.get('status', 'skipped')}")
+    if str(patch_operation.get("operation", "")).strip():
+        print(f"Patch operation: {patch_operation.get('operation')}")
     if patch_diff.get("error"):
         print(f"Patch error: {patch_diff.get('error')}")
     if patch_diff.get("missing_targets"):
