@@ -446,6 +446,16 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
             lines.append(f"- Missing targets: `{', '.join(str(item) for item in missing_targets)}`")
         if structured_patch.get("failure_reason"):
             lines.append(f"- Failure reason: `{structured_patch.get('failure_reason')}`")
+        if str(structured_patch.get("failure_reason", "") or "") == "outside_allowed_targets":
+            diagnostics = patch_diff.get("target_diagnostics")
+            if not isinstance(diagnostics, dict):
+                diagnostics = structured_patch.get("target_diagnostics")
+            if isinstance(diagnostics, dict):
+                lines.append(f"- Validator source: `{diagnostics.get('validator_source', 'unknown')}`")
+                lines.append(f"- Raw edit paths: `{', '.join(str(item) for item in diagnostics.get('raw_edit_paths', [])) or 'none'}`")
+                lines.append(f"- Normalized edit paths: `{', '.join(str(item) for item in diagnostics.get('normalized_edit_paths', [])) or 'none'}`")
+                lines.append(f"- Raw allowed targets: `{', '.join(str(item) for item in diagnostics.get('raw_allowed_targets', [])) or 'none'}`")
+                lines.append(f"- Normalized allowed targets: `{', '.join(str(item) for item in diagnostics.get('normalized_allowed_targets', [])) or 'none'}`")
         if patch_plan.get("allowed_targets"):
             lines.append(f"- Allowed targets: `{', '.join(str(item) for item in patch_plan.get('allowed_targets', []))}`")
         next_actions = structured_patch.get("next_actions", [])

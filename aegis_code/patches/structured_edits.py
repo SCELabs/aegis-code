@@ -41,7 +41,18 @@ def _is_binary_like(content: str) -> bool:
 
 def _canonical_rel(path_text: str) -> str:
     raw = str(path_text or "").strip().replace("\\", "/")
-    return Path(raw).as_posix().lstrip("./")
+    value = Path(raw).as_posix()
+    while value.startswith("./"):
+        value = value[2:]
+    while value.startswith("a/") or value.startswith("b/"):
+        value = value[2:]
+    while value.startswith("./"):
+        value = value[2:]
+    return value
+
+
+def canonicalize_structured_path(path_text: str) -> str:
+    return _canonical_rel(path_text)
 
 
 def _safe_rel_path(path_text: str, cwd: Path, allowed_targets: set[str] | None) -> tuple[str | None, str | None]:
@@ -50,7 +61,10 @@ def _safe_rel_path(path_text: str, cwd: Path, allowed_targets: set[str] | None) 
         return None, "empty_path"
     if raw.startswith("/") or _WINDOWS_ABS_RE.match(raw):
         return None, "absolute_path"
-    rel = Path(raw)
+    normalized = _canonical_rel(raw)
+    if not normalized:
+        return None, "empty_path"
+    rel = Path(normalized)
     if rel.is_absolute():
         return None, "absolute_path"
     if ".." in rel.parts:
@@ -62,7 +76,6 @@ def _safe_rel_path(path_text: str, cwd: Path, allowed_targets: set[str] | None) 
         resolved.relative_to(cwd.resolve())
     except Exception:
         return None, "outside_root"
-    normalized = _canonical_rel(rel.as_posix())
     if allowed_targets is not None and normalized not in allowed_targets:
         return None, "outside_allowed_targets"
     return normalized, None

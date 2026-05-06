@@ -72,6 +72,45 @@ def test_allowed_targets_windows_slash_mismatch_is_normalized(tmp_path: Path) ->
     assert result["ok"] is True
 
 
+def test_allowed_target_accepts_b_prefixed_provider_path(tmp_path: Path) -> None:
+    path = tmp_path / "src" / "calculator.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    result = structured_edits_to_diff(
+        {"changes": [{"path": "b/src/calculator.py", "mode": "replace", "content": "def add(a, b):\n    return a + b\n"}]},
+        cwd=tmp_path,
+        allowed_targets=["src/calculator.py"],
+    )
+    assert result["ok"] is True
+    assert result["files"] == ["src/calculator.py"]
+
+
+def test_allowed_target_accepts_a_prefixed_provider_path(tmp_path: Path) -> None:
+    path = tmp_path / "src" / "calculator.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    result = structured_edits_to_diff(
+        {"changes": [{"path": "a/src/calculator.py", "mode": "replace", "content": "def add(a, b):\n    return a + b\n"}]},
+        cwd=tmp_path,
+        allowed_targets=["src/calculator.py"],
+    )
+    assert result["ok"] is True
+    assert result["files"] == ["src/calculator.py"]
+
+
+def test_allowed_target_accepts_dot_windows_prefixed_provider_path(tmp_path: Path) -> None:
+    path = tmp_path / "src" / "calculator.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    result = structured_edits_to_diff(
+        {"changes": [{"path": ".\\src\\calculator.py", "mode": "replace", "content": "def add(a, b):\n    return a + b\n"}]},
+        cwd=tmp_path,
+        allowed_targets=["src/calculator.py"],
+    )
+    assert result["ok"] is True
+    assert result["files"] == ["src/calculator.py"]
+
+
 def test_generated_diff_passes_check_patch_text(tmp_path: Path) -> None:
     path = tmp_path / "src" / "main.py"
     path.parent.mkdir(parents=True, exist_ok=True)

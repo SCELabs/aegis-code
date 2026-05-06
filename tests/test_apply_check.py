@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aegis_code import cli
@@ -422,4 +423,139 @@ def test_apply_confirm_blocks_low_safety_latest_diff(tmp_path: Path, monkeypatch
     assert called["apply"] is False
     assert "Status: BLOCKED" in out
     assert "Reason: low_safety" in out
+
+
+def test_apply_check_allows_bounded_fix_low_safety_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "calculator.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/calculator.py b/src/calculator.py\n"
+        "--- a/src/calculator.py\n"
+        "+++ b/src/calculator.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def add(a, b):\n"
+        "-    return a - b\n"
+        "+    return a + b\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "fix failing tests in tests/test_calculator.py",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "summary": {"additions": 1, "deletions": 1},
+                        "files": [{"old_path": "src/calculator.py", "new_path": "src/calculator.py"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Valid: yes" in out
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_keeps_low_safety_block_for_shell_additions(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "calculator.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/calculator.py b/src/calculator.py\n"
+        "--- a/src/calculator.py\n"
+        "+++ b/src/calculator.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " def add(a, b):\n"
+        "+    import subprocess\n"
+        "     return a - b\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "fix failing tests in tests/test_calculator.py",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "src/calculator.py", "new_path": "src/calculator.py"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
+def test_apply_check_keeps_low_safety_block_for_broad_rewrite(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "calculator.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/calculator.py b/src/calculator.py\n"
+        "--- a/src/calculator.py\n"
+        "+++ b/src/calculator.py\n"
+        "@@ -1,2 +1,8 @@\n"
+        " def add(a, b):\n"
+        "-    return a - b\n"
+        "+    x = a + b\n"
+        "+    y = x * 2\n"
+        "+    z = y - 1\n"
+        "+    q = z + 3\n"
+        "+    w = q * 4\n"
+        "+    return w\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "fix failing tests in tests/test_calculator.py",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "summary": {"additions": 6, "deletions": 1},
+                        "files": [{"old_path": "src/calculator.py", "new_path": "src/calculator.py"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
 

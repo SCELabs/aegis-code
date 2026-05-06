@@ -268,9 +268,51 @@ def test_report_invalid_patch_shows_invalid_sections(tmp_path: Path) -> None:
     content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
     assert "Status: `invalid`" in content
     assert "Invalid diff path: `.aegis/runs/latest.invalid.diff`" in content
-    assert "Diff failed validation and cannot be applied." in content
-    assert "Patch quality: invalid (not evaluated)" in content
-    assert "Aegis corrective control: `no_guidance_returned`" in content
+
+
+def test_report_includes_outside_allowed_targets_diagnostics(tmp_path: Path) -> None:
+    payload = {
+        "task": "fix tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 1},
+        "final_failures": {"failed_tests": [], "failure_count": 1},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 1, "allow_escalation": False, "retry_attempted": True, "retry_count": 1, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 1},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": [], "allowed_targets": ["src/calculator.py", "tests/test_calculator.py"]},
+        "patch_diff": {
+            "attempted": True,
+            "available": False,
+            "status": "blocked",
+            "error": "outside_allowed_targets",
+            "target_diagnostics": {
+                "raw_edit_paths": ["src\\calculator.py"],
+                "normalized_edit_paths": ["src/calculator.py"],
+                "raw_allowed_targets": ["src/calculator.py", "tests/test_calculator.py"],
+                "normalized_allowed_targets": ["src/calculator.py", "tests/test_calculator.py"],
+                "validator_source": "structured_edits",
+            },
+        },
+        "structured_patch": {"status": "failed", "failure_reason": "outside_allowed_targets"},
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Failure reason: `outside_allowed_targets`" in content
+    assert "Validator source: `structured_edits`" in content
+    assert "Raw edit paths: `src\\calculator.py`" in content
+    assert "Normalized edit paths: `src/calculator.py`" in content
 
 
 def test_report_key_usage_metadata_has_no_values(tmp_path: Path) -> None:

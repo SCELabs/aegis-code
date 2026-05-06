@@ -103,6 +103,9 @@ def test_fix_proposal_only_does_not_apply(tmp_path: Path, monkeypatch, capsys) -
     exit_code = cli.main(["fix"])
     out = capsys.readouterr().out
     assert exit_code == 0
+    assert "Status: BLOCKED" not in out
+    assert "Status: GENERATED" in out
+    assert "Reason: bounded_patch_ready" in out
     assert "Patch generated but not applied." in out
     assert "- aegis-code apply --confirm --run-tests" in out
 

@@ -1545,48 +1545,12 @@ def handle_apply(argv: Sequence[str]) -> int:
         print("No accepted diff found. Run a task that generates a valid patch first.")
         return None
 
-    def _latest_apply_safety_for_path(path: Path) -> str | None:
-        latest_diff = project_paths(cwd)["latest_diff"]
-        try:
-            same = path.resolve() == latest_diff.resolve()
-        except Exception:
-            same = False
-        if not same:
-            return None
-        latest_json = project_paths(cwd)["latest_json"]
-        if not latest_json.exists():
-            return None
-        try:
-            payload = json.loads(latest_json.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        value = str(payload.get("apply_safety", "") or "").upper()
-        return value if value in {"LOW", "BLOCKED", "MEDIUM", "HIGH"} else None
-
     def _apply_safety_block_reason(path: Path) -> str | None:
-        safety = _latest_apply_safety_for_path(path)
-        if safety == "LOW":
-            return "low_safety"
-        if safety == "BLOCKED":
-            return "blocked_safety"
-        return None
+        return _apply_safety_block_reason_for_diff(path, cwd)
 
     def _latest_patch_safety_for_path(path: Path) -> dict[str, object] | None:
-        latest_json = project_paths(cwd)["latest_json"]
-        if not latest_json.exists():
-            return None
-        try:
-            payload = json.loads(latest_json.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
-        diff_path = str(patch_diff.get("path", "") or "").strip()
-        if not diff_path:
-            return None
-        try:
-            if Path(diff_path).resolve() != path.resolve():
-                return None
-        except Exception:
+        payload = _latest_payload_for_diff_path(path, cwd)
+        if not isinstance(payload, dict):
             return None
         patch_safety = payload.get("patch_safety", {})
         return patch_safety if isinstance(patch_safety, dict) else None
@@ -1876,6 +1840,95 @@ def _looks_additive_task(task: str) -> bool:
         "append",
     )
     return any(token in lowered for token in hints)
+
+
+def _latest_payload_for_diff_path(path: Path, cwd: Path) -> dict[str, object] | None:
+    latest_json = project_paths(cwd)["latest_json"]
+    if not latest_json.exists():
+        return None
+    try:
+        payload = json.loads(latest_json.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
+    diff_path = str(patch_diff.get("path", "") or "").strip()
+    try:
+        if diff_path:
+            if Path(diff_path).resolve() != path.resolve():
+                return None
+        else:
+            latest_diff = project_paths(cwd)["latest_diff"]
+            if path.resolve() != latest_diff.resolve():
+                return None
+    except Exception:
+        return None
+    return payload
+
+
+def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
+    payload = _latest_payload_for_diff_path(path, cwd)
+    if not isinstance(payload, dict):
+        return False
+    if str(payload.get("apply_safety", "") or "").upper() != "LOW":
+        return False
+    patch_safety = payload.get("patch_safety", {})
+    if not isinstance(patch_safety, dict) or str(patch_safety.get("highest_severity", "pass") or "pass").lower() != "pass":
+        return False
+    patch_diff = payload.get("patch_diff", {})
+    if not isinstance(patch_diff, dict):
+        return False
+    if not bool(patch_diff.get("plan_consistent", False)):
+        return False
+    validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result"), dict) else {}
+    summary = validation.get("summary", {}) if isinstance(validation.get("summary", {}), dict) else {}
+    files = validation.get("files", []) if isinstance(validation.get("files", []), list) else []
+    if len(files) != 1:
+        return False
+    item = files[0] if isinstance(files[0], dict) else {}
+    if item.get("old_path") is None or item.get("new_path") is None:
+        return False
+    additions = int(summary.get("additions", 0) or 0)
+    deletions = int(summary.get("deletions", 0) or 0)
+    if (additions + deletions) > 5:
+        return False
+    task_text = str(payload.get("task", "") or "").lower()
+    patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
+    patch_plan = payload.get("patch_plan", {}) if isinstance(payload.get("patch_plan"), dict) else {}
+    explicit_scope = (
+        str(patch_operation.get("source", "") or "").lower() == "cli"
+        and bool(patch_plan)
+        and not bool(patch_plan.get("allow_new_files", False))
+        and int(patch_plan.get("max_files", 0) or 0) <= 1
+    )
+    if not ("fix failing tests" in task_text or explicit_scope):
+        return False
+    try:
+        diff_text = path.read_text(encoding="utf-8", errors="replace").lower()
+    except Exception:
+        return False
+    risky_tokens = ("subprocess", "os.system", "popen(", "requests.", "httpx.", "urllib.", "socket.")
+    if any(token in diff_text for token in risky_tokens):
+        return False
+    destructive_tokens = ("rm -rf", "shutil.rmtree", "delete all", "drop table")
+    if any(token in diff_text for token in destructive_tokens):
+        return False
+    return True
+
+
+def _apply_safety_block_reason_for_diff(path: Path, cwd: Path) -> str | None:
+    payload = _latest_payload_for_diff_path(path, cwd)
+    if not isinstance(payload, dict):
+        return None
+    safety = str(payload.get("apply_safety", "") or "").upper()
+    if safety == "LOW":
+        if _bounded_low_safety_override_allowed(path, cwd):
+            return None
+        return "low_safety"
+    if safety == "BLOCKED":
+        return "blocked_safety"
+    return None
 
 
 def handle_backups(argv: Sequence[str]) -> int:
@@ -2733,10 +2786,16 @@ def handle_fix(argv: Sequence[str]) -> int:
             return 1
 
         if apply_safety in {"BLOCKED", "LOW"}:
-            _print_structured_blocked("unsafe_patch", ["aegis-code diff --full"])
-            return 1
+            diff_path_obj = Path(str(diff_path))
+            low_level_check = check_patch_file(diff_path_obj, cwd=cwd)
+            apply_block_reason = _apply_safety_block_reason_for_diff(diff_path_obj, cwd)
+            if apply_block_reason or bool(low_level_check.get("apply_blocked", False)):
+                _print_structured_blocked("unsafe_patch", ["aegis-code diff --full"])
+                return 1
 
         if not args.confirm:
+            print("Status: GENERATED")
+            print("Reason: bounded_patch_ready")
             print("Patch generated but not applied.")
             print("")
             print("Next:")

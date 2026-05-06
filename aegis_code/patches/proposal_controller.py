@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from aegis_code.patches.structured_edits import parse_structured_edit_response, structured_edits_to_diff
+from aegis_code.patches.structured_edits import (
+    canonicalize_structured_path,
+    parse_structured_edit_response,
+    structured_edits_to_diff,
+)
 
 
 @dataclass(slots=True)
@@ -122,7 +126,11 @@ def build_proposal_contract(
     task_type = str(patch_plan.get("task_type", "") or "general")
     allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
     if task_type == "test_generation":
-        allowed_targets = [path for path in allowed_targets if path.startswith("tests/")]
+        lowered_task = str(task or "").lower()
+        has_non_test_targets = any(not str(path).startswith("tests/") for path in allowed_targets)
+        fix_inferred_source_scope = ("fix failing tests in " in lowered_task) and has_non_test_targets
+        if not fix_inferred_source_scope:
+            allowed_targets = [path for path in allowed_targets if path.startswith("tests/")]
     if task_type == "docs_task":
         allowed_targets = [path for path in allowed_targets if path == "README.md" or path.startswith("docs/")]
     if task_type == "general" and not allowed_targets:
@@ -208,6 +216,21 @@ def run_structured_proposal_controller(
             errors = [str(item) for item in converted.get("errors", [])]
             errors.extend(_validate_contract(parsed.get("edits", {}), converted, contract))
             reason = classify_structured_failure(errors)
+            diagnostics: dict[str, Any] | None = None
+            if reason == "outside_allowed_targets":
+                changes = parsed.get("edits", {}).get("changes", []) if isinstance(parsed.get("edits", {}), dict) else []
+                raw_paths = [
+                    str(item.get("path", "") or "")
+                    for item in changes
+                    if isinstance(item, dict) and str(item.get("path", "") or "").strip()
+                ]
+                diagnostics = {
+                    "raw_edit_paths": raw_paths,
+                    "normalized_edit_paths": [canonicalize_structured_path(path) for path in raw_paths],
+                    "raw_allowed_targets": [str(item) for item in contract.allowed_targets],
+                    "normalized_allowed_targets": [canonicalize_structured_path(item) for item in contract.allowed_targets],
+                    "validator_source": "structured_edits",
+                }
             last_result = ProposalAttemptResult(
                 ok=not errors and bool(converted.get("ok", False)),
                 diff=str(converted.get("diff", "") or ""),
@@ -219,6 +242,8 @@ def run_structured_proposal_controller(
                 retry_count=retry_count,
                 attempt_number=attempt_number,
             )
+            if diagnostics is not None:
+                last_result.provider_metadata["target_diagnostics"] = diagnostics
         if last_result.ok:
             return {
                 "attempted": True,
@@ -247,4 +272,5 @@ def run_structured_proposal_controller(
         "retry_count": retry_count,
         "result": last_result,
         "provider_result": (last_result.provider_metadata.get("provider_result", {}) if last_result else {}),
+        "target_diagnostics": (last_result.provider_metadata.get("target_diagnostics") if last_result else None),
     }

@@ -806,3 +806,55 @@ def test_runtime_accepts_calculator_source_repair_with_fix_scope(monkeypatch, tm
     checked = check_patch_text((tmp_path / ".aegis" / "runs" / "latest.diff").read_text(encoding="utf-8"), cwd=tmp_path)
     assert checked["valid"] is True
     assert checked["apply_blocked"] is False
+
+
+def test_runtime_outside_allowed_targets_emits_target_diagnostics(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: {
+            "attempted": True,
+            "available": False,
+            "status": "failed",
+            "failure_reason": "outside_allowed_targets",
+            "errors": ["invalid_path:outside_allowed_targets"],
+            "retry_attempted": True,
+            "retry_count": 1,
+            "target_diagnostics": {
+                "raw_edit_paths": ["src\\calculator.py"],
+                "normalized_edit_paths": ["src/calculator.py"],
+                "raw_allowed_targets": ["src/calculator.py", "tests/test_calculator.py"],
+                "normalized_allowed_targets": ["src/calculator.py", "tests/test_calculator.py"],
+                "validator_source": "structured_edits",
+            },
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="fix failing tests in tests/test_calculator.py",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/calculator.py", "tests/test_calculator.py"],
+                "max_files": 2,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    patch_diff = payload.get("patch_diff", {})
+    assert patch_diff.get("status") == "blocked"
+    assert payload.get("structured_patch", {}).get("failure_reason") == "outside_allowed_targets"
+    diagnostics = patch_diff.get("target_diagnostics")
+    assert isinstance(diagnostics, dict)
+    assert diagnostics.get("validator_source") == "structured_edits"

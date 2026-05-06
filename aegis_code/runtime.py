@@ -2221,6 +2221,8 @@ def build_run_payload(
             structured_patch["failure_reason"] = controller.get("failure_reason")
             structured_patch["retry_attempted"] = bool(controller.get("retry_attempted", False))
             structured_patch["retry_count"] = int(controller.get("retry_count", 0) or 0)
+            if isinstance(controller.get("target_diagnostics"), dict):
+                structured_patch["target_diagnostics"] = dict(controller.get("target_diagnostics", {}))
             result_obj = controller.get("result")
             if hasattr(result_obj, "files"):
                 structured_patch["files"] = [str(item) for item in getattr(result_obj, "files", [])]
@@ -3147,6 +3149,10 @@ def build_run_payload(
                     "preview": "",
                 }
             )
+            if str(structured_patch.get("failure_reason", "") or "") == "outside_allowed_targets":
+                diagnostics = structured_patch.get("target_diagnostics")
+                if isinstance(diagnostics, dict):
+                    patch_diff["target_diagnostics"] = diagnostics
             if requested_operation == "append":
                 patch_diff["plan_consistent"] = None
                 patch_diff["plan_missing_targets"] = []

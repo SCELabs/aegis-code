@@ -135,3 +135,18 @@ def test_docs_task_contract_blocks_source_and_tests_targets() -> None:
         stack_hints={},
     )
     assert contract.allowed_targets == ["README.md", "docs/usage.md"]
+
+
+def test_fix_inferred_source_targets_preserved_for_test_generation_contract() -> None:
+    contract = build_proposal_contract(
+        task="fix failing tests in tests/test_calculator.py; target failing test tests/test_calculator.py::test_add",
+        patch_plan={
+            "task_type": "test_generation",
+            "allowed_targets": ["src/calculator.py", "tests/test_calculator.py"],
+            "proposed_changes": [{"file": "src/calculator.py", "change_type": "modify"}],
+        },
+        verification_command="pytest -q",
+        stack_hints={},
+    )
+    assert "src/calculator.py" in contract.allowed_targets
+    assert "tests/test_calculator.py" in contract.allowed_targets
