@@ -38,7 +38,7 @@ from aegis_code.patches.apply_check import check_patch_file, format_apply_check_
 from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.backups import list_backups, restore_backup
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
-from aegis_code.patches.diff_writer import remove_latest_invalid_diff, write_latest_diff
+from aegis_code.patches.diff_writer import remove_latest_diff, remove_latest_invalid_diff, write_latest_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.patch_applier import apply_patch_file, format_apply_result
 from aegis_code.parsers.pytest_parser import parse_pytest_output
@@ -2211,27 +2211,90 @@ def handle_fix(argv: Sequence[str]) -> int:
         print("No accepted diff found. Run a task that generates a valid patch first.")
         return None
 
-    def _build_fix_task_from_result(result: CommandResult) -> str:
+    def _infer_fix_source_target_from_result(result: CommandResult) -> tuple[str | None, str | None]:
         parsed = parse_pytest_output(str(result.full_output or ""))
         failures = parsed.get("failed_tests", []) if isinstance(parsed, dict) else []
+        if not isinstance(failures, list) or not failures:
+            return None, None
+        first = failures[0] if isinstance(failures[0], dict) else {}
+        failure_file = str(first.get("file", "") or "").replace("\\", "/")
+        test_name = str(first.get("test_name", "") or "")
+        if not failure_file or not failure_file.endswith(".py"):
+            return None, None
+        test_path = cwd / failure_file
+        if not test_path.exists():
+            return None, failure_file
+        try:
+            source_text = test_path.read_text(encoding="utf-8", errors="replace")
+            tree = ast.parse(source_text)
+        except Exception:
+            return None, failure_file
+        imported: dict[str, str] = {}
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and node.module:
+                module = str(node.module)
+                for alias in node.names:
+                    name = str(alias.asname or alias.name)
+                    if name:
+                        imported[name] = module
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    name = str(alias.asname or alias.name.split(".")[0])
+                    if name:
+                        imported[name] = str(alias.name)
+        function_name = test_name.split("::")[-1].strip() if test_name else ""
+        fn_node: ast.AST | None = None
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and str(node.name) == function_name:
+                fn_node = node
+                break
+        candidate_modules: list[str] = []
+        if fn_node is not None:
+            for node in ast.walk(fn_node):
+                if isinstance(node, ast.Call):
+                    if isinstance(node.func, ast.Name):
+                        mod = imported.get(str(node.func.id), "")
+                        if mod and mod not in candidate_modules:
+                            candidate_modules.append(mod)
+                    elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+                        mod = imported.get(str(node.func.value.id), "")
+                        if mod and mod not in candidate_modules:
+                            candidate_modules.append(mod)
+        for mod in candidate_modules:
+            options = [
+                f"{mod.replace('.', '/')}.py",
+                f"src/{mod.split('.')[-1]}.py",
+            ]
+            for rel in options:
+                if (cwd / rel).exists():
+                    return rel, failure_file
+        return None, failure_file
+
+    def _build_fix_task_from_result(result: CommandResult) -> tuple[str, list[str]]:
+        parsed = parse_pytest_output(str(result.full_output or ""))
+        failures = parsed.get("failed_tests", []) if isinstance(parsed, dict) else []
+        source_target, failure_file_for_context = _infer_fix_source_target_from_result(result)
+        allowed_targets: list[str] = []
+        if source_target:
+            allowed_targets.append(source_target)
+        if failure_file_for_context and failure_file_for_context not in allowed_targets:
+            allowed_targets.append(failure_file_for_context)
         if isinstance(failures, list) and failures:
             first = failures[0] if isinstance(failures[0], dict) else {}
             file_path = str(first.get("file", "") or "").replace("\\", "/")
             test_name = str(first.get("test_name", "") or "")
             error_text = str(first.get("error", "") or "")
             if file_path.startswith("tests/"):
-                if "assert" in error_text.lower():
-                    return (
-                        f"fix failing tests in {file_path}; target failing test {test_name}; assertion mismatch: {error_text}; "
-                        "prefer updating the failing test assertion for the failing test function; "
-                        "do not modify source files unless required; use valid unified diff hunk headers with line numbers; "
-                        "do not use placeholder hunk headers such as @@ ... @@."
-                    )
+                preferred_source_text = f"preferred source target: {source_target}; " if source_target else ""
                 return (
-                    f"fix failing tests in {file_path}; target failing test {test_name}; "
+                    f"fix failing tests in {file_path}; target failing test {test_name}; {preferred_source_text}"
+                    f"failure detail: {error_text}; "
+                    "treat tests as specification; prefer source repair over changing expected assertions; "
+                    "do not weaken tests to match broken behavior unless explicitly requested; "
+                    "for assertion failures include failing test file as context, not primary edit target; "
                     "use valid unified diff hunk headers with line numbers; do not use placeholder hunk headers such as @@ ... @@."
-                )
-        return "fix failing tests"
+                ), allowed_targets
+        return "fix failing tests; treat tests as specification and prefer source repair.", allowed_targets
 
     initial_result = run_configured_tests(verification_command, cwd=cwd)
     if initial_result.status == "ok" and initial_result.exit_code == 0:
@@ -2558,32 +2621,109 @@ def handle_fix(argv: Sequence[str]) -> int:
         print(f"- actual_value_extracted: {_yesno(bool(deterministic_debug.get('actual_value_extracted')))}")
         print(f"- assertion_line_found: {_yesno(bool(deterministic_debug.get('assertion_line_found')))}")
         print("")
+        used_deterministic_fix = False
         if deterministic_diff:
-            diff_path_obj = write_latest_diff(deterministic_diff, cwd=cwd)
+            used_deterministic_fix = True
             remove_latest_invalid_diff(cwd=cwd)
-            _write_deterministic_fix_latest_payload(
-                diff_path=diff_path_obj,
-                validation_result=deterministic_check if isinstance(deterministic_check, dict) else {},
-            )
-            patch_diff = {"available": True, "path": str(diff_path_obj)}
+            diff_path = write_latest_diff(deterministic_diff, cwd=cwd)
+            payload = {
+                "task": "fix failing tests",
+                "status": "fix_proposal_generated",
+                "patch_diff": {
+                    "attempted": True,
+                    "available": True,
+                    "status": "generated",
+                    "path": str(diff_path),
+                    "error": None,
+                    "validation_result": deterministic_check or {},
+                    "syntactic_valid": True,
+                },
+                "patch_quality": {
+                    "grounded": True,
+                    "relevant_files": True,
+                    "confidence": 0.95,
+                    "issues": [],
+                    "reason": "deterministic_assertion_fix",
+                },
+                "apply_safety": "HIGH",
+            }
+            write_reports(payload, cwd=cwd)
+            patch_diff = payload["patch_diff"]
             diff_available = True
-            diff_path = str(diff_path_obj)
             apply_safety = "HIGH"
+            diff_path = str(diff_path)
         else:
+            fix_task, allowed_targets = _build_fix_task_from_result(current_result)
+            fix_scope_contract: dict[str, object] | None = None
+            if allowed_targets:
+                fix_scope_contract = {
+                    # Use explicit scope mode so runtime keeps inferred source targets
+                    # through plan consistency and regeneration paths.
+                    "source": "cli_explicit",
+                    "allowed_targets": allowed_targets,
+                    "max_files": len(allowed_targets),
+                    "allow_new_files": False,
+                    "allowed_operations": ["replace"],
+                    "missing_targets": [],
+                    "block_reason": None,
+                }
             options = TaskOptions(
-                task=_build_fix_task_from_result(current_result),
+                task=fix_task,
                 mode=final_mode,
                 propose_patch=True,
                 no_report=False,
                 project_context=load_runtime_context(cwd=cwd),
                 budget_state=get_budget_state(cwd=cwd),
                 runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+                command="patch",
+                scope_contract=fix_scope_contract,
             )
             payload = run_task(options=options, cwd=cwd)
             patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
             diff_available = bool(patch_diff.get("available", False))
             diff_path = patch_diff.get("path")
             apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED").upper()
+
+        if (not used_deterministic_fix) and diff_available and isinstance(diff_path, str) and diff_path:
+            diff_text = Path(diff_path).read_text(encoding="utf-8", errors="replace")
+            failure_output = str(current_result.full_output or "")
+            actual_value, _expected_value = _extract_assertion_values(failure_output)
+            observed_values: list[str] = []
+            if actual_value:
+                observed_values.append(actual_value)
+            plus_match = re.search(r"^\s*E\s+\+\s(.+)$", failure_output, flags=re.MULTILINE)
+            if plus_match:
+                plus_value = plus_match.group(1).strip()
+                if plus_value:
+                    observed_values.append(plus_value)
+            lines = diff_text.splitlines()
+            touched_files = [line[6:].strip() for line in lines if line.startswith("+++ b/")]
+            only_tests = bool(touched_files) and all(path.startswith("tests/") for path in touched_files)
+            has_assertion_replacement = any(
+                line.startswith("-") and "assert " in line and "==" in line for line in lines
+            ) and any(line.startswith("+") and "assert " in line and "==" in line for line in lines)
+            has_pytest_plus_observed = bool(re.search(r"^\s*E\s+\+\s.+$", failure_output, flags=re.MULTILINE))
+            matches_observed = bool(observed_values) and any(
+                line.startswith("+") and any(value in line for value in observed_values) for line in lines
+            )
+            assertion_failure_context = "AssertionError" in failure_output
+            if only_tests and has_assertion_replacement and assertion_failure_context:
+                remove_latest_diff(cwd=cwd)
+                remove_latest_invalid_diff(cwd=cwd)
+                patch_diff["available"] = False
+                patch_diff["status"] = "blocked"
+                patch_diff["path"] = None
+                patch_diff["error"] = "test_weakening_detected"
+                payload["patch_diff"] = patch_diff
+                payload["status"] = "completed_tests_failed"
+                payload["apply_safety"] = "BLOCKED"
+                try:
+                    write_reports(payload, cwd=cwd)
+                except Exception:
+                    pass
+                diff_available = False
+                diff_path = None
+                apply_safety = "BLOCKED"
 
         if not diff_available or not isinstance(diff_path, str) or not diff_path:
             _print_structured_blocked(

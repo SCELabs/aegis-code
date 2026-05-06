@@ -57,7 +57,7 @@ def test_short_circuit_repeated_failure_skips_provider(tmp_path: Path) -> None:
     ensure_project_files(cwd=tmp_path, force=True)
     payload = {
         "status": "completed_tests_failed",
-        "patch_diff": {"attempted": True},
+        "patch_diff": {"attempted": True, "available": True},
         "initial_failures": {"failure_count": 1, "failed_tests": [{"test_name": "tests/test_x.py::test_a", "file": "tests/test_x.py", "error": "AssertionError: x"}]},
         "final_failures": {"failure_count": 1, "failed_tests": [{"test_name": "tests/test_x.py::test_a", "file": "tests/test_x.py", "error": "AssertionError: x"}]},
     }
@@ -65,6 +65,20 @@ def test_short_circuit_repeated_failure_skips_provider(tmp_path: Path) -> None:
     decision = should_skip_provider(TaskOptions(task="add feature", propose_patch=True), tmp_path)
     assert decision["skip"] is True
     assert decision["reason"] == "repeated_failure"
+
+
+def test_short_circuit_repeated_failure_does_not_skip_without_available_proposal(tmp_path: Path) -> None:
+    ensure_project_files(cwd=tmp_path, force=True)
+    payload = {
+        "status": "completed_tests_failed",
+        "patch_diff": {"attempted": True, "available": False},
+        "initial_failures": {"failure_count": 1, "failed_tests": [{"test_name": "tests/test_x.py::test_a", "file": "tests/test_x.py", "error": "AssertionError: x"}]},
+        "final_failures": {"failure_count": 1, "failed_tests": [{"test_name": "tests/test_x.py::test_a", "file": "tests/test_x.py", "error": "AssertionError: x"}]},
+    }
+    _write_latest(tmp_path, payload)
+    decision = should_skip_provider(TaskOptions(task="fix failing tests", propose_patch=True), tmp_path)
+    assert decision["skip"] is False
+    assert decision["reason"] == "none"
 
 
 def test_short_circuit_budget_exceeded_skips_provider(tmp_path: Path) -> None:

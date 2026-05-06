@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aegis_code import cli
 from aegis_code.models import CommandResult
+from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.diff_inspector import inspect_diff
 
 
@@ -304,10 +305,84 @@ def test_fix_prompt_targets_failing_test_file_for_assertion_mismatch(tmp_path: P
     _ = capsys.readouterr().out
     assert exit_code == 0
     assert "fix failing tests in tests/test_client.py" in captured["task"]
-    assert "prefer updating the failing test assertion" in captured["task"]
+    assert "treat tests as specification" in captured["task"]
     assert "target failing test tests/test_client.py::test_action" in captured["task"]
-    assert "assertion mismatch:" in captured["task"]
+    assert "failure detail:" in captured["task"]
     assert "do not use placeholder hunk headers such as @@ ... @@." in captured["task"]
+
+
+def test_fix_calculator_case_generates_source_repair_diff_and_apply_check_passes(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "calculator.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calculator.py").write_text(
+        "from src.calculator import add\n\ndef test_add():\n    assert add(1, 1) == 2\n",
+        encoding="utf-8",
+    )
+    fail_output = "\n".join(
+        [
+            "=================================== FAILURES ===================================",
+            "___________________________________ test_add ___________________________________",
+            "",
+            "    def test_add():",
+            ">       assert add(1, 1) == 2",
+            "E       assert 0 == 2",
+            "",
+            "tests/test_calculator.py:4: AssertionError",
+            "FAILED tests/test_calculator.py::test_add - AssertionError: assert 0 == 2",
+        ]
+    )
+    monkeypatch.setattr(
+        "aegis_code.cli.run_configured_tests",
+        lambda _cmd, cwd=None: CommandResult(
+            name="tests",
+            command="pytest -q",
+            status="failed",
+            exit_code=1,
+            stdout="",
+            stderr="",
+            output_preview="",
+            full_output=fail_output,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def _fake_run_task(**kwargs):
+        options = kwargs["options"]
+        captured["task"] = options.task
+        captured["scope"] = options.scope_contract
+        diff = tmp_path / ".aegis" / "runs" / "latest.diff"
+        diff.parent.mkdir(parents=True, exist_ok=True)
+        diff.write_text(
+            "diff --git a/src/calculator.py b/src/calculator.py\n"
+            "--- a/src/calculator.py\n"
+            "+++ b/src/calculator.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " def add(a, b):\n"
+            "-    return a - b\n"
+            "+    return a + b\n",
+            encoding="utf-8",
+        )
+        return {"patch_diff": {"available": True, "path": str(diff)}, "apply_safety": "HIGH"}
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["fix"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Patch generated but not applied." in out
+    assert "preferred source target: src/calculator.py" in str(captured.get("task", ""))
+    scope = captured.get("scope")
+    assert isinstance(scope, dict)
+    assert scope.get("allowed_targets", [])[0] == "src/calculator.py"
+    assert "tests/test_calculator.py" in scope.get("allowed_targets", [])
+    assert scope.get("source") == "cli_explicit"
+    diff_text = (tmp_path / ".aegis" / "runs" / "latest.diff").read_text(encoding="utf-8")
+    assert "-    return a - b" in diff_text
+    assert "+    return a + b" in diff_text
+    checked = check_patch_text(diff_text, cwd=tmp_path)
+    assert checked["valid"] is True
+    assert checked["apply_blocked"] is False
 
 
 def test_deterministic_assertion_fix_simple_case(tmp_path: Path, monkeypatch, capsys) -> None:

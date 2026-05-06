@@ -74,11 +74,14 @@ def _has_repeated_failure_signature(cwd: Path) -> bool:
         return False
     patch_diff = latest.get("patch_diff", {}) if isinstance(latest.get("patch_diff"), dict) else {}
     attempted = bool(patch_diff.get("attempted", False))
+    available = bool(patch_diff.get("available", False))
     status = str(latest.get("status", "") or "")
     final_failures = latest.get("final_failures", {}) if isinstance(latest.get("final_failures"), dict) else {}
     initial_failures = latest.get("initial_failures", {}) if isinstance(latest.get("initial_failures"), dict) else {}
     failed = ("tests_failed" in status) or int(final_failures.get("failure_count", 0) or 0) > 0
-    if not (attempted and failed):
+    # Only treat as repeated failure if we already produced at least one available
+    # proposal; blocked/unavailable attempts should not preempt the first valid repair attempt.
+    if not (attempted and available and failed):
         return False
     return _failure_signature(initial_failures) == _failure_signature(final_failures)
 

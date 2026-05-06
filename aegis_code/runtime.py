@@ -1956,7 +1956,7 @@ def build_run_payload(
         if scope_ops_probe == ["append"]:
             requested_operation = "append"
     if explicit_scope_active:
-        scope_targets = [str(item) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
+        scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
         scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))
         scope_allow_new = bool(explicit_scope.get("allow_new_files", False))
         scope_ops = [str(item) for item in explicit_scope.get("allowed_operations", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_operations", []), list) else (["create", "replace"] if scope_allow_new else ["replace"])
@@ -3233,6 +3233,12 @@ def build_run_payload(
     ):
         status = "completed_provider_unavailable"
 
+    operation_source = "unknown"
+    if requested_operation:
+        if str(options.patch_operation or "").strip():
+            operation_source = "cli"
+        elif explicit_scope_active:
+            operation_source = "cli"
     payload = {
         "task": options.task,
         "mode": mode,
@@ -3264,12 +3270,7 @@ def build_run_payload(
         "patch_operation": (
             {
                 "operation": requested_operation,
-                "source": (
-                    "cli"
-                    if str(options.command or "").strip().lower() == "patch"
-                    and bool(str(options.patch_operation or "").strip())
-                    else "unknown"
-                ),
+                "source": operation_source,
             }
             if requested_operation
             else None

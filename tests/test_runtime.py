@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
+from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.runtime import TaskOptions, _compute_apply_safety, build_run_payload, run_task
 from tests.helpers import (
     command_result_from_output,
@@ -736,3 +737,72 @@ def test_relevant_snippet_extraction_is_deterministic_and_bounded(tmp_path: Path
     assert len(first) <= 6
     assert all(len(str(item.get("excerpt", ""))) <= 900 for item in first)
     assert sum(len(str(item.get("excerpt", ""))) for item in first) <= 3600
+
+
+def test_runtime_accepts_calculator_source_repair_with_fix_scope(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "calculator.py").write_text("def add(a, b):\n    return a - b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calculator.py").write_text(
+        "from src.calculator import add\n\ndef test_add():\n    assert add(1, 1) == 2\n",
+        encoding="utf-8",
+    )
+    fail_output = (
+        "=================================== FAILURES ===================================\n"
+        "___________________________________ test_add ___________________________________\n"
+        "E       assert 0 == 2\n"
+        "tests/test_calculator.py:4: AssertionError\n"
+        "FAILED tests/test_calculator.py::test_add - AssertionError\n"
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(fail_output, status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: {"attempted": True, "status": "skipped", "available": False, "failure_reason": "provider_unavailable"},
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/calculator.py b/src/calculator.py\n"
+                "--- a/src/calculator.py\n"
+                "+++ b/src/calculator.py\n"
+                "@@ -1,2 +1,2 @@\n"
+                " def add(a, b):\n"
+                "-    return a - b\n"
+                "+    return a + b\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="fix failing tests in tests/test_calculator.py",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src\\calculator.py", "tests\\test_calculator.py"],
+                "max_files": 2,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    patch_diff = payload.get("patch_diff", {})
+    assert patch_diff.get("available") is True
+    assert patch_diff.get("plan_consistent") is True
+    assert patch_diff.get("plan_missing_targets") == []
+    checked = check_patch_text((tmp_path / ".aegis" / "runs" / "latest.diff").read_text(encoding="utf-8"), cwd=tmp_path)
+    assert checked["valid"] is True
+    assert checked["apply_blocked"] is False

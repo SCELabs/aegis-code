@@ -39,6 +39,11 @@ def _is_binary_like(content: str) -> bool:
     return (non_text / max(1, total)) > 0.10
 
 
+def _canonical_rel(path_text: str) -> str:
+    raw = str(path_text or "").strip().replace("\\", "/")
+    return Path(raw).as_posix().lstrip("./")
+
+
 def _safe_rel_path(path_text: str, cwd: Path, allowed_targets: set[str] | None) -> tuple[str | None, str | None]:
     raw = str(path_text or "").strip().replace("\\", "/")
     if not raw:
@@ -57,7 +62,7 @@ def _safe_rel_path(path_text: str, cwd: Path, allowed_targets: set[str] | None) 
         resolved.relative_to(cwd.resolve())
     except Exception:
         return None, "outside_root"
-    normalized = rel.as_posix()
+    normalized = _canonical_rel(rel.as_posix())
     if allowed_targets is not None and normalized not in allowed_targets:
         return None, "outside_allowed_targets"
     return normalized, None
@@ -67,7 +72,7 @@ def structured_edits_to_diff(edits: dict, cwd: Path, allowed_targets: list[str] 
     changes = edits.get("changes", []) if isinstance(edits, dict) else []
     if not isinstance(changes, list):
         return {"ok": False, "diff": "", "errors": ["invalid_changes"], "warnings": [], "files": []}
-    allowed_set = {str(item).strip().replace("\\", "/") for item in (allowed_targets or []) if str(item).strip()} if allowed_targets else None
+    allowed_set = {_canonical_rel(str(item)) for item in (allowed_targets or []) if str(item).strip()} if allowed_targets else None
     chunks: list[str] = []
     errors: list[str] = []
     warnings: list[str] = []
