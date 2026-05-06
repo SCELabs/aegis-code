@@ -390,6 +390,96 @@ def _build_append_diff(*, target_path: str, original_text: str, appended_content
     return "diff --git a/{0} b/{0}\n".format(target_path) + "\n".join(body) + "\n"
 
 
+def _line_tail_capped(text: str, max_lines: int, max_chars: int) -> str:
+    lines = str(text or "").splitlines()
+    tail = lines[-max_lines:] if max_lines > 0 else lines
+    rendered = "\n".join(tail)
+    if len(rendered) <= max_chars:
+        return rendered
+    trimmed = rendered[-max_chars:]
+    if "\n" in trimmed:
+        trimmed = trimmed[trimmed.find("\n") + 1 :]
+    return trimmed
+
+
+def _build_append_target_context(*, cwd: Path, target_path: str, original_text: str) -> dict[str, Any]:
+    imports: list[str] = []
+    names: list[str] = []
+    tests: list[str] = []
+    for raw_line in str(original_text or "").splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("import ") or stripped.startswith("from "):
+            imports.append(stripped)
+        fn_match = re.match(r"^\s*(?:async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
+        if fn_match:
+            name = fn_match.group(1)
+            names.append(name)
+            if name.startswith("test_"):
+                tests.append(name)
+        class_test_match = re.match(r"^\s*def\s+(test_[A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
+        if class_test_match:
+            tests.append(class_test_match.group(1))
+    return {
+        "path": target_path,
+        "imports": sorted(set(imports), key=str.lower)[:40],
+        "existing_names": sorted(set(names), key=str.lower)[:80],
+        "existing_tests": sorted(set(tests), key=str.lower)[:80],
+        "tail": _line_tail_capped(original_text, 80, 4000),
+    }
+
+
+def _collect_defined_names(tree: ast.AST) -> set[str]:
+    defined: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            defined.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(str(node.name))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                bound = str(alias.asname or alias.name.split(".")[0]).strip()
+                if bound:
+                    defined.add(bound)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if str(alias.name) == "*":
+                    continue
+                bound = str(alias.asname or alias.name).strip()
+                if bound:
+                    defined.add(bound)
+    return defined
+
+
+def _append_python_sanity_error(*, target_path: str, original_text: str, appended_content: str) -> str | None:
+    if not str(target_path).endswith(".py"):
+        return None
+    candidate = str(original_text or "") + str(appended_content or "")
+    try:
+        candidate_tree = ast.parse(candidate)
+    except SyntaxError:
+        return "append_syntax_invalid"
+    try:
+        appended_tree = ast.parse(str(appended_content or ""))
+    except SyntaxError:
+        return "append_syntax_invalid"
+    defined_names = _collect_defined_names(candidate_tree)
+    builtins_names = set(dir(__import__("builtins")))
+    suspicious: set[str] = set()
+    for node in ast.walk(appended_tree):
+        if not isinstance(node, ast.keyword):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Name) or not isinstance(value.ctx, ast.Load):
+            continue
+        name = str(value.id or "")
+        # Conservative heuristic: flag only obvious single-letter unresolved names.
+        if len(name) == 1 and name not in defined_names and name not in builtins_names:
+            suspicious.add(name)
+    if suspicious:
+        return "append_semantic_suspicious"
+    return None
+
+
 def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | None]:
     raw = str(text or "").strip()
     if not raw:
@@ -407,8 +497,10 @@ def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | 
     if "changes" in payload:
         return False, None, "append_output_invalid"
     content = payload.get("content")
-    if not isinstance(content, str) or not content.strip():
+    if not isinstance(content, str):
         return False, None, "append_output_invalid"
+    if not content.strip():
+        return True, "", None
     normalized = content if content.endswith("\n") else f"{content}\n"
     if any(marker in normalized for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
         return False, None, "append_output_invalid"
@@ -451,6 +543,12 @@ def _prioritize_patch_error(
         candidates.append(failure_reason)
     if requested_operation == "append":
         # Preserve append parser semantics.
+        if "no_append_needed" in candidates:
+            return "no_append_needed"
+        if "append_syntax_invalid" in candidates:
+            return "append_syntax_invalid"
+        if "append_semantic_suspicious" in candidates:
+            return "append_semantic_suspicious"
         if "append_output_invalid" in candidates:
             return "append_output_invalid"
         if "invalid_append_operation" in candidates:
@@ -480,9 +578,12 @@ def _prioritize_patch_error(
     priority = {
         "destructive_test_rewrite": 0,
         "destructive_docs_rewrite": 1,
-        "invalid_append_operation": 2,
-        "plan_inconsistent": 3,
-        "append_output_invalid": 4,
+        "no_append_needed": 2,
+        "append_syntax_invalid": 3,
+        "append_semantic_suspicious": 4,
+        "invalid_append_operation": 5,
+        "plan_inconsistent": 6,
+        "append_output_invalid": 7,
         "structured_output_invalid": 10,
         "invalid_diff": 11,
     }
@@ -1829,6 +1930,7 @@ def build_run_payload(
         provider_result: dict[str, Any]
         use_unified_fallback = True
         structured_blocked = False
+        structured_primary_accepted = False
         if bool(options.propose_patch) and task_type != "docs_task" and requested_operation != "append":
             contract = build_proposal_contract(
                 task=options.task,
@@ -1891,6 +1993,7 @@ def build_run_payload(
             if bool(controller.get("available", False)) and hasattr(result_obj, "diff"):
                 structured_patch["available"] = True
                 structured_patch["status"] = "accepted"
+                structured_primary_accepted = True
                 use_unified_fallback = False
                 provider_result = {
                     "available": True,
@@ -1924,6 +2027,20 @@ def build_run_payload(
             append_target = ""
             if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
                 append_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
+            append_prompt_context = dict(failure_context) if isinstance(failure_context, dict) else {"files": []}
+            append_target_contexts: list[dict[str, Any]] = []
+            if append_target:
+                target_file = ((cwd or Path.cwd()).resolve() / append_target).resolve()
+                if target_file.exists() and target_file.is_file():
+                    original_text_for_context = target_file.read_text(encoding="utf-8", errors="replace")
+                    append_target_contexts.append(
+                        _build_append_target_context(
+                            cwd=(cwd or Path.cwd()).resolve(),
+                            target_path=append_target,
+                            original_text=original_text_for_context,
+                        )
+                    )
+            append_prompt_context["append_target_contexts"] = append_target_contexts
             append_result, append_timed_out = _run_with_provider_heartbeat(
                 options,
                 "append content generation",
@@ -1932,7 +2049,7 @@ def build_run_payload(
                     model=selected_model,
                     task=options.task,
                     failures=final_failures,
-                    context=failure_context,
+                    context=append_prompt_context,
                     patch_plan=patch_plan,
                     aegis_execution=aegis_guidance,
                     api_key_env=config.providers.api_key_env,
@@ -1972,26 +2089,54 @@ def build_run_payload(
                         "diff": "",
                         "error": append_parse_error or "append_output_invalid",
                     }
+                elif append_content == "":
+                    structured_blocked = True
+                    structured_patch["status"] = "failed"
+                    structured_patch["failure_reason"] = "no_append_needed"
+                    provider_result = {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": "",
+                        "error": "no_append_needed",
+                    }
                 else:
                     target_file = ((cwd or Path.cwd()).resolve() / append_target).resolve()
                     if not target_file.exists() or not target_file.is_file():
                         provider_result = {"available": False, "provider": config.providers.provider, "model": selected_model, "diff": "", "error": "requested_target_missing"}
                     else:
                         original_text = target_file.read_text(encoding="utf-8", errors="replace")
-                        append_diff = _build_append_diff(target_path=append_target, original_text=original_text, appended_content=append_content)
-                        ok_append, append_error = _validate_append_diff(
-                            diff_text=append_diff,
-                            original_text=original_text,
+                        append_sanity_error = _append_python_sanity_error(
                             target_path=append_target,
-                            cwd=(cwd or Path.cwd()),
+                            original_text=original_text,
+                            appended_content=append_content,
                         )
-                        provider_result = {
-                            "available": bool(ok_append and append_diff),
-                            "provider": config.providers.provider,
-                            "model": selected_model,
-                            "diff": append_diff if ok_append else "",
-                            "error": append_error if not ok_append else None,
-                        }
+                        if append_sanity_error:
+                            structured_blocked = True
+                            structured_patch["status"] = "failed"
+                            structured_patch["failure_reason"] = append_sanity_error
+                            provider_result = {
+                                "available": False,
+                                "provider": config.providers.provider,
+                                "model": selected_model,
+                                "diff": "",
+                                "error": append_sanity_error,
+                            }
+                        else:
+                            append_diff = _build_append_diff(target_path=append_target, original_text=original_text, appended_content=append_content)
+                            ok_append, append_error = _validate_append_diff(
+                                diff_text=append_diff,
+                                original_text=original_text,
+                                target_path=append_target,
+                                cwd=(cwd or Path.cwd()),
+                            )
+                            provider_result = {
+                                "available": bool(ok_append and append_diff),
+                                "provider": config.providers.provider,
+                                "model": selected_model,
+                                "diff": append_diff if ok_append else "",
+                                "error": append_error if not ok_append else None,
+                            }
             use_unified_fallback = False
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(
@@ -2166,7 +2311,7 @@ def build_run_payload(
         if docs_wrapped_applied:
             provider_used = {**provider_result, "available": True, "error": None}
 
-        if regenerate and not structured_blocked:
+        if regenerate and not structured_blocked and not structured_primary_accepted:
             _progress(options, "attempting regeneration")
             regeneration["attempted"] = True
             regeneration["attempt"] = 1
@@ -2496,6 +2641,7 @@ def build_run_payload(
             and requested_operation != "append"
             and not bool(regeneration.get("attempted", False))
             and not structured_blocked
+            and not structured_primary_accepted
         ):
             _progress(options, "attempting regeneration")
             regeneration["triggered"] = True
@@ -2731,7 +2877,11 @@ def build_run_payload(
             remove_latest_diff(cwd=cwd)
             remove_latest_invalid_diff(cwd=cwd)
             patch_quality = None
-            blocked_error = "append_output_invalid" if requested_operation == "append" else "structured_output_invalid"
+            blocked_error = (
+                str(structured_patch.get("failure_reason", "") or "append_output_invalid")
+                if requested_operation == "append"
+                else "structured_output_invalid"
+            )
             patch_diff.update(
                 {
                     "attempted": True,

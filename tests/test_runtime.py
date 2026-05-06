@@ -540,6 +540,13 @@ def test_runtime_passes_repo_map_into_append_context(monkeypatch, tmp_path: Path
     context = captured.get("context")
     assert isinstance(context, dict)
     assert isinstance(context.get("repo_map"), dict)
+    append_ctx = context.get("append_target_contexts")
+    assert isinstance(append_ctx, list) and append_ctx
+    first = append_ctx[0]
+    assert isinstance(first, dict)
+    assert str(first.get("path")) == "tests/test_cli.py"
+    assert "existing_names" in first
+    assert "imports" in first
 
 
 def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, tmp_path: Path) -> None:

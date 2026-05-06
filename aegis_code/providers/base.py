@@ -72,6 +72,30 @@ def _repo_map_text(context: dict[str, Any]) -> str:
     return ""
 
 
+def _append_target_context_text(context: dict[str, Any]) -> str:
+    if not isinstance(context, dict):
+        return ""
+    raw = context.get("append_target_contexts", [])
+    if not isinstance(raw, list) or not raw:
+        return ""
+    blocks: list[str] = ["Append target file context:"]
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "") or "").strip()
+        imports = item.get("imports", []) if isinstance(item.get("imports"), list) else []
+        names = item.get("existing_names", []) if isinstance(item.get("existing_names"), list) else []
+        tests = item.get("existing_tests", []) if isinstance(item.get("existing_tests"), list) else []
+        tail = str(item.get("tail", "") or "")
+        blocks.append(f"- path: {path}")
+        blocks.append(f"  existing_imports: {', '.join(str(x) for x in imports) if imports else '(none)'}")
+        blocks.append(f"  existing_names: {', '.join(str(x) for x in names) if names else '(none)'}")
+        blocks.append(f"  existing_tests: {', '.join(str(x) for x in tests) if tests else '(none)'}")
+        blocks.append("  tail_approx_80_lines:")
+        blocks.append(tail if tail else "  (empty)")
+    return "\n".join(blocks).strip()
+
+
 def build_diff_prompt(
     *,
     task: str,
@@ -215,6 +239,7 @@ def build_structured_edit_prompt(
         allowed_targets = patch_plan.get("allowed_targets", [])
         target = str(allowed_targets[0]).strip() if isinstance(allowed_targets, list) and allowed_targets else ""
         repo_map_rendered = _repo_map_text(context)
+        append_target_context_text = _append_target_context_text(context)
         return (
             "Return only JSON. No markdown. No explanations.\n"
             "Schema:\n"
@@ -228,11 +253,16 @@ def build_structured_edit_prompt(
             "- use the repository map to avoid inventing module names, CLI commands, files, functions, or unsupported options\n"
             "- prefer exact symbols and command patterns already present in the repo\n"
             "- if the repository map conflicts with the task wording, follow the repository map unless the user explicitly requests a change\n"
+            "- Do not repeat imports already present in the target file.\n"
+            "- Do not add a test/function with a name already present.\n"
+            "- Do not duplicate an existing workflow already covered in the target file.\n"
+            '- If the requested behavior is already covered, return: {"content": ""}\n'
             f"{render_safety_constraints_for_prompt(task)}"
             f"Task: {task}\n"
             f"Failures: {failures}\n"
             f"Context: {context}\n"
             + (f"Repository map:\n{repo_map_rendered}\n" if repo_map_rendered else "")
+            + (f"{append_target_context_text}\n" if append_target_context_text else "")
             + f"Patch plan: {patch_plan}\n"
             + f"Aegis execution guidance: {aegis_execution}\n"
         )

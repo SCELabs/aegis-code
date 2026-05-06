@@ -341,3 +341,57 @@ def test_build_structured_append_prompt_includes_repository_map() -> None:
     assert "Repository map:" in prompt
     assert "tests/test_cli.py" in prompt
     assert "follow the repository map unless the user explicitly requests a change" in prompt
+
+
+def test_build_structured_append_prompt_includes_existing_imports_and_names() -> None:
+    prompt = build_structured_edit_prompt(
+        task="append tests",
+        failures={},
+        context={
+            "files": [],
+            "append_target_contexts": [
+                {
+                    "path": "tests/test_cli.py",
+                    "imports": ["import pytest", "from app import main"],
+                    "existing_names": ["test_old", "helper_case"],
+                    "existing_tests": ["test_old"],
+                    "tail": "def test_old():\n    assert True\n",
+                }
+            ],
+        },
+        patch_plan={"task_type": "test_generation", "allowed_targets": ["tests/test_cli.py"], "proposed_changes": []},
+        aegis_execution={},
+        operation="append",
+    )
+    assert "Append target file context:" in prompt
+    assert "existing_imports: import pytest, from app import main" in prompt
+    assert "existing_names: helper_case, test_old" in prompt or "existing_names: test_old, helper_case" in prompt
+    assert "tail_approx_80_lines:" in prompt
+
+
+def test_build_structured_append_prompt_includes_duplicate_avoidance_guidance() -> None:
+    prompt = build_structured_edit_prompt(
+        task="append tests",
+        failures={},
+        context={"files": []},
+        patch_plan={"task_type": "test_generation", "allowed_targets": ["tests/test_cli.py"], "proposed_changes": []},
+        aegis_execution={},
+        operation="append",
+    )
+    assert "Do not repeat imports already present in the target file." in prompt
+    assert "Do not add a test/function with a name already present." in prompt
+    assert "Do not duplicate an existing workflow already covered in the target file." in prompt
+    assert '{"content": ""}' in prompt
+
+
+def test_non_append_structured_prompt_unchanged_by_append_guidance() -> None:
+    prompt = build_structured_edit_prompt(
+        task="implement cli",
+        failures={},
+        context={"files": []},
+        patch_plan={"task_type": "general", "proposed_changes": []},
+        aegis_execution={},
+        operation=None,
+    )
+    assert "Do not repeat imports already present in the target file." not in prompt
+    assert '{"content": ""}' not in prompt
