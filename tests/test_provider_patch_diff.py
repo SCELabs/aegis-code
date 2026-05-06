@@ -3296,3 +3296,87 @@ def test_append_mode_malformed_output_is_append_output_invalid_not_structured(mo
     assert payload["patch_diff"]["status"] == "blocked"
     assert payload["patch_diff"]["error"] == "append_output_invalid"
     assert payload["patch_diff"].get("error") != "structured_output_invalid"
+
+
+def test_additive_test_task_structured_failure_prioritizes_destructive_test_rewrite(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": "not json",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add tests for add, list, and complete todo CLI commands without modifying existing tests",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["tests/test_cli.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "destructive_test_rewrite"
+
+
+def test_non_additive_structured_parser_failure_stays_structured_output_invalid(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "main.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": "not json",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="implement todo cli commands",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/main.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "structured_output_invalid"

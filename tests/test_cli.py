@@ -1022,6 +1022,42 @@ def test_patch_command_destructive_test_rewrite_shows_append_hint(tmp_path: Path
     assert 'aegis-code patch --file tests/test_cli.py --operation append "add tests..."' in out
 
 
+def test_patch_command_additive_tests_without_append_surfaces_destructive_test_rewrite(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_cli.py").write_text("def test_old():\n    assert True\n", encoding="utf-8")
+
+    def _fake_run_task(**kwargs: object):
+        _ = kwargs["options"]
+        return {
+            "task": "add tests for add/list/complete todo CLI commands",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "destructive_test_rewrite"},
+            "structured_patch": {"status": "failed", "failure_reason": "invalid_json"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "tests/test_cli.py", "add tests for add/list/complete todo CLI commands"])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Patch error: destructive_test_rewrite" in out
+
+
 def test_diff_command_invalid_diff_preview(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     runs = tmp_path / ".aegis" / "runs"
@@ -1194,3 +1230,43 @@ def test_report_command_falls_back_to_latest_json_when_md_missing(tmp_path: Path
     assert "Latest report source:" in out
     assert "## Patch Diagnosis" in out
     assert "Patch operation: `append`" in out
+
+
+def test_report_and_cli_patch_failure_reason_match(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    payload = {
+        "task": "add tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "status": "completed_tests_failed",
+        "failures": {"failure_count": 1},
+        "symptoms": [],
+        "retry_policy": {"retry_attempted": False, "retry_count": 0},
+        "patch_plan": {"proposed_changes": [{"file": "tests/test_cli.py"}], "allowed_targets": ["tests/test_cli.py"]},
+        "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "destructive_test_rewrite"},
+        "structured_patch": {"status": "failed", "failure_reason": "invalid_json"},
+        "patch_quality": None,
+        "patch_safety": {"highest_severity": "pass", "issues": []},
+        "verification": {"available": True, "test_command": "python -m pytest -q"},
+        "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+        "budget_state": {"available": False, "remaining_estimate": None},
+        "project_context": {"available": False},
+        "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+    }
+
+    def _fake_run_task(**kwargs: object):
+        _ = kwargs["options"]
+        return payload
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    assert cli.main(["patch", "--file", "tests/test_cli.py", "add tests"]) == 1
+    cli_out = capsys.readouterr().out
+    assert "Patch error: destructive_test_rewrite" in cli_out
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(json.dumps(payload), encoding="utf-8")
+    assert cli.main(["report"]) == 0
+    report_out = capsys.readouterr().out
+    assert "Patch error: `destructive_test_rewrite`" in report_out

@@ -434,6 +434,64 @@ def _validate_append_diff(*, diff_text: str, original_text: str, target_path: st
     return True, None
 
 
+def _prioritize_patch_error(
+    *,
+    current_error: str | None,
+    patch_plan: dict[str, Any],
+    structured_patch: dict[str, Any],
+    task_text: str,
+    requested_operation: str,
+) -> str | None:
+    if not current_error:
+        return None
+    candidates: list[str] = []
+    candidates.append(str(current_error))
+    failure_reason = str(structured_patch.get("failure_reason", "") or "").strip()
+    if failure_reason:
+        candidates.append(failure_reason)
+    if requested_operation == "append":
+        # Preserve append parser semantics.
+        if "append_output_invalid" in candidates:
+            return "append_output_invalid"
+        if "invalid_append_operation" in candidates:
+            return "invalid_append_operation"
+
+    lowered_task = str(task_text or "").lower()
+    allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+    looks_additive_tests = (
+        any(token in lowered_task for token in ("add test", "add tests", "write test", "write tests", "generate tests", "tests for"))
+        and bool(allowed_targets)
+        and all(path.startswith("tests/") for path in allowed_targets)
+    )
+    looks_additive_docs = (
+        any(token in lowered_task for token in ("append doc", "append docs", "add docs", "add documentation"))
+        and bool(allowed_targets)
+        and all(path == "README.md" or path.startswith("docs/") for path in allowed_targets)
+    )
+    if (
+        str(current_error or "") in {"structured_output_invalid", "invalid_diff"}
+        and requested_operation != "append"
+    ):
+        if looks_additive_tests:
+            candidates.append("destructive_test_rewrite")
+        elif looks_additive_docs:
+            candidates.append("destructive_docs_rewrite")
+
+    priority = {
+        "destructive_test_rewrite": 0,
+        "destructive_docs_rewrite": 1,
+        "invalid_append_operation": 2,
+        "plan_inconsistent": 3,
+        "append_output_invalid": 4,
+        "structured_output_invalid": 10,
+        "invalid_diff": 11,
+    }
+    if not candidates:
+        return current_error
+    best = sorted(candidates, key=lambda item: priority.get(str(item), 50))[0]
+    return str(best)
+
+
 def _patch_diff_default() -> dict[str, Any]:
     return {
         "attempted": False,
@@ -2674,6 +2732,13 @@ def build_run_payload(
             regeneration.get("attempted", False) and patch_diff.get("status") == "generated"
         )
         patch_diff["regeneration"] = regeneration
+        patch_diff["error"] = _prioritize_patch_error(
+            current_error=str(patch_diff.get("error", "") or "") or None,
+            patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+            structured_patch=structured_patch if isinstance(structured_patch, dict) else {},
+            task_text=options.task,
+            requested_operation=requested_operation,
+        )
     elif should_attempt_provider_diff and not provider_enabled:
         patch_diff = {
             "attempted": True,
