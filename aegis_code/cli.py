@@ -195,6 +195,23 @@ def _print_aegis_impact_if_relevant(payload: dict[str, object]) -> None:
         print(_format_aegis_impact(impact_info))
 
 
+def _print_failure_impact(impact: dict[str, object] | None) -> None:
+    info = impact or {}
+    suggestions = info.get("suggestions", []) if isinstance(info.get("suggestions", []), list) else []
+    first = suggestions[0] if suggestions and isinstance(suggestions[0], dict) else {}
+    files = first.get("files", []) if isinstance(first.get("files", []), list) else []
+    print("Verification failed.")
+    if files:
+        print("Likely impacted files:")
+        for path in files:
+            print(f"- {path}")
+    command = str(first.get("command", "") or "").strip()
+    if command:
+        print("")
+        print("Suggested next command:")
+        print(command)
+
+
 def _format_aegis_usage(usage: dict[str, object] | None) -> str:
     info = usage or {}
     lines = [
@@ -1997,6 +2014,10 @@ def handle_task(argv: Sequence[str]) -> int:
     print(f"Failure count: {failure_count}")
     verification = payload.get("verification", {}) or {}
     _print_verification_block(verification, compact=True)
+    if int(failure_count or 0) > 0:
+        _print_failure_impact(payload.get("impact") if isinstance(payload.get("impact"), dict) else {})
+    else:
+        print("No impact analysis needed.")
     print(f"Symptoms: {', '.join(symptoms) if symptoms else 'none'}")
     print(f"SLL available: {sll_analysis.get('available', False)}")
     _print_sll_block(payload)

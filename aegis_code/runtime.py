@@ -20,6 +20,7 @@ from aegis_code.probe import get_capabilities
 from aegis_code.context.failure_context import build_failure_context
 from aegis_code.context.repo_scan import scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
+from aegis_code.impact.resolver import extract_failure_signals, impact_report_to_dict, resolve_impact
 from aegis_code.models import CommandResult
 from aegis_code.patches.apply_check import check_patch_text
 from aegis_code.patches.constraints import build_patch_constraints, detect_named_test_file
@@ -2645,7 +2646,90 @@ def build_run_payload(
             pass
     if "patch_safety" not in payload:
         payload["patch_safety"] = patch_safety or {"highest_severity": "pass", "issues": []}
+    if int((payload.get("final_failures", {}) if isinstance(payload.get("final_failures", {}), dict) else {}).get("failure_count", 0) or 0) > 0:
+        payload["impact"] = _build_impact_payload(
+            commands_run=commands_run,
+            final_failures=final_failures if isinstance(final_failures, dict) else {},
+            patch_diff=patch_diff if isinstance(patch_diff, dict) else {},
+            structured_patch=structured_patch if isinstance(structured_patch, dict) else {},
+            patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+            failure_context=failure_context if isinstance(failure_context, dict) else {},
+            task=options.task,
+        )
     return payload
+
+
+def _collect_changed_files(patch_diff: dict[str, Any], structured_patch: dict[str, Any], patch_plan: dict[str, Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in structured_patch.get("files", []) if isinstance(structured_patch.get("files", []), list) else []:
+        value = str(item).strip().replace("\\", "/")
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+    validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}
+    for item in validation.get("files", []) if isinstance(validation.get("files", []), list) else []:
+        path_value = str(item.get("path", "") if isinstance(item, dict) else "").strip().replace("\\", "/")
+        if path_value and path_value not in seen:
+            seen.add(path_value)
+            out.append(path_value)
+    for item in patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []:
+        path_value = str(item.get("file", "") if isinstance(item, dict) else "").strip().replace("\\", "/")
+        if path_value and path_value not in seen:
+            seen.add(path_value)
+            out.append(path_value)
+    return out
+
+
+def _collect_repo_file_candidates(failure_context: dict[str, Any], patch_plan: dict[str, Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in failure_context.get("files", []) if isinstance(failure_context.get("files", []), list) else []:
+        path_value = str(item.get("path", "") if isinstance(item, dict) else "").strip().replace("\\", "/")
+        if path_value and path_value not in seen:
+            seen.add(path_value)
+            out.append(path_value)
+    allowed = patch_plan.get("allowed_targets", []) if isinstance(patch_plan.get("allowed_targets", []), list) else []
+    for item in allowed:
+        path_value = str(item).strip().replace("\\", "/")
+        if path_value and path_value not in seen:
+            seen.add(path_value)
+            out.append(path_value)
+    return out
+
+
+def _build_impact_payload(
+    *,
+    commands_run: list[dict[str, Any]],
+    final_failures: dict[str, Any],
+    patch_diff: dict[str, Any],
+    structured_patch: dict[str, Any],
+    patch_plan: dict[str, Any],
+    failure_context: dict[str, Any],
+    task: str,
+) -> dict[str, object]:
+    raw_output = ""
+    exit_code: int | None = None
+    for item in reversed(commands_run):
+        full_output = str(item.get("full_output", "") or "")
+        if full_output.strip():
+            raw_output = full_output
+            maybe_exit = item.get("exit_code")
+            exit_code = int(maybe_exit) if isinstance(maybe_exit, int) else None
+            break
+    if not raw_output:
+        failed_tests = final_failures.get("failed_tests", []) if isinstance(final_failures.get("failed_tests", []), list) else []
+        raw_output = "\n".join(str(item.get("error", "")) for item in failed_tests if isinstance(item, dict) and str(item.get("error", "")).strip())
+    changed_files = _collect_changed_files(patch_diff, structured_patch, patch_plan)
+    repo_files = _collect_repo_file_candidates(failure_context, patch_plan)
+    signals = extract_failure_signals(
+        raw_output=raw_output,
+        exit_code=exit_code,
+        changed_files=changed_files,
+        repo_files=repo_files,
+    )
+    report = resolve_impact(signals=signals, changed_files=changed_files, repo_files=repo_files, task=task)
+    return impact_report_to_dict(report)
 
 
 def _run_task_local(

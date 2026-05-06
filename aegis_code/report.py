@@ -47,6 +47,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
     verification = payload.get("verification", {})
+    impact = payload.get("impact", {}) if isinstance(payload.get("impact"), dict) else {}
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
     test_attempts = payload.get("test_attempts", [])
@@ -220,6 +221,34 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             lines.append(
                 f"- `{failure.get('test_name', 'unknown')}` ({failure.get('file', '?')}:{failure.get('line')})"
             )
+    lines.extend(
+        [
+            "",
+            "## Impact Analysis",
+            "",
+        ]
+    )
+    if int(final_failures.get("failure_count", 0) or 0) <= 0:
+        lines.append("- Impact: not needed")
+    else:
+        lines.append(f"- Summary: {impact.get('summary', 'Verification failed.')}")
+        lines.append("- Signals:")
+        signals = impact.get("signals", []) if isinstance(impact.get("signals", []), list) else []
+        if signals:
+            for item in signals:
+                if isinstance(item, dict):
+                    files = item.get("files", []) if isinstance(item.get("files", []), list) else []
+                    lines.append(
+                        f"  - type={item.get('type', 'unknown')} files={', '.join(str(f) for f in files) or 'none'} message={item.get('message', '')}"
+                    )
+        else:
+            lines.append("  - none")
+        lines.append("- Suggested next bounded patch:")
+        suggestions = impact.get("suggestions", []) if isinstance(impact.get("suggestions", []), list) else []
+        if suggestions and isinstance(suggestions[0], dict):
+            lines.append(f"  - {suggestions[0].get('command') or 'none'}")
+        else:
+            lines.append("  - none")
 
     lines.extend(
         [
