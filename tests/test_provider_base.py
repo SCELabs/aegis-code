@@ -382,6 +382,8 @@ def test_build_structured_append_prompt_includes_duplicate_avoidance_guidance() 
     assert "Do not add a test/function with a name already present." in prompt
     assert "Do not duplicate an existing workflow already covered in the target file." in prompt
     assert '{"content": ""}' in prompt
+    assert "document only behavior visible in source snippets" in prompt
+    assert "Do not invent cleanup, sanitization, stripping, punctuation handling, or URL-safe behavior unless present." in prompt
 
 
 def test_non_append_structured_prompt_unchanged_by_append_guidance() -> None:

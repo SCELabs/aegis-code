@@ -2717,6 +2717,43 @@ def test_destructive_docs_rewrite_is_hard_invalid(monkeypatch, tmp_path: Path) -
     assert payload["apply_safety"] == "BLOCKED"
 
 
+def test_additive_docs_task_blocks_heading_deletion_as_destructive_docs_rewrite(monkeypatch, tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# Title\n## Summary\nExisting intro\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@ -1,3 +1,2 @@\n"
+                "-# Title\n"
+                "-## Summary\n"
+                "-Existing intro\n"
+                "+# Title\n"
+                "+Added usage examples\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add README usage examples", propose_patch=True),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_docs_rewrite"
+
+
 def test_runtime_accepts_structured_patch_before_unified_diff(monkeypatch, tmp_path: Path) -> None:
     source = tmp_path / "tests" / "test_example.py"
     source.parent.mkdir(parents=True, exist_ok=True)
@@ -3679,6 +3716,143 @@ def test_append_valid_source_aligned_main_path_and_checkboxes_passes(monkeypatch
     )
     assert payload["patch_diff"]["status"] == "generated"
     assert payload["patch_diff"]["error"] is None
+
+
+def test_append_readme_explicit_append_is_plan_consistent(monkeypatch, tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# Project\n", encoding="utf-8")
+    helpers = tmp_path / "src" / "helpers.py"
+    helpers.parent.mkdir(parents=True, exist_ok=True)
+    helpers.write_text('def slugify(text: str) -> str:\n    return text.lower().replace(" ", "-")\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\n## Usage\\n\\n- slugify(\\"Hello World\\") -> \\"hello-world\\"\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add README usage examples for slugify from src/helpers.py",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["README.md"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["plan_consistent"] is True
+    checked = check_patch_text(Path(str(payload["patch_diff"]["path"])).read_text(encoding="utf-8"), cwd=tmp_path)
+    assert checked["apply_blocked"] is False
+
+
+def test_append_docs_blocks_unsupported_slugify_behavior(monkeypatch, tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# Project\n", encoding="utf-8")
+    helpers = tmp_path / "src" / "helpers.py"
+    helpers.parent.mkdir(parents=True, exist_ok=True)
+    helpers.write_text('def slugify(text: str) -> str:\n    return text.lower().replace(" ", "-")\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\n## Usage\\n\\nslugify removes punctuation, strips leading/trailing spaces, and performs URL-safe cleanup.\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add README usage examples for slugify from src/helpers.py",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["README.md"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "append_source_conflict"
+
+
+def test_append_docs_valid_slugify_example_is_accepted(monkeypatch, tmp_path: Path) -> None:
+    readme = tmp_path / "README.md"
+    readme.write_text("# Project\n", encoding="utf-8")
+    helpers = tmp_path / "src" / "helpers.py"
+    helpers.parent.mkdir(parents=True, exist_ok=True)
+    helpers.write_text('def slugify(text: str) -> str:\n    return text.lower().replace(" ", "-")\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\n## Usage\\n\\n- slugify(\\"Hello World\\") -> \\"hello-world\\"\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add README usage examples for slugify from src/helpers.py",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["README.md"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    diff_text = Path(str(payload["patch_diff"]["path"])).read_text(encoding="utf-8")
+    checked = check_patch_text(diff_text, cwd=tmp_path)
+    assert checked["valid"] is True
+    assert checked["apply_blocked"] is False
 
 
 def test_non_append_path_does_not_use_append_sanity_checks(monkeypatch, tmp_path: Path) -> None:

@@ -1062,6 +1062,80 @@ def test_patch_command_additive_tests_without_append_surfaces_destructive_test_r
     assert "Patch error: destructive_test_rewrite" in out
 
 
+def test_patch_command_additive_docs_without_append_shows_stronger_guidance(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "README.md").write_text("# Title\n", encoding="utf-8")
+
+    def _fake_run_task(**kwargs: object):
+        _ = kwargs["options"]
+        return {
+            "task": "add README usage examples",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": True, "status": "generated", "error": None},
+            "structured_patch": {"status": "accepted"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "README.md", "add README usage examples"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "This looks like an additive docs task." in out
+    assert "For controlled additive edits, rerun with:" in out
+    assert "--operation append" in out
+
+
+def test_patch_command_destructive_docs_rewrite_shows_append_hint(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "README.md").write_text("# Title\n", encoding="utf-8")
+
+    def _fake_run_task(**kwargs: object):
+        _ = kwargs["options"]
+        return {
+            "task": "add README usage examples",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "destructive_docs_rewrite"},
+            "structured_patch": {"status": "failed", "failure_reason": "destructive_docs_rewrite"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "README.md", "add README usage examples"])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Patch error: destructive_docs_rewrite" in out
+    assert "Try append-only mode:" in out
+    assert 'aegis-code patch --file README.md --operation append "add README usage examples..."' in out
+
+
 def test_fix_prefers_source_target_for_imported_failing_symbol(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)

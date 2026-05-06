@@ -495,6 +495,11 @@ def _looks_like_test_python_target(path: str) -> bool:
     return normalized.endswith(".py") and (normalized.startswith("tests/") or name.startswith("test_") or name.endswith("_test.py"))
 
 
+def _looks_like_docs_target(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").lower()
+    return normalized == "readme.md" or normalized.startswith("docs/")
+
+
 def _source_snippets_text(snippets: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for item in snippets:
@@ -507,6 +512,41 @@ def _source_snippets_text(snippets: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
+def _detect_simple_slugify_source(*, cwd: Path, source_text: str) -> bool:
+    pattern = r"def\s+slugify\s*\(.*?\)\s*(?:->\s*[^:]+)?\s*:\s*[\r\n]+\s*return\s+text\.lower\(\)\.replace\(\s*['\"]\s+['\"],\s*['\"]-['\"]\s*\)"
+    if re.search(pattern, source_text, flags=re.DOTALL):
+        return True
+    ignore_dirs = {
+        ".git",
+        ".aegis",
+        ".venv",
+        "venv",
+        "__pycache__",
+        "node_modules",
+        "dist",
+        "build",
+        ".pytest_cache",
+    }
+    candidates: list[Path] = []
+    try:
+        for path in sorted(cwd.rglob("*.py")):
+            if any(part in ignore_dirs for part in path.parts):
+                continue
+            candidates.append(path)
+            if len(candidates) >= 40:
+                break
+    except Exception:
+        return False
+    for path in candidates:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if re.search(pattern, text, flags=re.DOTALL):
+            return True
+    return False
+
+
 def _append_source_conflict_error(
     *,
     cwd: Path,
@@ -514,10 +554,28 @@ def _append_source_conflict_error(
     appended_content: str,
     relevant_file_snippets: list[dict[str, Any]],
 ) -> str | None:
-    if not _looks_like_test_python_target(target_path):
-        return None
     appended = str(appended_content or "")
     source_text = _source_snippets_text(relevant_file_snippets)
+    if _looks_like_docs_target(target_path):
+        lowered = appended.lower()
+        simple_slugify = _detect_simple_slugify_source(cwd=cwd, source_text=source_text)
+        if simple_slugify:
+            unsupported_docs_claims = (
+                "punctuation",
+                "special characters",
+                "strip leading",
+                "strip trailing",
+                "trim whitespace",
+                "url-safe",
+                "sanitize",
+                "cleanup",
+                "arbitrary text cleanup",
+            )
+            if any(token in lowered for token in unsupported_docs_claims):
+                return "append_source_conflict"
+        return None
+    if not _looks_like_test_python_target(target_path):
+        return None
     snippet_paths = [
         str(item.get("path", "")).replace("\\", "/")
         for item in relevant_file_snippets
@@ -668,6 +726,41 @@ def _prioritize_patch_error(
         return current_error
     best = sorted(candidates, key=lambda item: priority.get(str(item), 50))[0]
     return str(best)
+
+
+def _is_additive_docs_task(task_text: str, patch_plan: dict[str, Any]) -> bool:
+    lowered_task = str(task_text or "").lower()
+    tokens = ("add readme", "add docs", "append docs", "add documentation", "usage examples", "add example", "add examples")
+    if not any(token in lowered_task for token in tokens):
+        return False
+    allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+    if not allowed_targets:
+        return True
+    return all(path == "README.md" or path.startswith("docs/") for path in allowed_targets)
+
+
+def _is_destructive_docs_rewrite(diff_text: str, task_text: str, patch_plan: dict[str, Any]) -> bool:
+    if not _is_additive_docs_task(task_text, patch_plan):
+        return False
+    touched_paths = [
+        line[6:].strip()
+        for line in str(diff_text or "").splitlines()
+        if line.startswith("+++ b/")
+    ]
+    if touched_paths and not all(path == "README.md" or path.startswith("docs/") for path in touched_paths):
+        return False
+    deleted_lines = [
+        line[1:].strip()
+        for line in str(diff_text or "").splitlines()
+        if line.startswith("-") and not line.startswith("--- ")
+    ]
+    for line in deleted_lines:
+        lowered = line.lower()
+        if re.match(r"^#{1,6}\s+\S+", line):
+            return True
+        if re.match(r"^(summary|overview|tl;dr)\b", lowered):
+            return True
+    return False
 
 
 def _patch_diff_default() -> dict[str, Any]:
@@ -2756,6 +2849,16 @@ def build_run_payload(
         path_value: str | None = None
         invalid_path: str | None = None
         plan_consistent, plan_missing_targets = _compute_plan_consistency(patch_plan, validation_used, diff_text)
+        if requested_operation == "append" and bool(validation_used.get("valid", False)):
+            allowed = {
+                _normalize_rel_path(str(item))
+                for item in patch_plan.get("allowed_targets", [])
+                if str(item).strip()
+            } if isinstance(patch_plan.get("allowed_targets", []), list) else set()
+            diff_targets = _collect_diff_targets(validation_used if isinstance(validation_used, dict) else {})
+            if allowed and diff_targets and diff_targets.issubset(allowed):
+                plan_consistent = True
+                plan_missing_targets = []
         if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
             _progress(options, "checking syntax of proposed Python changes")
             syntactic_valid, syntactic_error = _syntactic_python_check(diff_text, cwd=(cwd or Path.cwd()))
@@ -2767,6 +2870,8 @@ def build_run_payload(
                 test_task=test_task,
                 task_text=options.task,
             )
+            if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
+                content_hard_invalid = "destructive_docs_rewrite"
             if content_hard_invalid:
                 patch_quality = None
                 invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
@@ -2865,6 +2970,8 @@ def build_run_payload(
                 test_task=test_task,
                 task_text=options.task,
             )
+            if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
+                content_hard_invalid = "destructive_docs_rewrite"
             if content_hard_invalid:
                 patch_diff["error"] = content_hard_invalid
             elif syntactic_valid is False:

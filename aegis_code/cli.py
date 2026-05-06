@@ -1842,6 +1842,17 @@ def _looks_additive_task(task: str) -> bool:
     return any(token in lowered for token in hints)
 
 
+def _looks_additive_docs_task(task: str, files: Sequence[str]) -> bool:
+    lowered = str(task or "").strip().lower()
+    if not lowered:
+        return False
+    docs_targets = [str(item).replace("\\", "/") for item in files]
+    if not docs_targets or not all(path == "README.md" or path.startswith("docs/") for path in docs_targets):
+        return False
+    tokens = ("add readme", "add docs", "append docs", "add documentation", "usage examples", "add example", "add examples")
+    return any(token in lowered for token in tokens)
+
+
 def _latest_payload_for_diff_path(path: Path, cwd: Path) -> dict[str, object] | None:
     latest_json = project_paths(cwd)["latest_json"]
     if not latest_json.exists():
@@ -2215,7 +2226,13 @@ def handle_patch(argv: Sequence[str]) -> int:
     print(f"Patch status: {patch_diff.get('status', 'skipped')}")
     if str(patch_operation.get("operation", "")).strip():
         print(f"Patch operation: {patch_operation.get('operation')}")
-    if not args.operation and args.files and _looks_additive_task(args.task):
+    normalized_files = [str(item).replace("\\", "/") for item in args.files]
+    if not args.operation and args.files and _looks_additive_docs_task(args.task, normalized_files):
+        print("")
+        print("This looks like an additive docs task.")
+        print("For controlled additive edits, rerun with:")
+        print("--operation append")
+    elif not args.operation and args.files and _looks_additive_task(args.task):
         print("")
         print("This task appears additive.")
         print("For safer patch generation consider:")
@@ -2230,6 +2247,12 @@ def handle_patch(argv: Sequence[str]) -> int:
             print("Hint:")
             print("Try append-only mode:")
             print(f'aegis-code patch --file {test_target} --operation append "add tests..."')
+    if str(patch_diff.get("error", "")).strip() == "destructive_docs_rewrite":
+        docs_target = next((path for path in normalized_files if path == "README.md" or path.startswith("docs/")), "README.md")
+        print("")
+        print("Hint:")
+        print("Try append-only mode:")
+        print(f'aegis-code patch --file {docs_target} --operation append "add README usage examples..."')
     if patch_diff.get("missing_targets"):
         print(f"Missing targets: {', '.join(str(item) for item in patch_diff.get('missing_targets', []))}")
     return 0 if str(patch_diff.get("status", "")) != "blocked" else 1

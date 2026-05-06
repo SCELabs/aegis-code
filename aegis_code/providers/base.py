@@ -286,6 +286,8 @@ def build_structured_edit_prompt(
             "- Do not repeat imports already present in the target file.\n"
             "- Do not add a test/function with a name already present.\n"
             "- Do not duplicate an existing workflow already covered in the target file.\n"
+            "- For docs append tasks, document only behavior visible in source snippets.\n"
+            "- Do not invent cleanup, sanitization, stripping, punctuation handling, or URL-safe behavior unless present.\n"
             '- If the requested behavior is already covered, return: {"content": ""}\n'
             f"{render_safety_constraints_for_prompt(task)}"
             f"Task: {task}\n"
