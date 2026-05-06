@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aegis_code import cli
@@ -1154,3 +1155,42 @@ def test_task_output_shows_sll_fix_guidance_when_regeneration_attempted(tmp_path
     assert "SLL Fix Guidance:" in out
     assert "- strategy: narrow_scope" in out
     assert "- notes: reduce scope" in out
+
+
+def test_report_command_falls_back_to_latest_json_when_md_missing(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "task": "add tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["tests"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "append_output_invalid"},
+        "patch_quality": None,
+        "patch_operation": {"operation": "append", "source": "cli"},
+        "patch_safety": {"highest_severity": "pass", "issues": []},
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    (runs / "latest.json").write_text(json.dumps(payload), encoding="utf-8")
+    exit_code = cli.main(["report"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Latest report source:" in out
+    assert "## Patch Diagnosis" in out
+    assert "Patch operation: `append`" in out

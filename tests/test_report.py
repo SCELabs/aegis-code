@@ -520,3 +520,87 @@ def test_report_shows_task_too_vague_message(tmp_path: Path) -> None:
     assert "Status: `skipped`" in content
     assert "task_too_vague" in content
     assert "Task needs clearer scope before patch generation." in content
+
+
+def test_report_patch_diagnosis_section_includes_human_readable_fields(tmp_path: Path) -> None:
+    payload = {
+        "task": "add tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["tests"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 1, "allow_escalation": False, "retry_attempted": True, "retry_count": 1, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "append tests", "confidence": 0.7, "proposed_changes": [{"file": "tests/test_cli.py"}]},
+        "patch_operation": {"operation": "append", "source": "cli"},
+        "patch_diff": {
+            "attempted": True,
+            "available": False,
+            "status": "blocked",
+            "error": "append_output_invalid",
+            "validation_result": {"summary": {"additions": 2, "deletions": 0}, "files": [{"new_path": "tests/test_cli.py"}]},
+        },
+        "patch_quality": None,
+        "patch_safety": {"highest_severity": "warn", "issues": [{"file": "tests/test_cli.py", "type": "network_call", "message": "x", "line": 1}]},
+        "guidance_hints": ["Try append-only mode"],
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "## Patch Diagnosis" in content
+    assert "Patch status: `blocked`" in content
+    assert "Patch error: `append_output_invalid`" in content
+    assert "Patch operation: `append`" in content
+    assert "Operation source: `cli`" in content
+    assert "Files touched: `tests/test_cli.py`" in content
+    assert "Additions/deletions: `+2 / -0`" in content
+    assert "Safety severity: `WARN`" in content
+    assert "Safety warnings count: `1`" in content
+    assert "Retry attempted: `True`" in content
+    assert "Retry count: `1`" in content
+    assert "Guidance hints: `Try append-only mode`" in content
+
+
+def test_report_invalid_diff_preview_is_compact(tmp_path: Path) -> None:
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    long_diff = "\n".join([f"+line {i}" for i in range(60)]) + "\n"
+    invalid_path = runs / "latest.invalid.diff"
+    invalid_path.write_text(long_diff, encoding="utf-8")
+    payload = {
+        "task": "x",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "none", "confidence": 0.0, "proposed_changes": []},
+        "patch_diff": {"attempted": True, "available": False, "status": "invalid", "error": "hunk_count_mismatch", "invalid_diff_path": ".aegis/runs/latest.invalid.diff"},
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Preview:" in content
+    assert "... (20 more lines omitted)" in content

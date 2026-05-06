@@ -51,7 +51,7 @@ from aegis_code.policy import (
     select_runtime_mode,
 )
 from aegis_code.config import ensure_project_files, project_paths, update_model_tier
-from aegis_code.report import read_latest_markdown, write_reports
+from aegis_code.report import read_latest_markdown, render_markdown_report, write_reports
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scope import build_scope_contract_from_cli
 from aegis_code.scaffold_export import export_scaffold_profile
@@ -541,6 +541,16 @@ def handle_report(argv: Sequence[str]) -> int:
     parser.parse_args(list(argv))
     latest = read_latest_markdown()
     if not latest:
+        latest_json = project_paths()["latest_json"]
+        if latest_json.exists():
+            try:
+                payload = json.loads(latest_json.read_text(encoding="utf-8"))
+                print(f"Latest report source: {latest_json}")
+                print("")
+                print(render_markdown_report(payload, cwd=Path.cwd()))
+                return 0
+            except Exception:
+                pass
         print("No report found at .aegis/runs/latest.md. Run a task first.")
         return 1
     path, content = latest

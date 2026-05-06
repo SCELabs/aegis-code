@@ -14,7 +14,7 @@ def write_reports(payload: dict[str, Any], cwd: Path | None = None) -> dict[str,
     history_dir = paths["runs_dir"] / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
 
-    md_content = render_markdown_report(payload)
+    md_content = render_markdown_report(payload, cwd=cwd)
     history_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".json"
     history_path = history_dir / history_name
     history_path.write_text(
@@ -27,7 +27,59 @@ def write_reports(payload: dict[str, Any], cwd: Path | None = None) -> dict[str,
     return {"json": paths["latest_json"], "md": paths["latest_md"], "history_json": history_path}
 
 
-def render_markdown_report(payload: dict[str, Any]) -> str:
+def _compact_preview(text: str, max_lines: int = 40) -> str:
+    lines = str(text or "").splitlines()
+    if len(lines) <= max_lines:
+        return "\n".join(lines)
+    hidden = len(lines) - max_lines
+    return "\n".join(lines[:max_lines] + [f"... ({hidden} more lines omitted)"])
+
+
+def _resolve_invalid_diff_preview(patch_diff: dict[str, Any], cwd: Path | None) -> str:
+    preview = str(patch_diff.get("preview", "") or "").strip()
+    if preview:
+        return _compact_preview(preview, max_lines=40)
+    invalid_path = str(patch_diff.get("invalid_diff_path", "") or "").strip()
+    if not invalid_path:
+        return ""
+    try:
+        path_obj = Path(invalid_path)
+        if not path_obj.is_absolute():
+            base = (cwd or Path.cwd()).resolve()
+            path_obj = (base / invalid_path).resolve()
+        if path_obj.exists():
+            return _compact_preview(path_obj.read_text(encoding="utf-8", errors="replace"), max_lines=40)
+    except Exception:
+        return ""
+    return ""
+
+
+def _collect_files_touched(patch_diff: dict[str, Any], structured_patch: dict[str, Any], patch_plan: dict[str, Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}
+    files = validation.get("files", []) if isinstance(validation.get("files", []), list) else []
+    for item in files:
+        if isinstance(item, dict):
+            path = str(item.get("new_path") or item.get("old_path") or "").strip()
+            if path and path not in seen:
+                seen.add(path)
+                out.append(path)
+    for item in structured_patch.get("files", []) if isinstance(structured_patch.get("files", []), list) else []:
+        path = str(item).strip()
+        if path and path not in seen:
+            seen.add(path)
+            out.append(path)
+    for item in patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []:
+        if isinstance(item, dict):
+            path = str(item.get("file", "")).strip()
+            if path and path not in seen:
+                seen.add(path)
+                out.append(path)
+    return out
+
+
+def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> str:
     budget = payload.get("budget", {})
     commands_run = payload.get("commands_run", [])
     repo_scan = payload.get("repo_scan", {})
@@ -44,6 +96,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     structured_patch = payload.get("structured_patch", {}) if isinstance(payload.get("structured_patch"), dict) else {}
     patch_safety = payload.get("patch_safety", {}) if isinstance(payload.get("patch_safety"), dict) else {}
     patch_quality = payload.get("patch_quality")
+    patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
     verification = payload.get("verification", {})
@@ -55,6 +108,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
     adapter = payload.get("adapter", {}) or {}
     applied_guidance = payload.get("applied_aegis_guidance", {}) or {}
     key_usage = payload.get("key_usage", []) if isinstance(payload.get("key_usage", []), list) else []
+    guidance_hints = payload.get("guidance_hints", []) if isinstance(payload.get("guidance_hints", []), list) else []
 
     lines = [
         "# Aegis Code Run Report",
@@ -325,6 +379,37 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             f"- Apply safety: `{apply_safety}`",
         ]
     )
+    patch_status = str(patch_diff.get("status", "skipped") or "skipped")
+    patch_error = str(patch_diff.get("error", "") or "")
+    operation_name = str(patch_operation.get("operation", "") or "").strip()
+    operation_source = str(patch_operation.get("source", "") or "").strip()
+    files_touched = _collect_files_touched(patch_diff, structured_patch, patch_plan)
+    validation_summary = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}
+    summary_counts = validation_summary.get("summary", {}) if isinstance(validation_summary.get("summary", {}), dict) else {}
+    safety_issues = patch_safety.get("issues", []) if isinstance(patch_safety.get("issues", []), list) else []
+    safety_level = str(patch_safety.get("highest_severity", "pass") or "pass").upper()
+    lines.extend(
+        [
+            "",
+            "## Patch Diagnosis",
+            "",
+            f"- Patch status: `{patch_status}`",
+            f"- Patch error: `{patch_error or 'none'}`",
+            f"- Patch operation: `{operation_name or 'none'}`",
+            f"- Operation source: `{operation_source or 'unknown'}`",
+            f"- Retry attempted: `{bool(retry_policy.get('retry_attempted', False))}`",
+            f"- Retry count: `{int(retry_policy.get('retry_count', 0) or 0)}`",
+            f"- Files touched: `{', '.join(files_touched) if files_touched else 'none'}`",
+            f"- Additions/deletions: `+{int(summary_counts.get('additions', 0) or 0)} / -{int(summary_counts.get('deletions', 0) or 0)}`",
+            f"- Safety severity: `{safety_level}`",
+            f"- Safety warnings count: `{len(safety_issues)}`",
+            (
+                f"- Guidance hints: `{'; '.join(str(item) for item in guidance_hints if str(item).strip())}`"
+                if guidance_hints
+                else "- Guidance hints: `none`"
+            ),
+        ]
+    )
 
     if str(patch_diff.get("status", "")) == "skipped":
         lines.append("- Status: `skipped`")
@@ -364,6 +449,12 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             lines.append("- Next safe actions:")
             for action in next_actions:
                 lines.append(f"  - `{action}`")
+        blocked_preview = _resolve_invalid_diff_preview(patch_diff, cwd)
+        if blocked_preview:
+            lines.append("- Preview:")
+            lines.append("```diff")
+            lines.append(blocked_preview)
+            lines.append("```")
     elif str(patch_diff.get("status", "")) == "invalid":
         lines.append("- Status: `invalid`")
         lines.append(f"- Regeneration attempted: `{bool(patch_diff.get('regeneration_attempted', False))}`")
@@ -375,6 +466,12 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             lines.append(f"- Error: `{patch_diff.get('error')}`")
         if patch_diff.get("invalid_diff_path"):
             lines.append(f"- Invalid diff path: `{patch_diff.get('invalid_diff_path')}`")
+        invalid_preview = _resolve_invalid_diff_preview(patch_diff, cwd)
+        if invalid_preview:
+            lines.append("- Preview:")
+            lines.append("```diff")
+            lines.append(invalid_preview)
+            lines.append("```")
         lines.append("- Note: Diff failed validation and cannot be applied.")
     else:
         status_value = str(patch_diff.get("status", "unavailable") or "unavailable")
@@ -479,9 +576,7 @@ def render_markdown_report(payload: dict[str, Any]) -> str:
             "",
         ]
     )
-    safety_level = str(patch_safety.get("highest_severity", "pass") or "pass").upper()
     lines.append(f"- Safety: `{safety_level}`")
-    safety_issues = patch_safety.get("issues", [])
     if isinstance(safety_issues, list) and safety_issues:
         lines.append("- Warnings:")
         for issue in safety_issues:
