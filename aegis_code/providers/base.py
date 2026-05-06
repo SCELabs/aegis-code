@@ -96,6 +96,25 @@ def _append_target_context_text(context: dict[str, Any]) -> str:
     return "\n".join(blocks).strip()
 
 
+def _relevant_snippets_text(context: dict[str, Any]) -> str:
+    if not isinstance(context, dict):
+        return ""
+    raw = context.get("relevant_file_snippets", [])
+    if not isinstance(raw, list) or not raw:
+        return ""
+    blocks: list[str] = ["Relevant file snippets:"]
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "") or "").strip()
+        excerpt = str(item.get("excerpt", "") or "").strip()
+        if not path or not excerpt:
+            continue
+        blocks.append(f"- path: {path}")
+        blocks.append(excerpt)
+    return "\n".join(blocks).strip()
+
+
 def build_diff_prompt(
     *,
     task: str,
@@ -208,6 +227,15 @@ def build_diff_prompt(
             "- If the repository map conflicts with the task wording, follow the repository map unless the user explicitly requests a change.\n"
             f"{repo_map_rendered}\n"
         )
+    snippet_block = ""
+    snippets_text = _relevant_snippets_text(prompt_context)
+    if snippets_text:
+        snippet_block = (
+            "Snippet grounding guidance:\n"
+            "- Prefer exact behaviors/output observed in provided excerpts.\n"
+            "- Do not invent commands/options/modules not present in snippets.\n"
+            f"{snippets_text}\n"
+        )
     return (
         "You generate a unified git diff only.\n"
         "- Produce valid diff\n"
@@ -220,6 +248,7 @@ def build_diff_prompt(
         f"Patch plan: {patch_plan}\n"
         f"Aegis execution guidance: {aegis_execution}\n"
         + repo_map_block
+        + snippet_block
         + ("\n".join(test_constraints) + "\n" if test_constraints else "")
         + ("Regeneration constraints:\n" + "\n".join(regen_constraints) + "\n" if regen_constraints else "")
         + sll_lines
@@ -240,6 +269,7 @@ def build_structured_edit_prompt(
         target = str(allowed_targets[0]).strip() if isinstance(allowed_targets, list) and allowed_targets else ""
         repo_map_rendered = _repo_map_text(context)
         append_target_context_text = _append_target_context_text(context)
+        relevant_snippets = _relevant_snippets_text(context)
         return (
             "Return only JSON. No markdown. No explanations.\n"
             "Schema:\n"
@@ -262,6 +292,14 @@ def build_structured_edit_prompt(
             f"Failures: {failures}\n"
             f"Context: {context}\n"
             + (f"Repository map:\n{repo_map_rendered}\n" if repo_map_rendered else "")
+            + (
+                "Snippet grounding guidance:\n"
+                "- Prefer exact behaviors/output observed in provided excerpts.\n"
+                "- Do not invent commands/options/modules not present in snippets.\n"
+                f"{relevant_snippets}\n"
+                if relevant_snippets
+                else ""
+            )
             + (f"{append_target_context_text}\n" if append_target_context_text else "")
             + f"Patch plan: {patch_plan}\n"
             + f"Aegis execution guidance: {aegis_execution}\n"
@@ -271,6 +309,7 @@ def build_structured_edit_prompt(
     if isinstance(allowed_targets, list) and allowed_targets:
         allowed_text = f"Allowed paths only: {', '.join(str(item) for item in allowed_targets)}\n"
     repo_map_rendered = _repo_map_text(context)
+    relevant_snippets = _relevant_snippets_text(context)
     return (
         "Return only JSON. No markdown. No explanations.\n"
         "Schema:\n"
@@ -298,6 +337,14 @@ def build_structured_edit_prompt(
         f"Failures: {failures}\n"
         f"Context: {context}\n"
         + (f"Repository map:\n{repo_map_rendered}\n" if repo_map_rendered else "")
+        + (
+            "Snippet grounding guidance:\n"
+            "- Prefer exact behaviors/output observed in provided excerpts.\n"
+            "- Do not invent commands/options/modules not present in snippets.\n"
+            f"{relevant_snippets}\n"
+            if relevant_snippets
+            else ""
+        )
         + f"Patch plan: {patch_plan}\n"
         + f"Aegis execution guidance: {aegis_execution}\n"
     )

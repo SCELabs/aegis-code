@@ -547,6 +547,8 @@ def test_runtime_passes_repo_map_into_append_context(monkeypatch, tmp_path: Path
     assert str(first.get("path")) == "tests/test_cli.py"
     assert "existing_names" in first
     assert "imports" in first
+    snippets = context.get("relevant_file_snippets")
+    assert isinstance(snippets, list)
 
 
 def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, tmp_path: Path) -> None:
@@ -704,3 +706,33 @@ def test_aegis_guidance_override_wins_over_cheapest_mode(monkeypatch, tmp_path: 
         client=client,
     )
     assert payload["selected_model_tier"] == "premium"
+
+
+def test_relevant_snippet_extraction_is_deterministic_and_bounded(tmp_path: Path) -> None:
+    from aegis_code.runtime import _build_relevant_file_snippets
+
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text(
+        "import argparse\nCONSTANT_VALUE = 'hello'\n\ndef main():\n    print('run')\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "helpers.py").write_text(
+        "\n".join(f"def helper_{idx}():\n    return {idx}" for idx in range(180)),
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+    patch_plan = {"allowed_targets": ["src/main.py"], "proposed_changes": [{"file": "src/helpers.py"}]}
+    context = {"files": [{"path": "tests/test_main.py", "content": "def test_main():\n    assert True\n"}]}
+    repo_map = {
+        "source_files": [{"path": "src/main.py"}, {"path": "src/helpers.py"}],
+        "test_files": [{"path": "tests/test_main.py"}],
+        "cli_hints": {"main_function_files": ["src/main.py"]},
+    }
+    first = _build_relevant_file_snippets(cwd=tmp_path, patch_plan=patch_plan, failure_context=context, repo_map=repo_map)
+    second = _build_relevant_file_snippets(cwd=tmp_path, patch_plan=patch_plan, failure_context=context, repo_map=repo_map)
+    assert first == second
+    assert first
+    assert len(first) <= 6
+    assert all(len(str(item.get("excerpt", ""))) <= 900 for item in first)
+    assert sum(len(str(item.get("excerpt", ""))) for item in first) <= 3600

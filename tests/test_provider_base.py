@@ -395,3 +395,42 @@ def test_non_append_structured_prompt_unchanged_by_append_guidance() -> None:
     )
     assert "Do not repeat imports already present in the target file." not in prompt
     assert '{"content": ""}' not in prompt
+
+
+def test_build_diff_prompt_includes_relevant_snippets() -> None:
+    prompt = build_diff_prompt(
+        task="fix cli output",
+        failures={},
+        context={
+            "files": [],
+            "relevant_file_snippets": [
+                {"path": "src/main.py", "excerpt": "def main():\n    print('ready')\n"}
+            ],
+        },
+        patch_plan={"task_type": "general", "proposed_changes": []},
+        aegis_execution={},
+    )
+    assert "Snippet grounding guidance:" in prompt
+    assert "Prefer exact behaviors/output observed in provided excerpts." in prompt
+    assert "Do not invent commands/options/modules not present in snippets." in prompt
+    assert "Relevant file snippets:" in prompt
+    assert "src/main.py" in prompt
+
+
+def test_build_structured_append_prompt_includes_relevant_snippets() -> None:
+    prompt = build_structured_edit_prompt(
+        task="append tests",
+        failures={},
+        context={
+            "files": [],
+            "relevant_file_snippets": [
+                {"path": "tests/test_cli.py", "excerpt": "def test_old():\n    assert True\n"}
+            ],
+        },
+        patch_plan={"task_type": "test_generation", "allowed_targets": ["tests/test_cli.py"], "proposed_changes": []},
+        aegis_execution={},
+        operation="append",
+    )
+    assert "Snippet grounding guidance:" in prompt
+    assert "Relevant file snippets:" in prompt
+    assert "tests/test_cli.py" in prompt

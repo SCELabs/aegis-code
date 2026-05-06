@@ -410,6 +410,10 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
             ),
         ]
     )
+    if patch_diff.get("plan_consistent") is None:
+        lines.append("- Plan consistency: `skipped`")
+    else:
+        lines.append(f"- Plan consistency: `{bool(patch_diff.get('plan_consistent', True))}`")
 
     if str(patch_diff.get("status", "")) == "skipped":
         lines.append("- Status: `skipped`")

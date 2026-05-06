@@ -480,6 +480,80 @@ def _append_python_sanity_error(*, target_path: str, original_text: str, appende
     return None
 
 
+def _module_exists_for_python_m(cwd: Path, module_name: str) -> bool:
+    rel = str(module_name or "").strip().replace(".", "/")
+    if not rel:
+        return False
+    mod_file = (cwd / f"{rel}.py").resolve()
+    pkg_init = (cwd / rel / "__init__.py").resolve()
+    return mod_file.exists() or pkg_init.exists()
+
+
+def _looks_like_test_python_target(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").lower()
+    name = Path(normalized).name
+    return normalized.endswith(".py") and (normalized.startswith("tests/") or name.startswith("test_") or name.endswith("_test.py"))
+
+
+def _source_snippets_text(snippets: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for item in snippets:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path", "")).replace("\\", "/").lower().strip()
+        if not path or path.startswith("tests/") or not path.endswith(".py"):
+            continue
+        parts.append(str(item.get("excerpt", "") or ""))
+    return "\n".join(parts)
+
+
+def _append_source_conflict_error(
+    *,
+    cwd: Path,
+    target_path: str,
+    appended_content: str,
+    relevant_file_snippets: list[dict[str, Any]],
+) -> str | None:
+    if not _looks_like_test_python_target(target_path):
+        return None
+    appended = str(appended_content or "")
+    source_text = _source_snippets_text(relevant_file_snippets)
+    snippet_paths = [
+        str(item.get("path", "")).replace("\\", "/")
+        for item in relevant_file_snippets
+        if isinstance(item, dict) and str(item.get("path", "")).strip()
+    ]
+
+    py_m_matches = re.findall(r"python\s+-m\s+([A-Za-z_][A-Za-z0-9_\.]*)", appended)
+    entrypoint_signal = (
+        "src/main.py" in {p.lower() for p in snippet_paths}
+        and "__main__" in source_text
+    )
+    if py_m_matches and entrypoint_signal:
+        for mod in py_m_matches:
+            if not _module_exists_for_python_m(cwd, mod):
+                return "append_source_conflict"
+
+    if "TODO_FILE" in appended:
+        todo_file_fixed = re.search(r'TODO_FILE\s*=\s*Path\(["\']todo\.json["\']\)', source_text) is not None
+        has_env_usage = "os.environ" in source_text
+        if todo_file_fixed and not has_env_usage:
+            return "append_source_conflict"
+
+    expects_id = ('["id"]' in appended) or ("['id']" in appended) or ("todo_id" in appended)
+    if expects_id:
+        append_blocks = re.findall(r"todos\.append\(\s*\{([^}]*)\}\s*\)", source_text, flags=re.DOTALL)
+        if append_blocks and all(("\"id\"" not in block and "'id'" not in block) for block in append_blocks):
+            return "append_source_conflict"
+
+    expects_done_word = re.search(r'["\']done["\']', appended, flags=re.IGNORECASE) is not None
+    source_checkbox_output = ("[x]" in source_text) or ("[ ]" in source_text)
+    if expects_done_word and source_checkbox_output:
+        return "append_source_conflict"
+
+    return None
+
+
 def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | None]:
     raw = str(text or "").strip()
     if not raw:
@@ -545,6 +619,8 @@ def _prioritize_patch_error(
         # Preserve append parser semantics.
         if "no_append_needed" in candidates:
             return "no_append_needed"
+        if "append_source_conflict" in candidates:
+            return "append_source_conflict"
         if "append_syntax_invalid" in candidates:
             return "append_syntax_invalid"
         if "append_semantic_suspicious" in candidates:
@@ -579,11 +655,12 @@ def _prioritize_patch_error(
         "destructive_test_rewrite": 0,
         "destructive_docs_rewrite": 1,
         "no_append_needed": 2,
-        "append_syntax_invalid": 3,
-        "append_semantic_suspicious": 4,
-        "invalid_append_operation": 5,
-        "plan_inconsistent": 6,
-        "append_output_invalid": 7,
+        "append_source_conflict": 3,
+        "append_syntax_invalid": 4,
+        "append_semantic_suspicious": 5,
+        "invalid_append_operation": 6,
+        "plan_inconsistent": 7,
+        "append_output_invalid": 8,
         "structured_output_invalid": 10,
         "invalid_diff": 11,
     }
@@ -939,6 +1016,157 @@ def _extract_context_paths(context: dict[str, Any]) -> list[str]:
         if path:
             paths.append(path)
     return paths
+
+
+_SNIPPET_MAX_FILES = 6
+_SNIPPET_MAX_CHARS_PER_FILE = 900
+_SNIPPET_MAX_TOTAL_CHARS = 3600
+
+
+def _candidate_python_excerpt(text: str, max_chars: int) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+    hit_indexes: list[int] = []
+    patterns = (
+        r"^\s*(?:async\s+def|def)\s+",
+        r"^\s*class\s+",
+        r"\bmain\s*\(",
+        r"\bsys\.argv\b",
+        r"\bargparse\b",
+        r"\bprint\s*\(",
+        r"^[A-Z][A-Z0-9_]{1,}\s*=",
+    )
+    combined = re.compile("|".join(patterns))
+    for idx, line in enumerate(lines):
+        if combined.search(line):
+            hit_indexes.append(idx)
+    if not hit_indexes:
+        tail = "\n".join(lines[-40:])
+        return tail[-max_chars:] if len(tail) > max_chars else tail
+    selected: list[int] = []
+    for idx in hit_indexes:
+        for pos in range(max(0, idx - 2), min(len(lines), idx + 4)):
+            selected.append(pos)
+    selected = sorted(set(selected))
+    chunks: list[str] = []
+    prev = -2
+    for idx in selected:
+        if idx > prev + 1 and chunks:
+            chunks.append("...")
+        chunks.append(lines[idx])
+        prev = idx
+    rendered = "\n".join(chunks).strip()
+    if len(rendered) <= max_chars:
+        return rendered
+    capped = rendered[:max_chars]
+    nl = capped.rfind("\n")
+    return (capped[:nl] if nl > 0 else capped).rstrip()
+
+
+def _collect_repo_map_paths(repo_map: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for section in ("source_files", "test_files"):
+        items = repo_map.get(section, []) if isinstance(repo_map, dict) else []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path", "")).strip()
+            if path:
+                out.append(path)
+    return out
+
+
+def _build_relevant_file_snippets(
+    *,
+    cwd: Path,
+    patch_plan: dict[str, Any],
+    failure_context: dict[str, Any],
+    repo_map: dict[str, Any],
+) -> list[dict[str, str]]:
+    root = cwd.resolve()
+    explicit_targets = [
+        str(item).strip().replace("\\", "/")
+        for item in patch_plan.get("allowed_targets", [])
+        if str(item).strip()
+    ] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+    proposed_targets = []
+    proposed = patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []
+    for item in proposed:
+        if isinstance(item, dict):
+            value = str(item.get("file", "")).strip().replace("\\", "/")
+            if value:
+                proposed_targets.append(value)
+    context_targets = _extract_context_paths(failure_context)
+    cli_targets = []
+    cli_hints = repo_map.get("cli_hints", {}) if isinstance(repo_map, dict) else {}
+    if isinstance(cli_hints, dict):
+        for key in ("main_guard_files", "main_function_files", "argparse_files", "sys_argv_files"):
+            vals = cli_hints.get(key, [])
+            if isinstance(vals, list):
+                cli_targets.extend(str(v).strip().replace("\\", "/") for v in vals if str(v).strip())
+    repo_targets = _collect_repo_map_paths(repo_map)
+
+    ranked: dict[str, tuple[int, str]] = {}
+    def _add(paths: list[str], score: int) -> None:
+        for p in paths:
+            path = str(p).strip().replace("\\", "/")
+            if not path or path in ranked:
+                continue
+            ranked[path] = (score, path.lower())
+    _add(explicit_targets, 0)
+    _add(proposed_targets, 1)
+    _add(context_targets, 2)
+    _add(cli_targets, 3)
+    _add(repo_targets, 4)
+
+    ordered = [path for path, _meta in sorted(ranked.items(), key=lambda kv: kv[1])][: _SNIPPET_MAX_FILES]
+    snippets: list[dict[str, str]] = []
+    total = 0
+    for rel in ordered:
+        target = (root / rel).resolve()
+        try:
+            target.relative_to(root)
+        except Exception:
+            continue
+        if not target.exists() or not target.is_file() or _is_ignored_path(Path(rel)):
+            continue
+        text = _read_context_file(target, max_chars_per_file=4000)
+        excerpt = _candidate_python_excerpt(text, _SNIPPET_MAX_CHARS_PER_FILE if rel.endswith(".py") else 700)
+        if not excerpt.strip():
+            continue
+        remaining = _SNIPPET_MAX_TOTAL_CHARS - total
+        if remaining <= 0:
+            break
+        if len(excerpt) > remaining:
+            excerpt = excerpt[:remaining]
+            nl = excerpt.rfind("\n")
+            excerpt = (excerpt[:nl] if nl > 0 else excerpt).rstrip()
+            if not excerpt:
+                break
+        snippets.append({"path": rel, "excerpt": excerpt})
+        total += len(excerpt)
+    return snippets
+
+
+def _attach_relevant_file_snippets(
+    *,
+    context: dict[str, Any],
+    cwd: Path,
+    patch_plan: dict[str, Any],
+    repo_map: dict[str, Any],
+) -> dict[str, Any]:
+    enriched = dict(context) if isinstance(context, dict) else {"files": []}
+    snippets = _build_relevant_file_snippets(
+        cwd=cwd,
+        patch_plan=patch_plan,
+        failure_context=context if isinstance(context, dict) else {"files": []},
+        repo_map=repo_map if isinstance(repo_map, dict) else {},
+    )
+    enriched["relevant_file_snippets"] = snippets
+    return enriched
 
 
 def should_regenerate(validation: dict[str, Any], quality: dict[str, Any] | None, issues: list[str], task_type: str) -> bool:
@@ -1904,6 +2132,12 @@ def build_run_payload(
                 },
                 repo_map,
             )
+        failure_context = _attach_relevant_file_snippets(
+            context=failure_context if isinstance(failure_context, dict) else {"files": []},
+            cwd=(cwd or Path.cwd()).resolve(),
+            patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+            repo_map=repo_map if isinstance(repo_map, dict) else {},
+        )
         regeneration: dict[str, Any] = {
             "triggered": False,
             "reason": "none",
@@ -2123,20 +2357,40 @@ def build_run_payload(
                                 "error": append_sanity_error,
                             }
                         else:
-                            append_diff = _build_append_diff(target_path=append_target, original_text=original_text, appended_content=append_content)
-                            ok_append, append_error = _validate_append_diff(
-                                diff_text=append_diff,
-                                original_text=original_text,
+                            append_source_conflict = _append_source_conflict_error(
+                                cwd=(cwd or Path.cwd()).resolve(),
                                 target_path=append_target,
-                                cwd=(cwd or Path.cwd()),
+                                appended_content=append_content,
+                                relevant_file_snippets=append_prompt_context.get("relevant_file_snippets", [])
+                                if isinstance(append_prompt_context.get("relevant_file_snippets", []), list)
+                                else [],
                             )
-                            provider_result = {
-                                "available": bool(ok_append and append_diff),
-                                "provider": config.providers.provider,
-                                "model": selected_model,
-                                "diff": append_diff if ok_append else "",
-                                "error": append_error if not ok_append else None,
-                            }
+                            if append_source_conflict:
+                                structured_blocked = True
+                                structured_patch["status"] = "failed"
+                                structured_patch["failure_reason"] = append_source_conflict
+                                provider_result = {
+                                    "available": False,
+                                    "provider": config.providers.provider,
+                                    "model": selected_model,
+                                    "diff": "",
+                                    "error": append_source_conflict,
+                                }
+                            else:
+                                append_diff = _build_append_diff(target_path=append_target, original_text=original_text, appended_content=append_content)
+                                ok_append, append_error = _validate_append_diff(
+                                    diff_text=append_diff,
+                                    original_text=original_text,
+                                    target_path=append_target,
+                                    cwd=(cwd or Path.cwd()),
+                                )
+                                provider_result = {
+                                    "available": bool(ok_append and append_diff),
+                                    "provider": config.providers.provider,
+                                    "model": selected_model,
+                                    "diff": append_diff if ok_append else "",
+                                    "error": append_error if not ok_append else None,
+                                }
             use_unified_fallback = False
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(
@@ -2893,6 +3147,9 @@ def build_run_payload(
                     "preview": "",
                 }
             )
+            if requested_operation == "append":
+                patch_diff["plan_consistent"] = None
+                patch_diff["plan_missing_targets"] = []
         if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):
             patch_diff["regeneration_trigger_reason"] = regeneration.get("trigger_reason") or regeneration.get("reason")
         if patch_diff.get("status") == "invalid":
@@ -3004,7 +3261,19 @@ def build_run_payload(
         "patch_diff": patch_diff,
         "structured_patch": structured_patch,
         "patch_quality": patch_quality,
-        "patch_operation": {"operation": requested_operation} if requested_operation else None,
+        "patch_operation": (
+            {
+                "operation": requested_operation,
+                "source": (
+                    "cli"
+                    if str(options.command or "").strip().lower() == "patch"
+                    and bool(str(options.patch_operation or "").strip())
+                    else "unknown"
+                ),
+            }
+            if requested_operation
+            else None
+        ),
         "apply_safety": apply_safety,
         "verification": verification,
         "aegis_guidance": aegis_guidance,
