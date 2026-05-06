@@ -475,6 +475,73 @@ def test_runtime_payload_includes_project_context_metadata(monkeypatch, tmp_path
     assert isinstance(payload["project_context"]["available_global_keys"], list)
 
 
+def test_runtime_passes_repo_map_into_provider_context(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _provider(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {"available": False, "provider": "openai", "model": "gpt-4.1-mini", "diff": "", "error": "x"}
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    _ = build_run_payload(options=TaskOptions(task="fix tests", propose_patch=True), cwd=tmp_path, client=_CapturingClient())
+    context = captured.get("context")
+    assert isinstance(context, dict)
+    assert isinstance(context.get("repo_map"), dict)
+    assert "rendered" in context.get("repo_map")
+
+
+def test_runtime_passes_repo_map_into_append_context(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    captured: dict[str, object] = {}
+
+    def _structured(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\n\\ndef test_more():\\n    assert 1 == 1\\n"}',
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", _structured)
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    _ = build_run_payload(
+        options=TaskOptions(
+            task="add tests for cli",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["tests/test_cli.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    context = captured.get("context")
+    assert isinstance(context, dict)
+    assert isinstance(context.get("repo_map"), dict)
+
+
 def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",

@@ -18,7 +18,7 @@ from aegis_code.config import load_config
 from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.probe import get_capabilities
 from aegis_code.context.failure_context import build_failure_context
-from aegis_code.context.repo_scan import scan_repo
+from aegis_code.context.repo_scan import build_python_repo_map, scan_repo
 from aegis_code.execution_loop import should_retry_tests, synthesize_symptoms
 from aegis_code.impact.resolver import extract_failure_signals, impact_report_to_dict, resolve_impact
 from aegis_code.models import CommandResult
@@ -521,6 +521,17 @@ def _patch_diff_default() -> dict[str, Any]:
         "error": None,
         "preview": "",
     }
+
+
+def _attach_repo_map(context: dict[str, Any] | None, repo_map: dict[str, Any]) -> dict[str, Any]:
+    payload = context if isinstance(context, dict) else {}
+    files = payload.get("files", [])
+    if not isinstance(files, list):
+        files = []
+    enriched = dict(payload)
+    enriched["files"] = files
+    enriched["repo_map"] = repo_map
+    return enriched
 
 
 def _normalize_rel_path(path: str) -> str:
@@ -1125,11 +1136,12 @@ def build_run_payload(
     budget = BudgetState(total=options.budget if options.budget is not None else config.budget_per_task)
 
     repo_summary = scan_repo(cwd)
+    repo_map = build_python_repo_map(cwd)
     commands_run: list[dict[str, Any]] = []
     failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
     initial_failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
     final_failures: dict[str, Any] = {"failed_tests": [], "failure_count": 0}
-    failure_context: dict[str, Any] = {"files": []}
+    failure_context: dict[str, Any] = _attach_repo_map({"files": []}, repo_map)
     sll_analysis: dict[str, Any] = {"available": False}
     sll_pre_call: dict[str, Any] = {"available": False}
     sll_post_call: dict[str, Any] = {"available": False}
@@ -1216,7 +1228,10 @@ def build_run_payload(
             commands_run.append(initial_result.to_dict())
             initial_failures = parse_pytest_output(initial_result.full_output)
             final_failures = initial_failures
-            failure_context = build_failure_context(final_failures.get("failed_tests", []), cwd or Path.cwd())
+            failure_context = _attach_repo_map(
+                build_failure_context(final_failures.get("failed_tests", []), cwd or Path.cwd()),
+                repo_map,
+            )
             sll_analysis = analyze_failures_sll(initial_result.full_output)
             symptoms = synthesize_symptoms(
                 initial_failures,
@@ -1284,9 +1299,12 @@ def build_run_payload(
                     commands_run.append(retry_result.to_dict())
                     retry_failures = parse_pytest_output(retry_result.full_output)
                     final_failures = retry_failures
-                    failure_context = build_failure_context(
-                        final_failures.get("failed_tests", []),
-                        cwd or Path.cwd(),
+                    failure_context = _attach_repo_map(
+                        build_failure_context(
+                            final_failures.get("failed_tests", []),
+                            cwd or Path.cwd(),
+                        ),
+                        repo_map,
                     )
                     sll_analysis = analyze_failures_sll(retry_result.full_output)
                     symptoms = synthesize_symptoms(
@@ -1449,7 +1467,10 @@ def build_run_payload(
         files = final_task_context.get("files") if isinstance(final_task_context, dict) else None
         if not isinstance(files, list) or not files:
             final_task_context = local_task_context
-        failure_context = final_task_context
+        failure_context = _attach_repo_map(
+            final_task_context if isinstance(final_task_context, dict) else {"files": []},
+            repo_map,
+        )
 
         entrypoint_file = ""
         for item in failure_context.get("files", []) if isinstance(failure_context, dict) else []:
@@ -1761,21 +1782,27 @@ def build_run_payload(
         if impl_with_tests_task:
             allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
             if allowed_targets and isinstance(failure_context.get("files"), list):
-                failure_context = {
+                failure_context = _attach_repo_map(
+                    {
                     "files": [
                         item
                         for item in failure_context.get("files", [])
                         if isinstance(item, dict) and str(item.get("path", "")).strip() in set(allowed_targets)
                     ]
-                }
+                    },
+                    repo_map,
+                )
         if docs_task and isinstance(failure_context.get("files"), list):
-            failure_context = {
+            failure_context = _attach_repo_map(
+                {
                 "files": [
                     item
                     for item in failure_context.get("files", [])
                     if isinstance(item, dict) and str(item.get("path", "")).strip() == "README.md"
                 ]
-            }
+                },
+                repo_map,
+            )
         regeneration: dict[str, Any] = {
             "triggered": False,
             "reason": "none",
@@ -2809,6 +2836,7 @@ def build_run_payload(
         "selected_model_tier": selected_tier,
         "selected_model": selected_model,
         "repo_scan": repo_summary.to_dict(),
+        "repo_map": repo_map,
         "commands_run": commands_run,
         "test_attempts": test_attempts,
         "initial_failures": initial_failures,

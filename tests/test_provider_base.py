@@ -314,3 +314,30 @@ def test_build_structured_prompt_includes_safety_constraints() -> None:
     )
     assert "Safety constraints:" in prompt
     assert "Avoid Path.home()" in prompt
+
+
+def test_build_diff_prompt_includes_repository_map_guidance() -> None:
+    prompt = build_diff_prompt(
+        task="fix cli",
+        failures={},
+        context={"files": [], "repo_map": {"rendered": "Repository map (python, lightweight):\n- src/cli.py"}},
+        patch_plan={"task_type": "general", "proposed_changes": []},
+        aegis_execution={},
+    )
+    assert "Repository map guidance:" in prompt
+    assert "Use the repository map to avoid inventing module names" in prompt
+    assert "Repository map (python, lightweight):" in prompt
+
+
+def test_build_structured_append_prompt_includes_repository_map() -> None:
+    prompt = build_structured_edit_prompt(
+        task="append tests",
+        failures={},
+        context={"files": [], "repo_map": {"rendered": "Repository map (python, lightweight):\n- tests/test_cli.py"}},
+        patch_plan={"task_type": "test_generation", "allowed_targets": ["tests/test_cli.py"], "proposed_changes": []},
+        aegis_execution={},
+        operation="append",
+    )
+    assert "Repository map:" in prompt
+    assert "tests/test_cli.py" in prompt
+    assert "follow the repository map unless the user explicitly requests a change" in prompt

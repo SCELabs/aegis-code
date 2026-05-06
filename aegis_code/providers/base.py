@@ -59,6 +59,19 @@ def _shape_test_generation_context(
     return shape_test_generation_context(task=task, context=context, patch_plan=patch_plan)
 
 
+def _repo_map_text(context: dict[str, Any]) -> str:
+    if not isinstance(context, dict):
+        return ""
+    repo_map = context.get("repo_map")
+    if isinstance(repo_map, dict):
+        rendered = str(repo_map.get("rendered", "")).strip()
+        if rendered:
+            return rendered
+    if isinstance(repo_map, str):
+        return repo_map.strip()
+    return ""
+
+
 def build_diff_prompt(
     *,
     task: str,
@@ -161,6 +174,16 @@ def build_diff_prompt(
             + ("- Constraints:\n" + "\n".join(rendered_constraints) + "\n" if rendered_constraints else "")
             + (f"- Notes:\n  {notes}\n" if notes else "")
         )
+    repo_map_block = ""
+    repo_map_rendered = _repo_map_text(prompt_context)
+    if repo_map_rendered:
+        repo_map_block = (
+            "Repository map guidance:\n"
+            "- Use the repository map to avoid inventing module names, CLI commands, files, functions, or unsupported options.\n"
+            "- Prefer exact symbols and command patterns already present in the repo.\n"
+            "- If the repository map conflicts with the task wording, follow the repository map unless the user explicitly requests a change.\n"
+            f"{repo_map_rendered}\n"
+        )
     return (
         "You generate a unified git diff only.\n"
         "- Produce valid diff\n"
@@ -172,6 +195,7 @@ def build_diff_prompt(
         f"Context: {prompt_context}\n"
         f"Patch plan: {patch_plan}\n"
         f"Aegis execution guidance: {aegis_execution}\n"
+        + repo_map_block
         + ("\n".join(test_constraints) + "\n" if test_constraints else "")
         + ("Regeneration constraints:\n" + "\n".join(regen_constraints) + "\n" if regen_constraints else "")
         + sll_lines
@@ -190,6 +214,7 @@ def build_structured_edit_prompt(
     if str(operation or "").strip().lower() == "append":
         allowed_targets = patch_plan.get("allowed_targets", [])
         target = str(allowed_targets[0]).strip() if isinstance(allowed_targets, list) and allowed_targets else ""
+        repo_map_rendered = _repo_map_text(context)
         return (
             "Return only JSON. No markdown. No explanations.\n"
             "Schema:\n"
@@ -200,17 +225,22 @@ def build_structured_edit_prompt(
             "- return append content only, not full file content\n"
             "- do not return unified diff\n"
             f"- target path: {target}\n"
+            "- use the repository map to avoid inventing module names, CLI commands, files, functions, or unsupported options\n"
+            "- prefer exact symbols and command patterns already present in the repo\n"
+            "- if the repository map conflicts with the task wording, follow the repository map unless the user explicitly requests a change\n"
             f"{render_safety_constraints_for_prompt(task)}"
             f"Task: {task}\n"
             f"Failures: {failures}\n"
             f"Context: {context}\n"
-            f"Patch plan: {patch_plan}\n"
-            f"Aegis execution guidance: {aegis_execution}\n"
+            + (f"Repository map:\n{repo_map_rendered}\n" if repo_map_rendered else "")
+            + f"Patch plan: {patch_plan}\n"
+            + f"Aegis execution guidance: {aegis_execution}\n"
         )
     allowed_targets = patch_plan.get("allowed_targets", [])
     allowed_text = ""
     if isinstance(allowed_targets, list) and allowed_targets:
         allowed_text = f"Allowed paths only: {', '.join(str(item) for item in allowed_targets)}\n"
+    repo_map_rendered = _repo_map_text(context)
     return (
         "Return only JSON. No markdown. No explanations.\n"
         "Schema:\n"
@@ -229,13 +259,17 @@ def build_structured_edit_prompt(
         "- do not include delete or rename\n"
         "- do not include .aegis, .git, caches, venv paths\n"
         "- prefer modifying existing src/main.py and tests/test_cli.py for simple feature work\n"
+        "- use the repository map to avoid inventing module names, CLI commands, files, functions, or unsupported options\n"
+        "- prefer exact symbols and command patterns already present in the repo\n"
+        "- if the repository map conflicts with the task wording, follow the repository map unless the user explicitly requests a change\n"
         f"{render_safety_constraints_for_prompt(task)}"
         f"{allowed_text}"
         f"Task: {task}\n"
         f"Failures: {failures}\n"
         f"Context: {context}\n"
-        f"Patch plan: {patch_plan}\n"
-        f"Aegis execution guidance: {aegis_execution}\n"
+        + (f"Repository map:\n{repo_map_rendered}\n" if repo_map_rendered else "")
+        + f"Patch plan: {patch_plan}\n"
+        + f"Aegis execution guidance: {aegis_execution}\n"
     )
 
 
