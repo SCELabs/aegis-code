@@ -1852,6 +1852,22 @@ def _print_task_final_summary(payload: dict[str, object], cwd: Path) -> None:
     print("- aegis-code apply --confirm --run-tests")
 
 
+def _looks_additive_task(task: str) -> bool:
+    lowered = str(task or "").strip().lower()
+    if not lowered:
+        return False
+    hints = (
+        "add test",
+        "add tests",
+        "append doc",
+        "append docs",
+        "add example",
+        "add examples",
+        "append",
+    )
+    return any(token in lowered for token in hints)
+
+
 def handle_backups(argv: Sequence[str]) -> int:
     parser = _build_backups_parser()
     parser.parse_args(list(argv))
@@ -2136,8 +2152,21 @@ def handle_patch(argv: Sequence[str]) -> int:
     print(f"Patch status: {patch_diff.get('status', 'skipped')}")
     if str(patch_operation.get("operation", "")).strip():
         print(f"Patch operation: {patch_operation.get('operation')}")
+    if not args.operation and args.files and _looks_additive_task(args.task):
+        print("")
+        print("This task appears additive.")
+        print("For safer patch generation consider:")
+        print("--operation append")
     if patch_diff.get("error"):
         print(f"Patch error: {patch_diff.get('error')}")
+    if str(patch_diff.get("error", "")).strip() == "destructive_test_rewrite":
+        targets = [str(item) for item in scope_contract.allowed_targets]
+        test_target = next((path for path in targets if path.startswith("tests/")), None)
+        if test_target:
+            print("")
+            print("Hint:")
+            print("Try append-only mode:")
+            print(f'aegis-code patch --file {test_target} --operation append "add tests..."')
     if patch_diff.get("missing_targets"):
         print(f"Missing targets: {', '.join(str(item) for item in patch_diff.get('missing_targets', []))}")
     return 0 if str(patch_diff.get("status", "")) != "blocked" else 1
