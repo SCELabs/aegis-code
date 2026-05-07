@@ -21,10 +21,16 @@ Create or keep a known failing test in your project, then run:
 python -m pytest -q
 ```
 
-## C. Generate proposal (non-mutating)
+## C. Generate scoped proposal (non-mutating)
 
 ```bash
-aegis-code "fix failing tests" --propose-patch
+aegis-code patch --file src/calculator.py "fix failing tests"
+```
+
+For additive docs updates, use explicit append mode:
+
+```bash
+aegis-code patch --file README.md --operation append "add README usage examples"
 ```
 
 ## D. Inspect diff

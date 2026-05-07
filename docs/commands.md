@@ -24,6 +24,24 @@ aegis-code "<task>" --dry-run
 aegis-code "<task>" --propose-patch
 ```
 
+## Patch (Explicit Scope)
+
+```bash
+aegis-code patch --file <path> "<task>"
+aegis-code patch --file <path> --file <path> "<task>"
+aegis-code patch --file README.md --operation append "add usage examples"
+aegis-code patch --file tests/test_example.py --operation append "add tests"
+```
+
+Behavior:
+
+- `patch` requires explicit scope (`--file` at least once).
+- Generation is proposal-only; no file mutation without `apply --confirm`.
+- `--operation append` is explicit append-only mode.
+- No operation inference: additive docs/test tasks without `--operation append` stay in normal flow, but CLI prints stronger rerun guidance.
+- Append mode supports no-op signal (`{"content": ""}`) and can block with `no_append_needed`.
+- Docs/test destructive rewrite protections can block proposals (`destructive_docs_rewrite`, `destructive_test_rewrite`).
+
 ## Diff Inspection
 
 ```bash
@@ -67,7 +85,10 @@ aegis-code fix --max-cycles 3
 Behavior:
 
 - `fix` without `--confirm` does not mutate files.
-- `fix --confirm` only applies accepted `HIGH`/`MEDIUM` patches.
+- `fix` may return a usable bounded proposal without applying it:
+  - `Status: GENERATED`
+  - `Reason: bounded_patch_ready`
+- `fix --confirm` applies only when patch checks and safety gates allow it.
 - Bounded loop stops on repeated failure signatures and max cycles.
 - Deterministic assertion micro-fix is available for simple single-test assertion mismatch cases.
 

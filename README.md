@@ -24,10 +24,10 @@ Aegis Code is not:
 
 ## Core Workflow
 
-1. Generate a proposal (no file mutation):
+1. Generate a scoped patch proposal (no file mutation):
 
 ```bash
-aegis-code "fix failing tests" --propose-patch
+aegis-code patch --file src/example.py "fix failing tests"
 ```
 
 2. Inspect the latest diff:
@@ -109,6 +109,22 @@ aegis-code apply --confirm --run-tests
 - No git commands are run by Aegis Code.
 - Stale diff cleanup: task runs clear prior `latest.diff` / `latest.invalid.diff` before new generation.
 
+## Patch Command (Scoped Proposals)
+
+`aegis-code patch` is the preferred proposal command for bounded edits.
+
+```bash
+aegis-code patch --file src/example.py "fix bug in parser"
+aegis-code patch --file README.md --operation append "add usage examples"
+```
+
+Behavior:
+
+- Requires explicit scope: at least one `--file`.
+- Uses proposal-only generation and validation; no mutation without `apply --confirm`.
+- `--operation append` enables append-only generation for additive updates.
+- For additive docs tasks without explicit append mode, CLI prints guidance to rerun with `--operation append` (no automatic operation inference).
+
 ## Fix Loop
 
 Use bounded test-fix workflow:
@@ -122,7 +138,8 @@ aegis-code fix --confirm --max-cycles 2
 Behavior:
 
 - `fix` without `--confirm` is non-mutating.
-- `fix --confirm` only applies accepted diffs with `HIGH`/`MEDIUM` safety.
+- `fix` can produce a bounded usable patch without applying it (`Status: GENERATED`, `Reason: bounded_patch_ready`).
+- `fix --confirm` applies only when patch checks/safety gates permit.
 - Stops early on repeated failure signatures to avoid loops.
 - For simple single-test pytest assertion mismatches, Aegis Code can use a deterministic micro-fix (single assertion update) instead of provider generation.
 - Deterministic micro-fixes still go through diff/check metadata and safety gating.
@@ -148,6 +165,14 @@ Runtime/task:
 aegis-code "<task>"
 aegis-code "<task>" --dry-run
 aegis-code "<task>" --propose-patch
+```
+
+Scoped patch proposal:
+
+```bash
+aegis-code patch --file src/example.py "fix edge case in parser"
+aegis-code patch --file tests/test_example.py --operation append "add regression test"
+aegis-code patch --file README.md --operation append "add README usage examples"
 ```
 
 Diff/apply/fix:
