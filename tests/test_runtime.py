@@ -858,3 +858,101 @@ def test_runtime_outside_allowed_targets_emits_target_diagnostics(monkeypatch, t
     diagnostics = patch_diff.get("target_diagnostics")
     assert isinstance(diagnostics, dict)
     assert diagnostics.get("validator_source") == "structured_edits"
+
+
+def test_feature_plan_multi_file_patch_ordering_and_payload(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "b.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_a.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="update feature across files",
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/b.py", "tests/test_a.py"],
+                "max_files": 2,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+            propose_patch=False,
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    feature_plan = payload.get("feature_plan")
+    assert isinstance(feature_plan, dict)
+    assert feature_plan.get("available") is True
+    steps = feature_plan.get("steps", [])
+    assert isinstance(steps, list)
+    assert [item.get("target_file") for item in steps] == ["src/b.py", "tests/test_a.py"]
+    assert [item.get("id") for item in steps] == ["step_1", "step_2"]
+    assert all(item.get("operation") == "replace" for item in steps)
+    assert all(item.get("status") == "planned" for item in steps)
+    assert all(int(item.get("max_changed_lines", 0)) == 300 for item in steps)
+
+
+def test_feature_plan_single_file_patch_unchanged(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "only.py").write_text("VALUE = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="single file patch",
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/only.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+            propose_patch=False,
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("feature_plan") is None
+
+
+def test_feature_plan_append_unchanged(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="append docs",
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["README.md"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+            propose_patch=False,
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("feature_plan") is None

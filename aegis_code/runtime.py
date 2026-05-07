@@ -939,6 +939,76 @@ def _compute_apply_safety(
     return "LOW"
 
 
+def _build_feature_plan(
+    *,
+    command: str,
+    requested_operation: str,
+    explicit_scope_active: bool,
+    explicit_scope: dict[str, Any],
+    patch_plan: dict[str, Any],
+    cwd: Path,
+) -> dict[str, Any] | None:
+    if str(command or "").strip().lower() != "patch":
+        return None
+    if requested_operation == "append":
+        return None
+    if not explicit_scope_active:
+        return None
+    scope_targets = [
+        _normalize_rel_path(str(item))
+        for item in explicit_scope.get("allowed_targets", [])
+        if str(item).strip()
+    ] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
+    if len(scope_targets) <= 1:
+        return None
+
+    proposed_changes = patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []
+    proposed_by_file: dict[str, dict[str, Any]] = {}
+    for item in proposed_changes:
+        if not isinstance(item, dict):
+            continue
+        path = _normalize_rel_path(str(item.get("file", "") or ""))
+        if path and path not in proposed_by_file:
+            proposed_by_file[path] = item
+
+    allowed_ops = [
+        str(item).strip().lower()
+        for item in explicit_scope.get("allowed_operations", [])
+        if str(item).strip()
+    ] if isinstance(explicit_scope.get("allowed_operations", []), list) else []
+    allow_new = bool(explicit_scope.get("allow_new_files", False))
+
+    steps: list[dict[str, Any]] = []
+    for idx, target in enumerate(scope_targets, start=1):
+        op = "replace"
+        if allowed_ops == ["create"]:
+            op = "create"
+        elif "create" in allowed_ops and "replace" not in allowed_ops:
+            op = "create"
+        elif allow_new and "create" in allowed_ops:
+            exists = ((cwd / target).resolve()).exists()
+            op = "replace" if exists else "create"
+        change = proposed_by_file.get(target, {})
+        description = str(change.get("description", "") or "").strip()
+        intent = description or f"Apply requested task changes to {target}."
+        steps.append(
+            {
+                "id": f"step_{idx}",
+                "target_file": target,
+                "operation": op,
+                "intent": intent,
+                "max_changed_lines": 300,
+                "status": "planned",
+            }
+        )
+
+    return {
+        "available": True,
+        "kind": "phase1_planning",
+        "steps": steps,
+    }
+
+
 def _aegis_regeneration_control(
     *,
     base_url: str,
@@ -1595,6 +1665,7 @@ def build_run_payload(
         "allowed_targets": [],
         "missing_targets": [],
     }
+    feature_plan: dict[str, Any] | None = None
     patch_quality: dict[str, Any] | None = None
     patch_safety: dict[str, Any] | None = None
     aegis_guidance: dict[str, Any] = {"available": False, "actions": [], "explanation": "", "used_fallback": False}
@@ -2114,6 +2185,14 @@ def build_run_payload(
             )
             should_attempt_provider_diff = False
             should_patch_flow = False
+    feature_plan = _build_feature_plan(
+        command=str(options.command or ""),
+        requested_operation=requested_operation,
+        explicit_scope_active=explicit_scope_active,
+        explicit_scope=explicit_scope if isinstance(explicit_scope, dict) else {},
+        patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+        cwd=(cwd or Path.cwd()).resolve(),
+    )
     provider_enabled = bool(config.providers.enabled or options.propose_patch)
     has_context_files = bool(failure_context.get("files", []))
     has_proposed_changes = bool(patch_plan.get("proposed_changes", []))
@@ -3388,6 +3467,7 @@ def build_run_payload(
             if requested_operation
             else None
         ),
+        "feature_plan": feature_plan,
         "apply_safety": apply_safety,
         "verification": verification,
         "aegis_guidance": aegis_guidance,

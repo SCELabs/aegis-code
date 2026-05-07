@@ -97,6 +97,7 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
     patch_safety = payload.get("patch_safety", {}) if isinstance(payload.get("patch_safety"), dict) else {}
     patch_quality = payload.get("patch_quality")
     patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
+    feature_plan = payload.get("feature_plan", {}) if isinstance(payload.get("feature_plan"), dict) else {}
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
     verification = payload.get("verification", {})
@@ -370,6 +371,22 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
             )
     else:
         lines.append("- No proposed changes")
+
+    feature_steps = feature_plan.get("steps", []) if isinstance(feature_plan.get("steps", []), list) else []
+    if feature_steps:
+        lines.extend(
+            [
+                "",
+                "## Multi-file Feature Plan",
+                "",
+            ]
+        )
+        for step in feature_steps:
+            if not isinstance(step, dict):
+                continue
+            lines.append(
+                f"- `{step.get('id', '?')}` | file=`{step.get('target_file', '')}` | op=`{step.get('operation', 'replace')}` | max_changed_lines=`{step.get('max_changed_lines', 0)}` | status=`{step.get('status', 'planned')}` | intent={step.get('intent', '')}"
+            )
 
     lines.extend(
         [
