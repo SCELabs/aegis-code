@@ -52,6 +52,9 @@ from aegis_code.verification import resolve_verification_command
 from aegis_code.runtime_components import task_classification as _task_classification
 from aegis_code.runtime_components import plan_consistency as _plan_consistency
 from aegis_code.runtime_components import semantic_guards as _semantic_guards
+from aegis_code.runtime_components import append_context as _append_context
+from aegis_code.runtime_components import append_pipeline as _append_pipeline
+from aegis_code.runtime_components import feature_plan as _feature_plan
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
 _PROVIDER_HEARTBEAT_SECONDS = 2.0
@@ -282,139 +285,31 @@ def _maybe_wrap_docs_non_diff(
 
 
 def _build_append_diff(*, target_path: str, original_text: str, appended_content: str) -> str:
-    append_text = str(appended_content or "")
-    if append_text and not append_text.endswith("\n"):
-        append_text += "\n"
-    candidate = str(original_text or "") + append_text
-    old_lines = str(original_text or "").splitlines()
-    new_lines = candidate.splitlines()
-    body = list(unified_diff(old_lines, new_lines, fromfile=f"a/{target_path}", tofile=f"b/{target_path}", lineterm=""))
-    if not body:
-        return ""
-    return "diff --git a/{0} b/{0}\n".format(target_path) + "\n".join(body) + "\n"
+    return _append_pipeline._build_append_diff(
+        target_path=target_path,
+        original_text=original_text,
+        appended_content=appended_content,
+    )
 
 
 def _line_tail_capped(text: str, max_lines: int, max_chars: int) -> str:
-    lines = str(text or "").splitlines()
-    tail = lines[-max_lines:] if max_lines > 0 else lines
-    rendered = "\n".join(tail)
-    if len(rendered) <= max_chars:
-        return rendered
-    trimmed = rendered[-max_chars:]
-    if "\n" in trimmed:
-        trimmed = trimmed[trimmed.find("\n") + 1 :]
-    return trimmed
+    return _append_context._line_tail_capped(text, max_lines, max_chars)
 
 
 def _build_append_target_context(*, cwd: Path, target_path: str, original_text: str) -> dict[str, Any]:
-    imports: list[str] = []
-    names: list[str] = []
-    tests: list[str] = []
-    js_style = "unknown"
-    js_test_framework = "unknown"
-    package_type = "commonjs"
-    target_is_js = str(target_path).replace("\\", "/").lower().endswith((".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"))
-    if target_is_js:
-        package_json = cwd / "package.json"
-        if package_json.exists():
-            try:
-                pkg = json.loads(package_json.read_text(encoding="utf-8", errors="replace"))
-                if isinstance(pkg, dict):
-                    package_type = str(pkg.get("type", "commonjs") or "commonjs").strip().lower()
-            except Exception:
-                package_type = "commonjs"
-    for raw_line in str(original_text or "").splitlines():
-        stripped = raw_line.strip()
-        if stripped.startswith("import ") or stripped.startswith("from "):
-            imports.append(stripped)
-        fn_match = re.match(r"^\s*(?:async\s+def|def)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
-        if fn_match:
-            name = fn_match.group(1)
-            names.append(name)
-            if name.startswith("test_"):
-                tests.append(name)
-        class_test_match = re.match(r"^\s*def\s+(test_[A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
-        if class_test_match:
-            tests.append(class_test_match.group(1))
-        if target_is_js:
-            if stripped.startswith("import "):
-                js_style = "esm"
-            if "require(" in stripped and js_style == "unknown":
-                js_style = "commonjs"
-            if stripped.startswith("export ") or "module.exports" in stripped:
-                names.append(stripped)
-            js_fn_match = re.match(r"^\s*(?:export\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
-            if js_fn_match:
-                names.append(js_fn_match.group(1))
-            if "node:test" in stripped or " from \"node:test\"" in stripped or " from 'node:test'" in stripped:
-                js_test_framework = "node:test"
-            if "describe(" in stripped or "expect(" in stripped:
-                if js_test_framework == "unknown":
-                    js_test_framework = "jest_like"
-    if target_is_js and js_style == "unknown":
-        js_style = "esm" if package_type == "module" or str(target_path).endswith(".mjs") else "commonjs"
-    return {
-        "path": target_path,
-        "imports": sorted(set(imports), key=str.lower)[:40],
-        "existing_names": sorted(set(names), key=str.lower)[:80],
-        "existing_tests": sorted(set(tests), key=str.lower)[:80],
-        "js_module_system": js_style if target_is_js else "n/a",
-        "js_test_framework": js_test_framework if target_is_js else "n/a",
-        "package_json_type": package_type if target_is_js else "n/a",
-        "tail": _line_tail_capped(original_text, 80, 4000),
-    }
+    return _append_context._build_append_target_context(cwd=cwd, target_path=target_path, original_text=original_text)
 
 
 def _collect_defined_names(tree: ast.AST) -> set[str]:
-    defined: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            defined.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            defined.add(str(node.name))
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                bound = str(alias.asname or alias.name.split(".")[0]).strip()
-                if bound:
-                    defined.add(bound)
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if str(alias.name) == "*":
-                    continue
-                bound = str(alias.asname or alias.name).strip()
-                if bound:
-                    defined.add(bound)
-    return defined
+    return _append_pipeline._collect_defined_names(tree)
 
 
 def _append_python_sanity_error(*, target_path: str, original_text: str, appended_content: str) -> str | None:
-    if not str(target_path).endswith(".py"):
-        return None
-    candidate = str(original_text or "") + str(appended_content or "")
-    try:
-        candidate_tree = ast.parse(candidate)
-    except SyntaxError:
-        return "append_syntax_invalid"
-    try:
-        appended_tree = ast.parse(str(appended_content or ""))
-    except SyntaxError:
-        return "append_syntax_invalid"
-    defined_names = _collect_defined_names(candidate_tree)
-    builtins_names = set(dir(__import__("builtins")))
-    suspicious: set[str] = set()
-    for node in ast.walk(appended_tree):
-        if not isinstance(node, ast.keyword):
-            continue
-        value = node.value
-        if not isinstance(value, ast.Name) or not isinstance(value.ctx, ast.Load):
-            continue
-        name = str(value.id or "")
-        # Conservative heuristic: flag only obvious single-letter unresolved names.
-        if len(name) == 1 and name not in defined_names and name not in builtins_names:
-            suspicious.add(name)
-    if suspicious:
-        return "append_semantic_suspicious"
-    return None
+    return _append_pipeline._append_python_sanity_error(
+        target_path=target_path,
+        original_text=original_text,
+        appended_content=appended_content,
+    )
 
 
 def _module_exists_for_python_m(cwd: Path, module_name: str) -> bool:
@@ -457,49 +352,16 @@ def _append_source_conflict_error(
 
 
 def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | None]:
-    raw = str(text or "").strip()
-    if not raw:
-        return False, None, "append_output_invalid"
-    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.DOTALL | re.IGNORECASE)
-    payload_text = fenced.group(1).strip() if fenced else raw
-    if any(marker in payload_text for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
-        return False, None, "append_output_invalid"
-    try:
-        payload = json.loads(payload_text)
-    except Exception:
-        return False, None, "append_output_invalid"
-    if not isinstance(payload, dict):
-        return False, None, "append_output_invalid"
-    if "changes" in payload:
-        return False, None, "append_output_invalid"
-    content = payload.get("content")
-    if not isinstance(content, str):
-        return False, None, "append_output_invalid"
-    if not content.strip():
-        return True, "", None
-    normalized = content if content.endswith("\n") else f"{content}\n"
-    if any(marker in normalized for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
-        return False, None, "append_output_invalid"
-    return True, normalized, None
+    return _append_pipeline._parse_append_provider_response(text)
 
 
 def _validate_append_diff(*, diff_text: str, original_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
-    inspected = inspect_diff(diff_text, cwd=cwd)
-    if not bool(inspected.get("valid", False)):
-        return False, "invalid_append_operation"
-    summary = inspected.get("summary", {}) if isinstance(inspected.get("summary"), dict) else {}
-    if int(summary.get("deletions", 0) or 0) != 0:
-        return False, "invalid_append_operation"
-    files = inspected.get("files", []) if isinstance(inspected.get("files"), list) else []
-    if len(files) != 1:
-        return False, "invalid_append_operation"
-    file_entry = files[0] if files and isinstance(files[0], dict) else {}
-    new_path = str(file_entry.get("new_path", "") or "")
-    if new_path != target_path:
-        return False, "invalid_append_operation"
-    if int(summary.get("additions", 0) or 0) <= 0:
-        return False, "invalid_append_operation"
-    return True, None
+    return _append_pipeline._validate_append_diff(
+        diff_text=diff_text,
+        original_text=original_text,
+        target_path=target_path,
+        cwd=cwd,
+    )
 
 
 def _prioritize_patch_error(
@@ -670,72 +532,24 @@ def _build_feature_plan(
     task_text: str,
     baseline_healthy: bool,
 ) -> dict[str, Any] | None:
-    if str(command or "").strip().lower() != "patch":
-        return None
-    if requested_operation == "append":
-        return None
-    if not explicit_scope_active:
-        return None
-    if not baseline_healthy:
-        return None
-    task_type = str(patch_plan.get("task_type", "") or "general")
-    if "fix failing tests in " in str(task_text or "").lower():
-        return None
-    scope_targets = [
-        _normalize_rel_path(str(item))
-        for item in explicit_scope.get("allowed_targets", [])
-        if str(item).strip()
-    ] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
-    if task_type == "docs_task" and scope_targets and all(path == "README.md" or path.startswith("docs/") for path in scope_targets):
-        return None
-    if len(scope_targets) <= 1:
-        return None
+    return _feature_plan._build_feature_plan(
+        command=command,
+        requested_operation=requested_operation,
+        explicit_scope_active=explicit_scope_active,
+        explicit_scope=explicit_scope,
+        patch_plan=patch_plan,
+        cwd=cwd,
+        task_text=task_text,
+        baseline_healthy=baseline_healthy,
+    )
 
-    proposed_changes = patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []
-    proposed_by_file: dict[str, dict[str, Any]] = {}
-    for item in proposed_changes:
-        if not isinstance(item, dict):
-            continue
-        path = _normalize_rel_path(str(item.get("file", "") or ""))
-        if path and path not in proposed_by_file:
-            proposed_by_file[path] = item
 
-    allowed_ops = [
-        str(item).strip().lower()
-        for item in explicit_scope.get("allowed_operations", [])
-        if str(item).strip()
-    ] if isinstance(explicit_scope.get("allowed_operations", []), list) else []
-    allow_new = bool(explicit_scope.get("allow_new_files", False))
-
-    steps: list[dict[str, Any]] = []
-    for idx, target in enumerate(scope_targets, start=1):
-        op = "replace"
-        if allowed_ops == ["create"]:
-            op = "create"
-        elif "create" in allowed_ops and "replace" not in allowed_ops:
-            op = "create"
-        elif allow_new and "create" in allowed_ops:
-            exists = ((cwd / target).resolve()).exists()
-            op = "replace" if exists else "create"
-        change = proposed_by_file.get(target, {})
-        description = str(change.get("description", "") or "").strip()
-        intent = description or f"Apply requested task changes to {target}."
-        steps.append(
-            {
-                "id": f"step_{idx}",
-                "target_file": target,
-                "operation": op,
-                "intent": intent,
-                "max_changed_lines": 300,
-                "status": "planned",
-            }
-        )
-
-    return {
-        "available": True,
-        "kind": "phase1_planning",
-        "steps": steps,
-    }
+def _is_explicit_multi_file_patch(*, explicit_scope_active: bool, explicit_scope: dict[str, Any], command: str) -> bool:
+    return _feature_plan._is_explicit_multi_file_patch(
+        explicit_scope_active=explicit_scope_active,
+        explicit_scope=explicit_scope,
+        command=command,
+    )
 
 
 def _aegis_regeneration_control(
@@ -1848,10 +1662,10 @@ def build_run_payload(
     explicit_scope = options.scope_contract if isinstance(options.scope_contract, dict) else {}
     explicit_scope_active = str(options.command or "").strip().lower() == "patch" and str(explicit_scope.get("source", "")) == "cli_explicit"
     explicit_scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
-    explicit_multi_file_patch = bool(
-        str(options.command or "").strip().lower() == "patch"
-        and explicit_scope_active
-        and len(explicit_scope_targets) > 1
+    explicit_multi_file_patch = _is_explicit_multi_file_patch(
+        explicit_scope_active=explicit_scope_active,
+        explicit_scope=explicit_scope,
+        command=str(options.command or ""),
     )
     requested_operation = str(options.patch_operation or "").strip().lower()
     if not requested_operation:
