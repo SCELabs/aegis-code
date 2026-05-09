@@ -49,6 +49,9 @@ from aegis_code.sll_guidance import build_sll_fix_guidance
 from aegis_code.sll_adapter import analyze_failures_sll, classify_sll_risk, run_sll_analysis
 from aegis_code.tools.tests import run_configured_tests
 from aegis_code.verification import resolve_verification_command
+from aegis_code.runtime_components import task_classification as _task_classification
+from aegis_code.runtime_components import plan_consistency as _plan_consistency
+from aegis_code.runtime_components import semantic_guards as _semantic_guards
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
 _PROVIDER_HEARTBEAT_SECONDS = 2.0
@@ -134,178 +137,43 @@ def _is_tests_passed(status: str, exit_code: int | None) -> bool:
 
 
 def is_constructive_task(task: str) -> bool:
-    lowered = str(task or "").lower()
-    if is_test_generation_task(lowered):
-        return True
-
-    positive = (
-        "add",
-        "create",
-        "implement",
-        "build",
-        "write",
-        "generate",
-        "refactor",
-        "update",
-        "extend",
-    )
-    negative = ("run tests", "execute tests", "check tests", "analyze", "summarize", "explain")
-    if any(token in lowered for token in negative):
-        return False
-    return any(token in lowered for token in positive)
+    return _task_classification.is_constructive_task(task)
 
 
 def _has_implementation_intent(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    impl_phrases = (
-        "fix",
-        "update",
-        "change",
-        "modify",
-        "add a module",
-        "create a module",
-        "add a helpers module",
-        "add helpers module",
-        "add helper",
-        "create helper",
-        "add function",
-        "create function",
-        "implement",
-        "helpers module",
-        "add endpoint",
-        "add route",
-        "api route",
-        "add handler",
-        "request body validation",
-        "schema",
-        "validation",
-    )
-    return any(phrase in lowered for phrase in impl_phrases)
+    return _task_classification._has_implementation_intent(task)
 
 
 def _has_test_intent(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    test_phrases = ("test", "tests", "coverage")
-    return any(phrase in lowered for phrase in test_phrases)
+    return _task_classification._has_test_intent(task)
 
 
 def _is_explicit_tests_only_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    tests_only_phrases = (
-        "tests only",
-        "test only",
-        "write tests only",
-        "do not modify source files",
-        "do not modify source",
-    )
-    return any(phrase in lowered for phrase in tests_only_phrases)
+    return _task_classification._is_explicit_tests_only_task(task)
 
 
 def _is_docs_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    docs_phrases = (
-        "readme",
-        "docs",
-        "documentation",
-        "usage examples",
-        "setup instructions",
-    )
-    return any(phrase in lowered for phrase in docs_phrases)
+    return _task_classification._is_docs_task(task)
 
 
 def _has_feature_implementation_intent(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    feature_phrases = (
-        "add endpoint",
-        "add api route",
-        "api route",
-        "add route",
-        "post /",
-        "get /",
-        "put /",
-        "delete /",
-        "add feature",
-        "add handler",
-        "implement handler",
-        "add schema",
-        "implement schema",
-        "request body validation",
-        "body validation",
-        "payload validation",
-    )
-    if any(phrase in lowered for phrase in feature_phrases):
-        return True
-    if "implement" in lowered and any(token in lowered for token in ("endpoint", "route", "handler", "schema", "validation", "api")):
-        return True
-    return False
+    return _task_classification._has_feature_implementation_intent(task)
 
 
 def _is_vague_feature_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    vague_phrases = (
-        "add a new feature",
-        "add feature",
-        "new feature with tests",
-    )
-    if any(phrase in lowered for phrase in vague_phrases):
-        has_specific_anchor = any(
-            token in lowered
-            for token in (" in ", " file", " module", " function", "class ", " endpoint", " api ", " cli ")
-        )
-        return not has_specific_anchor
-    return False
+    return _task_classification._is_vague_feature_task(task)
 
 
 def _is_tagging_support_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    return "tag" in lowered and "todo" in lowered and ("filter" in lowered or "filtering" in lowered) and "test" in lowered
+    return _task_classification._is_tagging_support_task(task)
 
 
 def classify_task_type(task: str) -> str:
-    lowered = str(task or "").lower().strip()
-    if not lowered:
-        return "general"
-    if _is_vague_feature_task(lowered):
-        return "vague_task"
-    if _is_explicit_tests_only_task(lowered):
-        return "test_generation"
-    if _has_feature_implementation_intent(lowered):
-        return "feature_implementation"
-    if _is_docs_task(lowered):
-        return "docs_task"
-    if _has_implementation_intent(lowered) and _has_test_intent(lowered):
-        return "implementation_with_tests"
-    if is_test_generation_task(lowered):
-        return "test_generation"
-    return "general"
+    return _task_classification.classify_task_type(task)
 
 
 def is_test_generation_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    if not lowered:
-        return False
-    if _has_implementation_intent(lowered) and _has_test_intent(lowered) and not _is_explicit_tests_only_task(lowered):
-        return False
-    verification_only = ("run tests", "execute tests", "check tests")
-    if any(phrase in lowered for phrase in verification_only):
-        return False
-
-    if _is_explicit_tests_only_task(lowered):
-        return True
-    generation_phrases = (
-        "add test",
-        "add tests",
-        "write test",
-        "write tests",
-        "generate test",
-        "generate tests",
-        "test for",
-        "tests for",
-        "coverage",
-        "verify behavior",
-        "assert",
-    )
-    return any(phrase in lowered for phrase in generation_phrases)
+    return _task_classification.is_test_generation_task(task)
 
 
 def _test_hint_path(task: str, context: dict[str, Any]) -> str:
@@ -550,75 +418,27 @@ def _append_python_sanity_error(*, target_path: str, original_text: str, appende
 
 
 def _module_exists_for_python_m(cwd: Path, module_name: str) -> bool:
-    rel = str(module_name or "").strip().replace(".", "/")
-    if not rel:
-        return False
-    mod_file = (cwd / f"{rel}.py").resolve()
-    pkg_init = (cwd / rel / "__init__.py").resolve()
-    return mod_file.exists() or pkg_init.exists()
+    return _semantic_guards._module_exists_for_python_m(cwd, module_name)
 
 
 def _looks_like_test_python_target(path: str) -> bool:
-    normalized = str(path or "").replace("\\", "/").lower()
-    name = Path(normalized).name
-    return normalized.endswith(".py") and (normalized.startswith("tests/") or name.startswith("test_") or name.endswith("_test.py"))
+    return _semantic_guards._looks_like_test_python_target(path)
 
 
 def _looks_like_docs_target(path: str) -> bool:
-    normalized = str(path or "").replace("\\", "/").lower()
-    return normalized == "readme.md" or normalized.startswith("docs/")
+    return _semantic_guards._looks_like_docs_target(path)
 
 
 def _looks_like_js_target(path: str) -> bool:
-    normalized = str(path or "").replace("\\", "/").lower()
-    return normalized.endswith((".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"))
+    return _semantic_guards._looks_like_js_target(path)
 
 
 def _source_snippets_text(snippets: list[dict[str, Any]]) -> str:
-    parts: list[str] = []
-    for item in snippets:
-        if not isinstance(item, dict):
-            continue
-        path = str(item.get("path", "")).replace("\\", "/").lower().strip()
-        if not path or path.startswith("tests/") or not path.endswith(".py"):
-            continue
-        parts.append(str(item.get("excerpt", "") or ""))
-    return "\n".join(parts)
+    return _semantic_guards._source_snippets_text(snippets)
 
 
 def _detect_simple_slugify_source(*, cwd: Path, source_text: str) -> bool:
-    pattern = r"def\s+slugify\s*\(.*?\)\s*(?:->\s*[^:]+)?\s*:\s*[\r\n]+\s*return\s+text\.lower\(\)\.replace\(\s*['\"]\s+['\"],\s*['\"]-['\"]\s*\)"
-    if re.search(pattern, source_text, flags=re.DOTALL):
-        return True
-    ignore_dirs = {
-        ".git",
-        ".aegis",
-        ".venv",
-        "venv",
-        "__pycache__",
-        "node_modules",
-        "dist",
-        "build",
-        ".pytest_cache",
-    }
-    candidates: list[Path] = []
-    try:
-        for path in sorted(cwd.rglob("*.py")):
-            if any(part in ignore_dirs for part in path.parts):
-                continue
-            candidates.append(path)
-            if len(candidates) >= 40:
-                break
-    except Exception:
-        return False
-    for path in candidates:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
-            continue
-        if re.search(pattern, text, flags=re.DOTALL):
-            return True
-    return False
+    return _semantic_guards._detect_simple_slugify_source(cwd=cwd, source_text=source_text)
 
 
 def _append_source_conflict_error(
@@ -628,88 +448,12 @@ def _append_source_conflict_error(
     appended_content: str,
     relevant_file_snippets: list[dict[str, Any]],
 ) -> str | None:
-    appended = str(appended_content or "")
-    source_text = _source_snippets_text(relevant_file_snippets)
-    if _looks_like_js_target(target_path):
-        normalized_path = str(target_path or "").replace("\\", "/").lower()
-        cwd_pkg = cwd / "package.json"
-        package_type = "commonjs"
-        if cwd_pkg.exists():
-            try:
-                pkg = json.loads(cwd_pkg.read_text(encoding="utf-8", errors="replace"))
-                if isinstance(pkg, dict):
-                    package_type = str(pkg.get("type", "commonjs") or "commonjs").strip().lower()
-            except Exception:
-                package_type = "commonjs"
-        is_esm = normalized_path.endswith(".mjs") or package_type == "module" or "import " in source_text or "export " in source_text
-        if is_esm and "require(" in appended:
-            return "append_source_conflict"
-        target_text = ""
-        try:
-            target_text = ((cwd / normalized_path).resolve()).read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            target_text = ""
-        node_test_source = ("node:test" in source_text) or ("node:test" in target_text)
-        if node_test_source and ("describe(" in appended or "expect(" in appended):
-            return "append_source_conflict"
-        if re.search(r"\bslugify\b", appended, flags=re.IGNORECASE) and re.search(r"\bslugify\b", source_text, flags=re.IGNORECASE) is None:
-            return "append_source_conflict"
-        if re.search(r"\bpython\s+-m\b", appended, flags=re.IGNORECASE):
-            return "append_source_conflict"
-    if _looks_like_docs_target(target_path):
-        lowered = appended.lower()
-        simple_slugify = _detect_simple_slugify_source(cwd=cwd, source_text=source_text)
-        if simple_slugify:
-            unsupported_docs_claims = (
-                "punctuation",
-                "special characters",
-                "strip leading",
-                "strip trailing",
-                "trim whitespace",
-                "url-safe",
-                "sanitize",
-                "cleanup",
-                "arbitrary text cleanup",
-            )
-            if any(token in lowered for token in unsupported_docs_claims):
-                return "append_source_conflict"
-        return None
-    if not _looks_like_test_python_target(target_path):
-        return None
-    snippet_paths = [
-        str(item.get("path", "")).replace("\\", "/")
-        for item in relevant_file_snippets
-        if isinstance(item, dict) and str(item.get("path", "")).strip()
-    ]
-
-    py_m_matches = re.findall(r"python\s+-m\s+([A-Za-z_][A-Za-z0-9_\.]*)", appended)
-    entrypoint_signal = (
-        "src/main.py" in {p.lower() for p in snippet_paths}
-        and "__main__" in source_text
+    return _semantic_guards._append_source_conflict_error(
+        cwd=cwd,
+        target_path=target_path,
+        appended_content=appended_content,
+        relevant_file_snippets=relevant_file_snippets,
     )
-    if py_m_matches and entrypoint_signal:
-        for mod in py_m_matches:
-            if not _module_exists_for_python_m(cwd, mod):
-                return "append_source_conflict"
-
-    if "TODO_FILE" in appended:
-        todo_file_fixed = re.search(r'TODO_FILE\s*=\s*Path\(["\']todo\.json["\']\)', source_text) is not None
-        has_env_usage = "os.environ" in source_text
-        if todo_file_fixed and not has_env_usage:
-            return "append_source_conflict"
-
-    expects_id = ('["id"]' in appended) or ("['id']" in appended) or ("todo_id" in appended)
-    if expects_id:
-        append_blocks = re.findall(r"todos\.append\(\s*\{([^}]*)\}\s*\)", source_text, flags=re.DOTALL)
-        if append_blocks and all(("\"id\"" not in block and "'id'" not in block) for block in append_blocks):
-            return "append_source_conflict"
-
-    expects_done_word = re.search(r'["\']done["\']', appended, flags=re.IGNORECASE) is not None
-    source_checkbox_output = ("[x]" in source_text) or ("[ ]" in source_text)
-    if expects_done_word and source_checkbox_output:
-        return "append_source_conflict"
-
-    return None
 
 
 def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | None]:
@@ -766,133 +510,29 @@ def _prioritize_patch_error(
     task_text: str,
     requested_operation: str,
 ) -> str | None:
-    if not current_error:
-        return None
-    candidates: list[str] = []
-    candidates.append(str(current_error))
-    failure_reason = str(structured_patch.get("failure_reason", "") or "").strip()
-    if failure_reason:
-        candidates.append(failure_reason)
-    if requested_operation == "append":
-        # Preserve append parser semantics.
-        if "no_append_needed" in candidates:
-            return "no_append_needed"
-        if "append_source_conflict" in candidates:
-            return "append_source_conflict"
-        if "append_syntax_invalid" in candidates:
-            return "append_syntax_invalid"
-        if "append_semantic_suspicious" in candidates:
-            return "append_semantic_suspicious"
-        if "append_output_invalid" in candidates:
-            return "append_output_invalid"
-        if "invalid_append_operation" in candidates:
-            return "invalid_append_operation"
-
-    lowered_task = str(task_text or "").lower()
-    allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
-    looks_additive_tests = (
-        any(token in lowered_task for token in ("add test", "add tests", "write test", "write tests", "generate tests", "tests for"))
-        and bool(allowed_targets)
-        and all(path.startswith("tests/") for path in allowed_targets)
+    return _semantic_guards._prioritize_patch_error(
+        current_error=current_error,
+        patch_plan=patch_plan,
+        structured_patch=structured_patch,
+        task_text=task_text,
+        requested_operation=requested_operation,
     )
-    looks_additive_docs = (
-        any(token in lowered_task for token in ("append doc", "append docs", "add docs", "add documentation"))
-        and bool(allowed_targets)
-        and all(path == "README.md" or path.startswith("docs/") for path in allowed_targets)
-    )
-    looks_additive_source = _is_additive_source_task(task_text, patch_plan)
-    if (
-        str(current_error or "") in {"structured_output_invalid", "invalid_diff"}
-        and requested_operation != "append"
-    ):
-        if looks_additive_tests:
-            candidates.append("destructive_test_rewrite")
-        elif looks_additive_docs:
-            candidates.append("destructive_docs_rewrite")
-        elif looks_additive_source:
-            candidates.append("destructive_source_rewrite")
-
-    priority = {
-        "destructive_test_rewrite": 0,
-        "destructive_docs_rewrite": 1,
-        "destructive_source_rewrite": 2,
-        "no_append_needed": 3,
-        "append_source_conflict": 4,
-        "append_syntax_invalid": 5,
-        "append_semantic_suspicious": 6,
-        "invalid_append_operation": 7,
-        "plan_inconsistent": 8,
-        "append_output_invalid": 9,
-        "structured_output_invalid": 10,
-        "invalid_diff": 11,
-    }
-    if not candidates:
-        return current_error
-    best = sorted(candidates, key=lambda item: priority.get(str(item), 50))[0]
-    return str(best)
 
 
 def _is_additive_docs_task(task_text: str, patch_plan: dict[str, Any]) -> bool:
-    lowered_task = str(task_text or "").lower()
-    tokens = ("add readme", "add docs", "append docs", "add documentation", "usage examples", "add example", "add examples")
-    if not any(token in lowered_task for token in tokens):
-        return False
-    allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
-    if not allowed_targets:
-        return True
-    return all(path == "README.md" or path.startswith("docs/") for path in allowed_targets)
+    return _semantic_guards._is_additive_docs_task(task_text, patch_plan)
 
 
 def _is_destructive_docs_rewrite(diff_text: str, task_text: str, patch_plan: dict[str, Any]) -> bool:
-    if not _is_additive_docs_task(task_text, patch_plan):
-        return False
-    touched_paths = [
-        line[6:].strip()
-        for line in str(diff_text or "").splitlines()
-        if line.startswith("+++ b/")
-    ]
-    if touched_paths and not all(path == "README.md" or path.startswith("docs/") for path in touched_paths):
-        return False
-    deleted_lines = [
-        line[1:].strip()
-        for line in str(diff_text or "").splitlines()
-        if line.startswith("-") and not line.startswith("--- ")
-    ]
-    for line in deleted_lines:
-        lowered = line.lower()
-        if re.match(r"^#{1,6}\s+\S+", line):
-            return True
-        if re.match(r"^(summary|overview|tl;dr)\b", lowered):
-            return True
-    return False
+    return _semantic_guards._is_destructive_docs_rewrite(diff_text, task_text, patch_plan)
 
 
 def _is_additive_source_task(task_text: str, patch_plan: dict[str, Any]) -> bool:
-    lowered_task = str(task_text or "").lower()
-    if not any(token in lowered_task for token in ("add ", "append ", "new ")):
-        return False
-    if any(token in lowered_task for token in ("readme", "docs", "documentation", "test", "tests")):
-        return False
-    allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
-    if not allowed_targets:
-        return False
-    return all(not path.startswith("tests/") and path != "README.md" and not path.startswith("docs/") for path in allowed_targets)
+    return _semantic_guards._is_additive_source_task(task_text, patch_plan)
 
 
 def _is_destructive_source_rewrite(diff_text: str, task_text: str, patch_plan: dict[str, Any]) -> bool:
-    if not _is_additive_source_task(task_text, patch_plan):
-        return False
-    deleted_lines = [
-        line[1:].strip()
-        for line in str(diff_text or "").splitlines()
-        if line.startswith("-") and not line.startswith("--- ")
-    ]
-    if len([line for line in deleted_lines if line]) >= 8:
-        return True
-    for line in deleted_lines:
-        if re.search(r"\b(module\.exports|exports\.|export\s+\{?|export\s+default)\b", line):
-            return True
-    return False
+    return _semantic_guards._is_destructive_source_rewrite(diff_text, task_text, patch_plan)
 
 
 def _patch_diff_default() -> dict[str, Any]:
@@ -938,65 +578,19 @@ def _attach_repo_map(context: dict[str, Any] | None, repo_map: dict[str, Any]) -
 
 
 def _normalize_rel_path(path: str) -> str:
-    return str(path or "").strip().replace("\\", "/").lstrip("./")
+    return _plan_consistency._normalize_rel_path(path)
 
 
 def _collect_plan_targets(patch_plan: dict[str, Any]) -> set[str]:
-    targets: set[str] = set()
-    proposed = patch_plan.get("proposed_changes", [])
-    if not isinstance(proposed, list):
-        return targets
-    for change in proposed:
-        if not isinstance(change, dict):
-            continue
-        file_value = _normalize_rel_path(str(change.get("file", "") or ""))
-        if not file_value:
-            continue
-        change_type = str(change.get("change_type", "") or "").strip().lower()
-        if change_type in {"task_intent", "note", "metadata"}:
-            continue
-        targets.add(file_value)
-    return targets
+    return _plan_consistency._collect_plan_targets(patch_plan)
 
 
 def _collect_diff_targets(validation: dict[str, Any]) -> set[str]:
-    targets: set[str] = set()
-    files = validation.get("files", [])
-    if not isinstance(files, list):
-        return targets
-    for item in files:
-        if not isinstance(item, dict):
-            continue
-        old_path = item.get("old_path")
-        new_path = item.get("new_path")
-        if isinstance(old_path, str) and old_path:
-            targets.add(_normalize_rel_path(old_path))
-        if isinstance(new_path, str) and new_path:
-            targets.add(_normalize_rel_path(new_path))
-    return targets
+    return _plan_consistency._collect_diff_targets(validation)
 
 
 def _infer_heuristic_targets(strategy: str, diff_text: str) -> set[str]:
-    inferred: set[str] = set()
-    lowered_strategy = str(strategy or "").lower()
-    strategy_hints = (
-        "add module",
-        "create module",
-        "add file",
-        "new file",
-        "helpers module",
-    )
-    if any(hint in lowered_strategy for hint in strategy_hints):
-        inferred.add("src/helpers.py")
-
-    for raw_line in str(diff_text or "").splitlines():
-        if not raw_line.startswith("+") or raw_line.startswith("+++ "):
-            continue
-        line = raw_line[1:].strip()
-        if line.startswith("import src.helpers") or line.startswith("from src.helpers import"):
-            inferred.add("src/helpers.py")
-
-    return inferred
+    return _plan_consistency._infer_heuristic_targets(strategy, diff_text)
 
 
 def _compute_plan_consistency(
@@ -1004,13 +598,7 @@ def _compute_plan_consistency(
     validation: dict[str, Any],
     diff_text: str,
 ) -> tuple[bool, list[str]]:
-    planned_targets = _collect_plan_targets(patch_plan)
-    planned_targets.update(_infer_heuristic_targets(str(patch_plan.get("strategy", "") or ""), diff_text))
-    if not planned_targets:
-        return True, []
-    diff_targets = _collect_diff_targets(validation)
-    missing = sorted(path for path in planned_targets if path not in diff_targets)
-    return not missing, missing
+    return _plan_consistency._compute_plan_consistency(patch_plan, validation, diff_text)
 
 
 def _hard_invalid_reason(
