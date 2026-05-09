@@ -490,6 +490,76 @@ def test_mixed_fix_and_tests_task_classifies_as_implementation_with_tests() -> N
     )
 
 
+def test_fastapi_endpoint_task_classifies_as_feature_implementation() -> None:
+    assert (
+        classify_task_type("add POST /todos endpoint with request body validation, tests, and README usage example")
+        == "feature_implementation"
+    )
+
+
+def test_mixed_feature_and_readme_task_classifies_as_feature_implementation() -> None:
+    assert (
+        classify_task_type("add API route for todos and update README usage examples")
+        == "feature_implementation"
+    )
+
+
+def test_fastapi_endpoint_task_plan_uses_feature_implementation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add POST /todos endpoint with request body validation, tests, and README usage example",
+            propose_patch=True,
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "feature_implementation"
+    assert "This is a documentation task" not in str(payload["patch_plan"].get("strategy", ""))
+
+
+def test_mixed_feature_and_readme_task_plan_remains_feature_implementation(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": False,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": "",
+            "error": "Provider unavailable",
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add API route for todos, add tests, and update README usage examples",
+            propose_patch=True,
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_plan"]["task_type"] == "feature_implementation"
+    assert "This is a documentation task" not in str(payload["patch_plan"].get("strategy", ""))
+
+
 def test_vague_feature_task_classifies_as_vague_task() -> None:
     assert classify_task_type("add a new feature with tests") == "vague_task"
 

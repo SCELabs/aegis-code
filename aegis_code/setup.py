@@ -15,6 +15,7 @@ from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.secrets import resolve_key, resolve_key_source, set_key
 from aegis_code.context_state import load_runtime_context
 from aegis_code.probe import load_observed_capabilities
+from aegis_code.verification import resolve_verification_command
 
 
 def _confirm(prompt: str, assume_yes: bool) -> bool:
@@ -212,7 +213,8 @@ def check_setup(cwd: Path) -> dict:
     latest_run = (cwd / ".aegis" / "runs" / "latest.json").exists()
     detected = detect_capabilities(cwd)
     observed = load_observed_capabilities(cwd)
-    verification_available = bool(detected.get("verification_available", False))
+    resolved_verification = resolve_verification_command(cwd)
+    verification_available = bool(resolved_verification.get("available", False))
 
     return {
         "initialized": initialized,
@@ -231,6 +233,7 @@ def check_setup(cwd: Path) -> dict:
         "detected_stack": detected.get("detected_stack"),
         "package_manager": detected.get("package_manager"),
         "detected_test_command": detected.get("test_command"),
+        "verification_command": resolved_verification.get("command"),
         "verification_confidence": detected.get("confidence"),
         "verification_reason": detected.get("reason"),
         "observed_capabilities_present": bool(observed is not None),

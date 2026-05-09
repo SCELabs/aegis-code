@@ -2914,7 +2914,7 @@ def handle_setup(argv: Sequence[str]) -> int:
         print(f"- Verification: {'available' if bool(status.get('verification_available', False)) else 'missing'}")
         print(f"- Detected stack: {status.get('detected_stack') or 'unknown'}")
         print(f"- Package manager: {status.get('package_manager') or 'n/a'}")
-        print(f"- Verification command: {status.get('detected_test_command') or 'n/a'}")
+        print(f"- Verification command: {status.get('verification_command') or 'n/a'}")
         print(f"- Verification confidence: {status.get('verification_confidence') or 'low'}")
         print(f"- Verification reason: {status.get('verification_reason') or 'n/a'}")
         print(f"- Observed capabilities: {'present' if bool(status.get('observed_capabilities_present', False)) else 'missing'}")

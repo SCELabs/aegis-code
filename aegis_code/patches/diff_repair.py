@@ -448,7 +448,7 @@ def repair_malformed_diff(
         and "malformed_hunk_header" in errors
     )
 
-    if task_type == "implementation_with_tests" and not placeholder_single_file_candidate:
+    if task_type in {"implementation_with_tests", "feature_implementation"} and not placeholder_single_file_candidate:
         if repair_file_count < 2 or repair_file_count > 3:
             return {
                 "applied": False,
@@ -516,7 +516,7 @@ def repair_malformed_diff(
                     "repair_targets": repair_targets,
                     "raw_repair_file_count": raw_repair_file_count,
                 }
-        elif task_type == "implementation_with_tests":
+        elif task_type in {"implementation_with_tests", "feature_implementation"}:
             if target not in plan_files:
                 return {
                     "applied": False,
@@ -553,8 +553,12 @@ def repair_malformed_diff(
                 }
 
         target_file = cwd / target
-        is_new_file = old_path is None or (not target_file.exists() and old_path is not None and task_type == "implementation_with_tests")
-        if not target_file.exists() and old_path is not None and task_type != "implementation_with_tests":
+        is_new_file = old_path is None or (
+            not target_file.exists()
+            and old_path is not None
+            and task_type in {"implementation_with_tests", "feature_implementation"}
+        )
+        if not target_file.exists() and old_path is not None and task_type not in {"implementation_with_tests", "feature_implementation"}:
             return {
                 "applied": False,
                 "status": "skipped",

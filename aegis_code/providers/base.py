@@ -18,18 +18,27 @@ def _line_safe_cap(content: str, limit: int) -> str:
 
 
 def _is_docs_task(task: str, patch_plan: dict[str, Any]) -> bool:
-    lowered = str(task or "").lower()
-    if any(token in lowered for token in ("readme", "docs", "documentation")):
+    task_type = str(patch_plan.get("task_type", "") or "").strip().lower()
+    if task_type in {"feature_implementation", "implementation_with_tests", "test_generation"}:
+        return False
+    if task_type == "docs_task":
         return True
+    lowered = str(task or "").lower()
     proposed = patch_plan.get("proposed_changes", [])
+    saw_doc = False
     if isinstance(proposed, list):
         for item in proposed:
             if not isinstance(item, dict):
                 continue
             path = str(item.get("file", "")).strip().lower().replace("\\", "/")
             if path == "readme.md" or path.startswith("docs/"):
-                return True
-    return False
+                saw_doc = True
+                continue
+            if path:
+                return False
+    if saw_doc:
+        return True
+    return any(token in lowered for token in ("readme", "docs", "documentation"))
 
 
 def _strip_provider_prefix(model: str) -> str:
@@ -86,11 +95,17 @@ def _append_target_context_text(context: dict[str, Any]) -> str:
         imports = item.get("imports", []) if isinstance(item.get("imports"), list) else []
         names = item.get("existing_names", []) if isinstance(item.get("existing_names"), list) else []
         tests = item.get("existing_tests", []) if isinstance(item.get("existing_tests"), list) else []
+        js_module_system = str(item.get("js_module_system", "n/a") or "n/a")
+        js_test_framework = str(item.get("js_test_framework", "n/a") or "n/a")
+        package_json_type = str(item.get("package_json_type", "n/a") or "n/a")
         tail = str(item.get("tail", "") or "")
         blocks.append(f"- path: {path}")
         blocks.append(f"  existing_imports: {', '.join(str(x) for x in imports) if imports else '(none)'}")
         blocks.append(f"  existing_names: {', '.join(str(x) for x in names) if names else '(none)'}")
         blocks.append(f"  existing_tests: {', '.join(str(x) for x in tests) if tests else '(none)'}")
+        blocks.append(f"  js_module_system: {js_module_system}")
+        blocks.append(f"  js_test_framework: {js_test_framework}")
+        blocks.append(f"  package_json_type: {package_json_type}")
         blocks.append("  tail_approx_80_lines:")
         blocks.append(tail if tail else "  (empty)")
     return "\n".join(blocks).strip()
@@ -155,7 +170,7 @@ def build_diff_prompt(
                     "- Do not use placeholder hunk headers.",
                 ]
             )
-    elif task_type == "implementation_with_tests":
+    elif task_type in {"implementation_with_tests", "feature_implementation"}:
         test_constraints = [
             "Implementation-with-tests guidance:",
             "- Create or modify only the planned files.",
@@ -288,6 +303,9 @@ def build_structured_edit_prompt(
             "- Do not duplicate an existing workflow already covered in the target file.\n"
             "- For docs append tasks, document only behavior visible in source snippets.\n"
             "- Do not invent cleanup, sanitization, stripping, punctuation handling, or URL-safe behavior unless present.\n"
+            '- If package_json_type is "module" or js_module_system is "esm", do not use require(); use import/export style.\n'
+            '- If js_test_framework is "node:test", do not use Jest globals like describe/expect; use node:test style.\n'
+            "- Do not introduce unrelated symbols or commands absent from repo map/snippets.\n"
             '- If the requested behavior is already covered, return: {"content": ""}\n'
             f"{render_safety_constraints_for_prompt(task)}"
             f"Task: {task}\n"

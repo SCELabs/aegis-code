@@ -160,7 +160,7 @@ def build_proposal_contract(
         forbidden_operations=["delete", "rename"],
         max_files=max_files,
         allow_new_files=allow_new_files,
-        require_tests=task_type in {"test_generation", "implementation_with_tests"},
+        require_tests=task_type in {"test_generation", "implementation_with_tests", "feature_implementation"},
         task_type=task_type,
         verification_command=verification_command,
         stack_hints=stack_hints,

@@ -613,6 +613,47 @@ def test_report_patch_diagnosis_section_includes_human_readable_fields(tmp_path:
     assert "Guidance hints: `Try append-only mode`" in content
 
 
+def test_report_files_touched_prefers_patch_diff_touched_files(tmp_path: Path) -> None:
+    payload = {
+        "task": "multi file",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 1, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {
+            "strategy": "feature",
+            "confidence": 0.8,
+            "proposed_changes": [{"file": "src/module.py"}, {"file": "tests/test_module.py"}],
+        },
+        "patch_diff": {
+            "attempted": True,
+            "available": True,
+            "status": "generated",
+            "touched_files": ["app/main.py", "tests/test_main.py", "README.md"],
+            "validation_result": {"summary": {"additions": 10, "deletions": 2}, "files": [{"new_path": "app/main.py"}]},
+        },
+        "patch_quality": {"grounded": True, "relevant_files": True, "confidence": 0.9, "issues": []},
+        "status": "completed_tests_passed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Files touched: `app/main.py, tests/test_main.py, README.md`" in content
+    assert "src/module.py" not in content
+    assert "tests/test_module.py" not in content
+
+
 def test_report_patch_diagnosis_handles_no_append_needed(tmp_path: Path) -> None:
     payload = {
         "task": "add tests",
@@ -794,3 +835,41 @@ def test_report_renders_multi_file_feature_plan(tmp_path: Path) -> None:
     assert "src/feature.py" in content
     assert "step_2" in content
     assert "tests/test_feature.py" in content
+
+
+def test_report_renders_verification_diagnostics(tmp_path: Path) -> None:
+    payload = {
+        "task": "multi patch",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 3, "top_level_directories": ["app", "tests"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [{"file": "tests/test_main.py"}], "failure_count": 1},
+        "final_failures": {"failed_tests": [{"file": "tests/test_main.py"}], "failure_count": 1},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [{"file": "tests/test_main.py"}], "failure_count": 1},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "multi", "confidence": 0.5, "proposed_changes": []},
+        "patch_diff": {"attempted": False, "available": False, "status": "skipped", "error": None, "preview": ""},
+        "verification": {"available": True, "test_command": "python -m pytest -q", "confidence": "high", "reason": "config"},
+        "verification_diagnostics": {
+            "command": "python -m pytest -q",
+            "status": "failed",
+            "exit_code": 1,
+            "output": "ImportError: cannot import name X",
+        },
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "### Verification Diagnostics" in content
+    assert "python -m pytest -q" in content
+    assert "ImportError: cannot import name X" in content

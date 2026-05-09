@@ -93,11 +93,15 @@ def test_setup_check_full_ready(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "- Verification: available" in out
 
 
-def test_setup_check_prefers_observed_selected_test_command(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_setup_check_uses_configured_verification_command(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     ensure_project_files(cwd=tmp_path, force=False)
     (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        'commands:\n  test: ".venv/Scripts/python.exe -m pytest -q"\n',
+        encoding="utf-8",
+    )
     (tmp_path / ".aegis" / "capabilities.json").write_text(
         json.dumps(
             {
@@ -105,6 +109,8 @@ def test_setup_check_prefers_observed_selected_test_command(tmp_path: Path, monk
                 "detected_stack": "python",
                 "package_manager": None,
                 "selected_test_command": "pytest -q",
+                "test_command": "pytest -q",
+                "test_command_observed": True,
                 "verification": {"available": True, "confidence": "high", "reason": "observed"},
             }
         ),
@@ -115,7 +121,7 @@ def test_setup_check_prefers_observed_selected_test_command(tmp_path: Path, monk
     assert exit_code in {0, 1}
     assert "- Observed capabilities: present" in out
     assert "- Observed selected test command: pytest -q" in out
-    assert "- Verification command: pytest -q" in out
+    assert "- Verification command: .venv/Scripts/python.exe -m pytest -q" in out
 
 
 def test_setup_check_no_project(tmp_path: Path, monkeypatch, capsys) -> None:

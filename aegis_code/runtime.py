@@ -172,6 +172,13 @@ def _has_implementation_intent(task: str) -> bool:
         "create function",
         "implement",
         "helpers module",
+        "add endpoint",
+        "add route",
+        "api route",
+        "add handler",
+        "request body validation",
+        "schema",
+        "validation",
     )
     return any(phrase in lowered for phrase in impl_phrases)
 
@@ -206,6 +213,33 @@ def _is_docs_task(task: str) -> bool:
     return any(phrase in lowered for phrase in docs_phrases)
 
 
+def _has_feature_implementation_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    feature_phrases = (
+        "add endpoint",
+        "add api route",
+        "api route",
+        "add route",
+        "post /",
+        "get /",
+        "put /",
+        "delete /",
+        "add feature",
+        "add handler",
+        "implement handler",
+        "add schema",
+        "implement schema",
+        "request body validation",
+        "body validation",
+        "payload validation",
+    )
+    if any(phrase in lowered for phrase in feature_phrases):
+        return True
+    if "implement" in lowered and any(token in lowered for token in ("endpoint", "route", "handler", "schema", "validation", "api")):
+        return True
+    return False
+
+
 def _is_vague_feature_task(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     vague_phrases = (
@@ -235,6 +269,8 @@ def classify_task_type(task: str) -> str:
         return "vague_task"
     if _is_explicit_tests_only_task(lowered):
         return "test_generation"
+    if _has_feature_implementation_intent(lowered):
+        return "feature_implementation"
     if _is_docs_task(lowered):
         return "docs_task"
     if _has_implementation_intent(lowered) and _has_test_intent(lowered):
@@ -406,6 +442,19 @@ def _build_append_target_context(*, cwd: Path, target_path: str, original_text: 
     imports: list[str] = []
     names: list[str] = []
     tests: list[str] = []
+    js_style = "unknown"
+    js_test_framework = "unknown"
+    package_type = "commonjs"
+    target_is_js = str(target_path).replace("\\", "/").lower().endswith((".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"))
+    if target_is_js:
+        package_json = cwd / "package.json"
+        if package_json.exists():
+            try:
+                pkg = json.loads(package_json.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(pkg, dict):
+                    package_type = str(pkg.get("type", "commonjs") or "commonjs").strip().lower()
+            except Exception:
+                package_type = "commonjs"
     for raw_line in str(original_text or "").splitlines():
         stripped = raw_line.strip()
         if stripped.startswith("import ") or stripped.startswith("from "):
@@ -419,11 +468,31 @@ def _build_append_target_context(*, cwd: Path, target_path: str, original_text: 
         class_test_match = re.match(r"^\s*def\s+(test_[A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
         if class_test_match:
             tests.append(class_test_match.group(1))
+        if target_is_js:
+            if stripped.startswith("import "):
+                js_style = "esm"
+            if "require(" in stripped and js_style == "unknown":
+                js_style = "commonjs"
+            if stripped.startswith("export ") or "module.exports" in stripped:
+                names.append(stripped)
+            js_fn_match = re.match(r"^\s*(?:export\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw_line)
+            if js_fn_match:
+                names.append(js_fn_match.group(1))
+            if "node:test" in stripped or " from \"node:test\"" in stripped or " from 'node:test'" in stripped:
+                js_test_framework = "node:test"
+            if "describe(" in stripped or "expect(" in stripped:
+                if js_test_framework == "unknown":
+                    js_test_framework = "jest_like"
+    if target_is_js and js_style == "unknown":
+        js_style = "esm" if package_type == "module" or str(target_path).endswith(".mjs") else "commonjs"
     return {
         "path": target_path,
         "imports": sorted(set(imports), key=str.lower)[:40],
         "existing_names": sorted(set(names), key=str.lower)[:80],
         "existing_tests": sorted(set(tests), key=str.lower)[:80],
+        "js_module_system": js_style if target_is_js else "n/a",
+        "js_test_framework": js_test_framework if target_is_js else "n/a",
+        "package_json_type": package_type if target_is_js else "n/a",
         "tail": _line_tail_capped(original_text, 80, 4000),
     }
 
@@ -500,6 +569,11 @@ def _looks_like_docs_target(path: str) -> bool:
     return normalized == "readme.md" or normalized.startswith("docs/")
 
 
+def _looks_like_js_target(path: str) -> bool:
+    normalized = str(path or "").replace("\\", "/").lower()
+    return normalized.endswith((".js", ".mjs", ".cjs", ".ts", ".mts", ".cts"))
+
+
 def _source_snippets_text(snippets: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for item in snippets:
@@ -556,6 +630,27 @@ def _append_source_conflict_error(
 ) -> str | None:
     appended = str(appended_content or "")
     source_text = _source_snippets_text(relevant_file_snippets)
+    if _looks_like_js_target(target_path):
+        normalized_path = str(target_path or "").replace("\\", "/").lower()
+        cwd_pkg = cwd / "package.json"
+        package_type = "commonjs"
+        if cwd_pkg.exists():
+            try:
+                pkg = json.loads(cwd_pkg.read_text(encoding="utf-8", errors="replace"))
+                if isinstance(pkg, dict):
+                    package_type = str(pkg.get("type", "commonjs") or "commonjs").strip().lower()
+            except Exception:
+                package_type = "commonjs"
+        is_esm = normalized_path.endswith(".mjs") or package_type == "module" or "import " in source_text or "export " in source_text
+        if is_esm and "require(" in appended:
+            return "append_source_conflict"
+        node_test_source = "node:test" in source_text
+        if node_test_source and ("describe(" in appended or "expect(" in appended):
+            return "append_source_conflict"
+        if re.search(r"\bslugify\b", appended, flags=re.IGNORECASE) and re.search(r"\bslugify\b", source_text, flags=re.IGNORECASE) is None:
+            return "append_source_conflict"
+        if re.search(r"\bpython\s+-m\b", appended, flags=re.IGNORECASE):
+            return "append_source_conflict"
     if _looks_like_docs_target(target_path):
         lowered = appended.lower()
         simple_slugify = _detect_simple_slugify_source(cwd=cwd, source_text=source_text)
@@ -700,6 +795,7 @@ def _prioritize_patch_error(
         and bool(allowed_targets)
         and all(path == "README.md" or path.startswith("docs/") for path in allowed_targets)
     )
+    looks_additive_source = _is_additive_source_task(task_text, patch_plan)
     if (
         str(current_error or "") in {"structured_output_invalid", "invalid_diff"}
         and requested_operation != "append"
@@ -708,17 +804,20 @@ def _prioritize_patch_error(
             candidates.append("destructive_test_rewrite")
         elif looks_additive_docs:
             candidates.append("destructive_docs_rewrite")
+        elif looks_additive_source:
+            candidates.append("destructive_source_rewrite")
 
     priority = {
         "destructive_test_rewrite": 0,
         "destructive_docs_rewrite": 1,
-        "no_append_needed": 2,
-        "append_source_conflict": 3,
-        "append_syntax_invalid": 4,
-        "append_semantic_suspicious": 5,
-        "invalid_append_operation": 6,
-        "plan_inconsistent": 7,
-        "append_output_invalid": 8,
+        "destructive_source_rewrite": 2,
+        "no_append_needed": 3,
+        "append_source_conflict": 4,
+        "append_syntax_invalid": 5,
+        "append_semantic_suspicious": 6,
+        "invalid_append_operation": 7,
+        "plan_inconsistent": 8,
+        "append_output_invalid": 9,
         "structured_output_invalid": 10,
         "invalid_diff": 11,
     }
@@ -759,6 +858,34 @@ def _is_destructive_docs_rewrite(diff_text: str, task_text: str, patch_plan: dic
         if re.match(r"^#{1,6}\s+\S+", line):
             return True
         if re.match(r"^(summary|overview|tl;dr)\b", lowered):
+            return True
+    return False
+
+
+def _is_additive_source_task(task_text: str, patch_plan: dict[str, Any]) -> bool:
+    lowered_task = str(task_text or "").lower()
+    if not any(token in lowered_task for token in ("add ", "append ", "new ")):
+        return False
+    if any(token in lowered_task for token in ("readme", "docs", "documentation", "test", "tests")):
+        return False
+    allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+    if not allowed_targets:
+        return False
+    return all(not path.startswith("tests/") and path != "README.md" and not path.startswith("docs/") for path in allowed_targets)
+
+
+def _is_destructive_source_rewrite(diff_text: str, task_text: str, patch_plan: dict[str, Any]) -> bool:
+    if not _is_additive_source_task(task_text, patch_plan):
+        return False
+    deleted_lines = [
+        line[1:].strip()
+        for line in str(diff_text or "").splitlines()
+        if line.startswith("-") and not line.startswith("--- ")
+    ]
+    if len([line for line in deleted_lines if line]) >= 8:
+        return True
+    for line in deleted_lines:
+        if re.search(r"\b(module\.exports|exports\.|export\s+\{?|export\s+default)\b", line):
             return True
     return False
 
@@ -947,6 +1074,8 @@ def _build_feature_plan(
     explicit_scope: dict[str, Any],
     patch_plan: dict[str, Any],
     cwd: Path,
+    task_text: str,
+    baseline_healthy: bool,
 ) -> dict[str, Any] | None:
     if str(command or "").strip().lower() != "patch":
         return None
@@ -954,11 +1083,18 @@ def _build_feature_plan(
         return None
     if not explicit_scope_active:
         return None
+    if not baseline_healthy:
+        return None
+    task_type = str(patch_plan.get("task_type", "") or "general")
+    if "fix failing tests in " in str(task_text or "").lower():
+        return None
     scope_targets = [
         _normalize_rel_path(str(item))
         for item in explicit_scope.get("allowed_targets", [])
         if str(item).strip()
     ] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
+    if task_type == "docs_task" and scope_targets and all(path == "README.md" or path.startswith("docs/") for path in scope_targets):
+        return None
     if len(scope_targets) <= 1:
         return None
 
@@ -1974,7 +2110,7 @@ def build_run_payload(
                     break
         task_type_hint = classify_task_type(options.task)
         test_task = task_type_hint == "test_generation"
-        impl_with_tests_task = task_type_hint == "implementation_with_tests"
+        impl_with_tests_task = task_type_hint in {"implementation_with_tests", "feature_implementation"}
         docs_task = task_type_hint == "docs_task"
         vague_task = task_type_hint == "vague_task"
         patch_plan = {
@@ -2027,7 +2163,11 @@ def build_run_payload(
                 if any(token in lowered_task for token in ("fix", "update", "change", "modify"))
                 else "create"
             )
-            patch_plan["task_type"] = "implementation_with_tests"
+            patch_plan["task_type"] = (
+                "feature_implementation"
+                if task_type_hint == "feature_implementation"
+                else "implementation_with_tests"
+            )
             patch_plan["target_file"] = test_file
             patch_plan["strategy"] += (
                 " This task requires implementation and tests. "
@@ -2055,7 +2195,7 @@ def build_run_payload(
             patch_plan["task_type"] = "docs_task"
             patch_plan["target_file"] = "README.md"
             patch_plan["strategy"] += (
-                " This is a documentation task. Modify README.md with usage examples only. "
+                " Documentation-only scope: modify README.md with usage examples only. "
                 "Do not modify source or tests unless explicitly requested."
             )
             patch_plan["proposed_changes"].append(
@@ -2114,6 +2254,12 @@ def build_run_payload(
 
     explicit_scope = options.scope_contract if isinstance(options.scope_contract, dict) else {}
     explicit_scope_active = str(options.command or "").strip().lower() == "patch" and str(explicit_scope.get("source", "")) == "cli_explicit"
+    explicit_scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
+    explicit_multi_file_patch = bool(
+        str(options.command or "").strip().lower() == "patch"
+        and explicit_scope_active
+        and len(explicit_scope_targets) > 1
+    )
     requested_operation = str(options.patch_operation or "").strip().lower()
     if not requested_operation:
         scope_ops_probe = [str(item).strip().lower() for item in explicit_scope.get("allowed_operations", [])] if isinstance(explicit_scope.get("allowed_operations", []), list) else []
@@ -2185,6 +2331,7 @@ def build_run_payload(
             )
             should_attempt_provider_diff = False
             should_patch_flow = False
+    baseline_healthy = bool(int(final_failures.get("failure_count", 0) or 0) == 0)
     feature_plan = _build_feature_plan(
         command=str(options.command or ""),
         requested_operation=requested_operation,
@@ -2192,7 +2339,16 @@ def build_run_payload(
         explicit_scope=explicit_scope if isinstance(explicit_scope, dict) else {},
         patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
         cwd=(cwd or Path.cwd()).resolve(),
+        task_text=str(options.task or ""),
+        baseline_healthy=baseline_healthy,
     )
+    feature_plan_steps = (
+        feature_plan.get("steps", [])
+        if isinstance(feature_plan, dict) and isinstance(feature_plan.get("steps", []), list)
+        else []
+    )
+    feature_plan_active = bool(feature_plan_steps)
+    disable_docs_wrapped_fallback = bool(explicit_multi_file_patch)
     provider_enabled = bool(config.providers.enabled or options.propose_patch)
     has_context_files = bool(failure_context.get("files", []))
     has_proposed_changes = bool(patch_plan.get("proposed_changes", []))
@@ -2278,7 +2434,7 @@ def build_run_payload(
         sll_risk = classify_sll_risk(sll_pre_call)
         task_type = str(patch_plan.get("task_type", "general") or "general")
         test_task = task_type == "test_generation" or is_test_generation_task(options.task)
-        impl_with_tests_task = task_type == "implementation_with_tests"
+        impl_with_tests_task = task_type in {"implementation_with_tests", "feature_implementation"}
         docs_task = task_type == "docs_task"
         if impl_with_tests_task:
             allowed_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
@@ -2337,88 +2493,160 @@ def build_run_payload(
         use_unified_fallback = True
         structured_blocked = False
         structured_primary_accepted = False
-        if bool(options.propose_patch) and task_type != "docs_task" and requested_operation != "append":
+        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation != "append":
             contract = build_proposal_contract(
                 task=options.task,
                 patch_plan=patch_plan,
                 verification_command=selected_test_command or None,
                 stack_hints=detected_capabilities if isinstance(detected_capabilities, dict) else {},
             )
+            if feature_plan_active:
+                accumulated_diffs: list[str] = []
+                touched_files: list[str] = []
+                step_errors: list[str] = []
+                failure_reason: str | None = None
+                blocked_reason_set = {
+                    "outside_allowed_targets",
+                    "structured_output_invalid",
+                    "append_source_conflict",
+                    "destructive_docs_rewrite",
+                }
+                for step in feature_plan_steps:
+                    if not isinstance(step, dict):
+                        continue
+                    step_target = _normalize_rel_path(str(step.get("target_file", "") or ""))
+                    if not step_target:
+                        structured_blocked = True
+                        failure_reason = "structured_output_invalid"
+                        break
+                    step_operation = str(step.get("operation", "") or "").strip().lower() or "replace"
+                    step_patch_plan = deepcopy(patch_plan if isinstance(patch_plan, dict) else {})
+                    step_patch_plan["allowed_targets"] = [step_target]
+                    step_patch_plan["max_files"] = 1
+                    step_patch_plan["task_type"] = "general"
+                    allowed_ops = [
+                        str(item).strip().lower()
+                        for item in contract.allowed_operations
+                        if str(item).strip()
+                    ]
+                    if step_operation in allowed_ops:
+                        step_patch_plan["allowed_operations"] = [step_operation]
+                    else:
+                        step_patch_plan["allowed_operations"] = allowed_ops or ["replace"]
+                    step_contract = build_proposal_contract(
+                        task=options.task,
+                        patch_plan=step_patch_plan,
+                        verification_command=selected_test_command or None,
+                        stack_hints=detected_capabilities if isinstance(detected_capabilities, dict) else {},
+                    )
 
-            def _attempt_structured_edits(override_task: str) -> dict[str, Any]:
-                result, timed_out = _run_with_provider_heartbeat(
-                    options,
-                    "structured patch generation",
-                    lambda: generate_structured_edits(
-                        provider=config.providers.provider,
-                        model=selected_model,
-                        task=override_task,
-                        failures=final_failures,
-                        context=failure_context,
-                        patch_plan=patch_plan,
-                        aegis_execution=aegis_guidance,
-                        api_key_env=config.providers.api_key_env,
-                        base_url=str(config.providers.base_url or ""),
-                        max_context_chars=int(config.patches.max_context_chars),
-                    ),
-                    timeout_seconds=provider_timeout_seconds,
-                )
-                if timed_out:
-                    return {
-                        "available": False,
+                    def _attempt_step_structured_edits(override_task: str, step_plan: dict[str, Any] = step_patch_plan) -> dict[str, Any]:
+                        result, timed_out = _run_with_provider_heartbeat(
+                            options,
+                            f"structured patch generation ({step_target})",
+                            lambda: generate_structured_edits(
+                                provider=config.providers.provider,
+                                model=selected_model,
+                                task=override_task,
+                                failures=final_failures,
+                                context=failure_context,
+                                patch_plan=step_plan,
+                                aegis_execution=aegis_guidance,
+                                api_key_env=config.providers.api_key_env,
+                                base_url=str(config.providers.base_url or ""),
+                                max_context_chars=int(config.patches.max_context_chars),
+                            ),
+                            timeout_seconds=provider_timeout_seconds,
+                        )
+                        if timed_out:
+                            return {
+                                "available": False,
+                                "provider": config.providers.provider,
+                                "model": selected_model,
+                                "text": "",
+                                "error": "provider_timeout",
+                            }
+                        if isinstance(result, dict):
+                            return result
+                        return {
+                            "available": False,
+                            "provider": config.providers.provider,
+                            "model": selected_model,
+                            "text": "",
+                            "error": "provider_error",
+                        }
+
+                    step_controller = run_structured_proposal_controller(
+                        task=options.task,
+                        cwd=(cwd or Path.cwd()).resolve(),
+                        contract=step_contract,
+                        attempt_fn=_attempt_step_structured_edits,
+                    )
+                    step_reason = str(step_controller.get("failure_reason", "") or "")
+                    if not bool(step_controller.get("available", False)):
+                        provider_unavailable = step_reason == "provider_unavailable"
+                        if provider_unavailable:
+                            structured_patch["status"] = "skipped"
+                            use_unified_fallback = True
+                            structured_blocked = False
+                            failure_reason = None
+                            accumulated_diffs = []
+                            touched_files = []
+                            break
+                        structured_blocked = True
+                        failure_reason = step_reason or "structured_output_invalid"
+                        if failure_reason not in blocked_reason_set:
+                            failure_reason = "structured_output_invalid"
+                        step_errors = [str(item) for item in step_controller.get("errors", [])]
+                        structured_patch["retry_attempted"] = bool(step_controller.get("retry_attempted", False))
+                        structured_patch["retry_count"] = int(step_controller.get("retry_count", 0) or 0)
+                        if isinstance(step_controller.get("target_diagnostics"), dict):
+                            structured_patch["target_diagnostics"] = dict(step_controller.get("target_diagnostics", {}))
+                        break
+                    step_result_obj = step_controller.get("result")
+                    if not hasattr(step_result_obj, "diff"):
+                        structured_blocked = True
+                        failure_reason = "structured_output_invalid"
+                        break
+                    step_diff = str(getattr(step_result_obj, "diff", "") or "").strip()
+                    if not step_diff:
+                        structured_blocked = True
+                        failure_reason = "structured_output_invalid"
+                        break
+                    if _is_destructive_docs_rewrite(step_diff, options.task, step_patch_plan if isinstance(step_patch_plan, dict) else {}):
+                        structured_blocked = True
+                        failure_reason = "destructive_docs_rewrite"
+                        break
+                    accumulated_diffs.append(step_diff)
+                    if hasattr(step_result_obj, "files"):
+                        for item in getattr(step_result_obj, "files", []):
+                            path = str(item).strip()
+                            if path and path not in touched_files:
+                                touched_files.append(path)
+
+                if accumulated_diffs:
+                    structured_patch["attempted"] = True
+                    structured_patch["available"] = True
+                    structured_patch["status"] = "accepted"
+                    structured_patch["errors"] = []
+                    structured_patch["failure_reason"] = None
+                    structured_patch["files"] = touched_files
+                    structured_primary_accepted = True
+                    use_unified_fallback = False
+                    provider_result = {
+                        "available": True,
                         "provider": config.providers.provider,
                         "model": selected_model,
-                        "text": "",
-                        "error": "provider_timeout",
+                        "diff": normalize_unified_diff("\n".join(accumulated_diffs)),
+                        "error": None,
                     }
-                if isinstance(result, dict):
-                    return result
-                return {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "text": "",
-                    "error": "provider_error",
-                }
-
-            controller = run_structured_proposal_controller(
-                task=options.task,
-                cwd=(cwd or Path.cwd()).resolve(),
-                contract=contract,
-                attempt_fn=_attempt_structured_edits,
-            )
-            structured_patch["attempted"] = bool(controller.get("attempted", False))
-            structured_patch["status"] = str(controller.get("status", "skipped"))
-            structured_patch["errors"] = [str(item) for item in controller.get("errors", [])]
-            structured_patch["failure_reason"] = controller.get("failure_reason")
-            structured_patch["retry_attempted"] = bool(controller.get("retry_attempted", False))
-            structured_patch["retry_count"] = int(controller.get("retry_count", 0) or 0)
-            if isinstance(controller.get("target_diagnostics"), dict):
-                structured_patch["target_diagnostics"] = dict(controller.get("target_diagnostics", {}))
-            result_obj = controller.get("result")
-            if hasattr(result_obj, "files"):
-                structured_patch["files"] = [str(item) for item in getattr(result_obj, "files", [])]
-            if bool(controller.get("available", False)) and hasattr(result_obj, "diff"):
-                structured_patch["available"] = True
-                structured_patch["status"] = "accepted"
-                structured_primary_accepted = True
-                use_unified_fallback = False
-                provider_result = {
-                    "available": True,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": str(getattr(result_obj, "diff", "") or ""),
-                    "error": None,
-                }
-            else:
-                provider_unavailable = str(controller.get("failure_reason", "")) == "provider_unavailable"
-                if provider_unavailable:
-                    structured_patch["status"] = "skipped"
-                    use_unified_fallback = True
-                else:
-                    structured_blocked = True
+                elif structured_blocked:
                     use_unified_fallback = False
+                    structured_patch["attempted"] = True
+                    structured_patch["available"] = False
                     structured_patch["status"] = "failed"
+                    structured_patch["errors"] = step_errors
+                    structured_patch["failure_reason"] = failure_reason or "structured_output_invalid"
                     structured_patch["next_actions"] = [
                         "refine task scope",
                         "remove or adjust file constraints",
@@ -2429,8 +2657,97 @@ def build_run_payload(
                         "provider": config.providers.provider,
                         "model": selected_model,
                         "diff": "",
-                        "error": "structured_output_invalid",
+                        "error": structured_patch["failure_reason"],
                     }
+                else:
+                    structured_patch["status"] = "skipped"
+            else:
+                def _attempt_structured_edits(override_task: str) -> dict[str, Any]:
+                    result, timed_out = _run_with_provider_heartbeat(
+                        options,
+                        "structured patch generation",
+                        lambda: generate_structured_edits(
+                            provider=config.providers.provider,
+                            model=selected_model,
+                            task=override_task,
+                            failures=final_failures,
+                            context=failure_context,
+                            patch_plan=patch_plan,
+                            aegis_execution=aegis_guidance,
+                            api_key_env=config.providers.api_key_env,
+                            base_url=str(config.providers.base_url or ""),
+                            max_context_chars=int(config.patches.max_context_chars),
+                        ),
+                        timeout_seconds=provider_timeout_seconds,
+                    )
+                    if timed_out:
+                        return {
+                            "available": False,
+                            "provider": config.providers.provider,
+                            "model": selected_model,
+                            "text": "",
+                            "error": "provider_timeout",
+                        }
+                    if isinstance(result, dict):
+                        return result
+                    return {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "text": "",
+                        "error": "provider_error",
+                    }
+
+                controller = run_structured_proposal_controller(
+                    task=options.task,
+                    cwd=(cwd or Path.cwd()).resolve(),
+                    contract=contract,
+                    attempt_fn=_attempt_structured_edits,
+                )
+                structured_patch["attempted"] = bool(controller.get("attempted", False))
+                structured_patch["status"] = str(controller.get("status", "skipped"))
+                structured_patch["errors"] = [str(item) for item in controller.get("errors", [])]
+                structured_patch["failure_reason"] = controller.get("failure_reason")
+                structured_patch["retry_attempted"] = bool(controller.get("retry_attempted", False))
+                structured_patch["retry_count"] = int(controller.get("retry_count", 0) or 0)
+                if isinstance(controller.get("target_diagnostics"), dict):
+                    structured_patch["target_diagnostics"] = dict(controller.get("target_diagnostics", {}))
+                result_obj = controller.get("result")
+                if hasattr(result_obj, "files"):
+                    structured_patch["files"] = [str(item) for item in getattr(result_obj, "files", [])]
+                if bool(controller.get("available", False)) and hasattr(result_obj, "diff"):
+                    structured_patch["available"] = True
+                    structured_patch["status"] = "accepted"
+                    structured_primary_accepted = True
+                    use_unified_fallback = False
+                    provider_result = {
+                        "available": True,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": str(getattr(result_obj, "diff", "") or ""),
+                        "error": None,
+                    }
+                else:
+                    provider_unavailable = str(controller.get("failure_reason", "")) == "provider_unavailable"
+                    if provider_unavailable:
+                        structured_patch["status"] = "skipped"
+                        use_unified_fallback = True
+                    else:
+                        structured_blocked = True
+                        use_unified_fallback = False
+                        structured_patch["status"] = "failed"
+                        structured_patch["next_actions"] = [
+                            "refine task scope",
+                            "remove or adjust file constraints",
+                            "inspect allowed targets",
+                        ]
+                        provider_result = {
+                            "available": False,
+                            "provider": config.providers.provider,
+                            "model": selected_model,
+                            "diff": "",
+                            "error": "structured_output_invalid",
+                        }
         if requested_operation == "append":
             append_target = ""
             if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
@@ -2644,7 +2961,7 @@ def build_run_payload(
                 "repair_targets": [],
             }
         if not bool(validation_result.get("valid", False)) and (initial_diff or docs_task):
-            if docs_task:
+            if docs_task and not disable_docs_wrapped_fallback:
                 wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
                     task_type=task_type,
                     raw_output=docs_wrapper_source,
@@ -2851,7 +3168,7 @@ def build_run_payload(
                 # Keep previously-written latest.invalid.diff from the original invalid candidate.
                 second_diff = ""
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
-            if docs_task and second_diff and not bool(second_validation.get("valid", False)):
+            if docs_task and not disable_docs_wrapped_fallback and second_diff and not bool(second_validation.get("valid", False)):
                 wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
                     task_type=task_type,
                     raw_output=_sanitize_docs_wrapper_content(
@@ -2928,6 +3245,17 @@ def build_run_payload(
         path_value: str | None = None
         invalid_path: str | None = None
         plan_consistent, plan_missing_targets = _compute_plan_consistency(patch_plan, validation_used, diff_text)
+        if feature_plan_active and bool(validation_used.get("valid", False)):
+            planned_step_targets = {
+                _normalize_rel_path(str(item.get("target_file", "") or ""))
+                for item in feature_plan_steps
+                if isinstance(item, dict) and str(item.get("target_file", "")).strip()
+            }
+            diff_targets = _collect_diff_targets(validation_used if isinstance(validation_used, dict) else {})
+            if planned_step_targets:
+                missing_step_targets = sorted(path for path in planned_step_targets if path not in diff_targets)
+                plan_consistent = not missing_step_targets
+                plan_missing_targets = missing_step_targets
         if requested_operation == "append" and bool(validation_used.get("valid", False)):
             allowed = {
                 _normalize_rel_path(str(item))
@@ -2951,6 +3279,8 @@ def build_run_payload(
             )
             if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_docs_rewrite"
+            if content_hard_invalid is None and _is_destructive_source_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
+                content_hard_invalid = "destructive_source_rewrite"
             if content_hard_invalid:
                 patch_quality = None
                 invalid_path = str(write_latest_invalid_diff(diff_text, cwd=cwd))
@@ -3051,6 +3381,8 @@ def build_run_payload(
             )
             if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_docs_rewrite"
+            if content_hard_invalid is None and _is_destructive_source_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
+                content_hard_invalid = "destructive_source_rewrite"
             if content_hard_invalid:
                 patch_diff["error"] = content_hard_invalid
             elif syntactic_valid is False:
@@ -3170,7 +3502,7 @@ def build_run_payload(
                 }
             second_diff = normalize_unified_diff(str(second.get("diff", "") or "").strip()).strip()
             second_validation = inspect_diff(second_diff, cwd=(cwd or Path.cwd())) if second_diff else {"valid": False, "errors": ["empty_diff"]}
-            if docs_task and second_diff and not bool(second_validation.get("valid", False)):
+            if docs_task and not disable_docs_wrapped_fallback and second_diff and not bool(second_validation.get("valid", False)):
                 wrapped_diff, wrapped_validation, wrapped_apply_blocked = _maybe_wrap_docs_non_diff(
                     task_type=task_type,
                     raw_output=_sanitize_docs_wrapper_content(
@@ -3322,7 +3654,11 @@ def build_run_payload(
             blocked_error = (
                 str(structured_patch.get("failure_reason", "") or "append_output_invalid")
                 if requested_operation == "append"
-                else "structured_output_invalid"
+                else (
+                    str(structured_patch.get("failure_reason", "") or "structured_output_invalid")
+                    if feature_plan_active
+                    else "structured_output_invalid"
+                )
             )
             patch_diff.update(
                 {
@@ -3404,6 +3740,10 @@ def build_run_payload(
             "preview": "",
         }
 
+    if isinstance(patch_diff, dict):
+        validation_for_touched = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}
+        patch_diff["touched_files"] = sorted(_collect_diff_targets(validation_for_touched))
+
     patch_diff_payload = patch_diff if isinstance(patch_diff, dict) else {}
     validation_payload = patch_diff_payload.get("validation_result", {})
     validation_valid = bool(validation_payload.get("valid", False)) if isinstance(validation_payload, dict) else False
@@ -3431,6 +3771,16 @@ def build_run_payload(
             operation_source = "cli"
         elif explicit_scope_active:
             operation_source = "cli"
+    verification_diagnostics: dict[str, Any] | None = None
+    if explicit_multi_file_patch and int(final_failures.get("failure_count", 0) or 0) > 0:
+        last_cmd = commands_run[-1] if commands_run and isinstance(commands_run[-1], dict) else {}
+        full_output = str(last_cmd.get("full_output", "") or "")
+        verification_diagnostics = {
+            "command": str(last_cmd.get("command", "") or verification.get("command") or ""),
+            "status": str(last_cmd.get("status", "") or ""),
+            "exit_code": last_cmd.get("exit_code"),
+            "output": full_output,
+        }
     payload = {
         "task": options.task,
         "mode": mode,
@@ -3470,6 +3820,7 @@ def build_run_payload(
         "feature_plan": feature_plan,
         "apply_safety": apply_safety,
         "verification": verification,
+        "verification_diagnostics": verification_diagnostics,
         "aegis_guidance": aegis_guidance,
         "provider_skipped": provider_skipped,
         "skip_reason": skip_reason or None,
@@ -3536,25 +3887,11 @@ def build_run_payload(
 
 
 def _collect_changed_files(patch_diff: dict[str, Any], structured_patch: dict[str, Any], patch_plan: dict[str, Any]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for item in structured_patch.get("files", []) if isinstance(structured_patch.get("files", []), list) else []:
-        value = str(item).strip().replace("\\", "/")
-        if value and value not in seen:
-            seen.add(value)
-            out.append(value)
+    _ = structured_patch
+    _ = patch_plan
     validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}
-    for item in validation.get("files", []) if isinstance(validation.get("files", []), list) else []:
-        path_value = str(item.get("path", "") if isinstance(item, dict) else "").strip().replace("\\", "/")
-        if path_value and path_value not in seen:
-            seen.add(path_value)
-            out.append(path_value)
-    for item in patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []:
-        path_value = str(item.get("file", "") if isinstance(item, dict) else "").strip().replace("\\", "/")
-        if path_value and path_value not in seen:
-            seen.add(path_value)
-            out.append(path_value)
-    return out
+    targets = _collect_diff_targets(validation)
+    return sorted(targets)
 
 
 def _collect_repo_file_candidates(failure_context: dict[str, Any], patch_plan: dict[str, Any]) -> list[str]:

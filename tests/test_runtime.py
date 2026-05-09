@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
 from aegis_code.patches.apply_check import check_patch_text
+from aegis_code.report import render_markdown_report
 from aegis_code.runtime import TaskOptions, _compute_apply_safety, build_run_payload, run_task
 from tests.helpers import (
     command_result_from_output,
@@ -162,6 +164,15 @@ def test_retry_loop_initial_pass_no_retry(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
         lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.resolve_verification_command",
+        lambda _cwd: {
+            "available": True,
+            "command": "python -m pytest -q",
+            "source": "config",
+            "observed": True,
+        },
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
     client = _CapturingClient()
@@ -331,6 +342,32 @@ def test_runtime_payload_includes_verification_source_and_observed(monkeypatch, 
     assert payload["verification"]["command"] == "pytest -q"
     assert payload["verification"]["source"] == "capabilities"
     assert payload["verification"]["observed"] is True
+
+
+def test_runtime_uses_configured_command_over_observed_capabilities(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    configured = ".venv/Scripts/python.exe -m pytest -q"
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text(
+        f'commands:\n  test: "{configured}"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / ".aegis" / "capabilities.json").write_text(
+        json.dumps({"test_command": "pytest -q", "test_command_observed": True}),
+        encoding="utf-8",
+    )
+    seen: list[str] = []
+
+    def _capture(cmd: str, cwd=None) -> CommandResult:
+        seen.append(cmd)
+        return command_result_from_output(pytest_output_pass(), status="ok", exit_code=0, command=cmd)
+
+    monkeypatch.setattr("aegis_code.runtime.run_configured_tests", _capture)
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    payload = build_run_payload(options=TaskOptions(task="verify configured command"), cwd=tmp_path, client=_CapturingClient())
+    assert seen == [configured]
+    assert payload["verification"]["command"] == configured
+    assert payload["verification"]["source"] == "config"
+    assert payload["verification"]["observed"] is False
 
 
 def test_runtime_payload_includes_sll_pre_call_and_risk(monkeypatch, tmp_path: Path) -> None:
@@ -956,3 +993,563 @@ def test_feature_plan_append_unchanged(monkeypatch, tmp_path: Path) -> None:
         client=_CapturingClient(),
     )
     assert payload.get("feature_plan") is None
+
+
+def test_feature_plan_successful_three_step_flow(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "a.py").write_text("VALUE_A = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("VALUE_B = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_c.py").write_text("def test_c():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        file_path = cwd / target
+        old_text = file_path.read_text(encoding="utf-8")
+        if target.endswith("a.py"):
+            new_text = old_text.replace("1", "2")
+        elif target.endswith("b.py"):
+            new_text = old_text.replace("1", "3")
+        else:
+            new_text = old_text + "\n# touched\n"
+        from difflib import unified_diff
+        diff_body = "\n".join(
+            unified_diff(
+                old_text.splitlines(),
+                new_text.splitlines(),
+                fromfile=f"a/{target}",
+                tofile=f"b/{target}",
+                lineterm="",
+            )
+        )
+        diff_text = f"diff --git a/{target} b/{target}\n{diff_body}\n"
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=diff_text, files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="implement feature",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/a.py", "src/b.py", "tests/test_c.py"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("patch_diff", {}).get("status") == "generated"
+    diff_path = Path(str(payload.get("patch_diff", {}).get("path", "")))
+    assert diff_path.exists()
+    checked = check_patch_text(diff_path.read_text(encoding="utf-8"), cwd=tmp_path)
+    assert checked["valid"] is True
+    files = checked.get("files", [])
+    touched = sorted(
+        {
+            str(item.get("new_path") or item.get("old_path"))
+            for item in files
+            if isinstance(item, dict)
+        }
+    )
+    assert touched == ["src/a.py", "src/b.py", "tests/test_c.py"]
+
+
+def test_feature_plan_per_step_scope_enforced(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "a.py").write_text("A = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("B = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    seen_targets: list[str] = []
+
+    def _controller(*, contract, cwd, **_kwargs):
+        assert len(contract.allowed_targets) == 1
+        target = str(contract.allowed_targets[0])
+        seen_targets.append(target)
+        file_path = cwd / target
+        old_text = file_path.read_text(encoding="utf-8")
+        new_text = old_text.replace("1", "2")
+        from difflib import unified_diff
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="multi scope",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/a.py", "src/b.py"],
+                "max_files": 2,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("patch_diff", {}).get("status") == "generated"
+    assert seen_targets == ["src/a.py", "src/b.py"]
+
+
+def test_feature_plan_step_failure_blocks_entire_feature(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "a.py").write_text("A = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("B = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        if target.endswith("b.py"):
+            return {
+                "attempted": True,
+                "available": False,
+                "status": "failed",
+                "failure_reason": "outside_allowed_targets",
+                "errors": ["invalid_path:outside_allowed_targets"],
+                "retry_attempted": True,
+                "retry_count": 1,
+                "result": None,
+                "provider_result": {},
+                "target_diagnostics": {
+                    "raw_edit_paths": ["src\\oops.py"],
+                    "normalized_edit_paths": ["src/oops.py"],
+                    "raw_allowed_targets": ["src/b.py"],
+                    "normalized_allowed_targets": ["src/b.py"],
+                    "validator_source": "structured_edits",
+                },
+            }
+        from difflib import unified_diff
+        old_text = (cwd / target).read_text(encoding="utf-8")
+        new_text = old_text.replace("1", "2")
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="implement feature changes",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/a.py", "src/b.py"],
+                "max_files": 2,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("patch_diff", {}).get("status") == "blocked"
+    assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
+
+
+def test_feature_plan_does_not_use_docs_wrapper_fallback(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "a.py").write_text("A = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_a.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime._maybe_wrap_docs_non_diff",
+        lambda **_: (_ for _ in ()).throw(AssertionError("docs wrapper should not be used in feature plan mode")),
+    )
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        from difflib import unified_diff
+        old_text = (cwd / target).read_text(encoding="utf-8")
+        new_text = old_text.replace("1", "2")
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="multi feature",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/a.py", "tests/test_a.py"],
+                "max_files": 2,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("patch_diff", {}).get("status") == "generated"
+
+
+def test_feature_plan_activates_for_explicit_multi_file_patch_with_passing_verification(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("commands:\n  test: \"python -m pytest -q\"\n", encoding="utf-8")
+    (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app" / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime._maybe_wrap_docs_non_diff",
+        lambda **_: (_ for _ in ()).throw(AssertionError("docs wrapper should not run")),
+    )
+    calls: list[str] = []
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        calls.append(target)
+        from difflib import unified_diff
+        old_text = (cwd / target).read_text(encoding="utf-8")
+        if target.endswith("README.md"):
+            new_text = old_text + "\n## Usage\n\n- Added usage example.\n"
+        else:
+            new_text = old_text + "\n# updated\n"
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add POST /todos endpoint and tests",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["app/main.py", "tests/test_main.py", "README.md"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert isinstance(payload.get("feature_plan"), dict)
+    assert payload.get("patch_diff", {}).get("status") == "generated"
+    assert calls == ["app/main.py", "tests/test_main.py", "README.md"]
+    report = render_markdown_report(payload, cwd=tmp_path)
+    assert "## Multi-file Feature Plan" in report
+
+
+def test_feature_plan_touched_files_match_accepted_accumulated_diff(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("commands:\n  test: \"python -m pytest -q\"\n", encoding="utf-8")
+    (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app" / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        from difflib import unified_diff
+        old_text = (cwd / target).read_text(encoding="utf-8")
+        new_text = old_text + "\n# touched\n"
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add POST /todos endpoint with request body validation, tests, and README usage example",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["app/main.py", "tests/test_main.py", "README.md"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert sorted(payload["patch_diff"].get("touched_files", [])) == ["README.md", "app/main.py", "tests/test_main.py"]
+    report = render_markdown_report(payload, cwd=tmp_path)
+    assert "Files touched: `README.md, app/main.py, tests/test_main.py`" in report
+    assert "src/module.py" not in report
+    assert "tests/test_module.py" not in report
+
+
+def test_fastapi_todo_flow_contract_coherent(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("commands:\n  test: \"python -m pytest -q\"\n", encoding="utf-8")
+    (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app" / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_main.py").write_text("def test_smoke():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        if target == "app/main.py":
+            new_text = (
+                "from fastapi import FastAPI\n"
+                "from pydantic import BaseModel\n"
+                "from uuid import uuid4\n\n"
+                "app = FastAPI()\n\n"
+                "class TodoIn(BaseModel):\n"
+                "    description: str\n\n"
+                "@app.post('/todos')\n"
+                "def create_todo(todo: TodoIn):\n"
+                "    return {'id': str(uuid4()), 'description': todo.description}\n"
+            )
+        elif target == "tests/test_main.py":
+            new_text = (
+                "def test_create_todo_contract():\n"
+                "    response = {'id': 'abc', 'description': 'buy milk'}\n"
+                "    assert response['id']\n"
+                "    assert response['description'] == 'buy milk'\n"
+            )
+        else:
+            new_text = (
+                "# Project\n\n"
+                "## Usage\n\n"
+                "POST /todos with {\"description\": \"buy milk\"} returns {\"id\": \"...\", \"description\": \"buy milk\"}\n"
+            )
+        old_text = (cwd / target).read_text(encoding="utf-8")
+        from difflib import unified_diff
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add POST /todos endpoint with request body validation, tests, and README usage example",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["app/main.py", "tests/test_main.py", "README.md"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["error"] is None
+    checked = check_patch_text(Path(str(payload["patch_diff"]["path"])).read_text(encoding="utf-8"), cwd=tmp_path)
+    assert checked["valid"] is True
+
+
+def test_readme_title_preserved_unless_explicitly_requested(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("commands:\n  test: \"python -m pytest -q\"\n", encoding="utf-8")
+    (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app" / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        if target == "README.md":
+            new_text = "# Todo API\n\n## Usage\n\n- example\n"
+        else:
+            old_text = (cwd / target).read_text(encoding="utf-8")
+            new_text = old_text + "\n# touched\n"
+        old_text = (cwd / target).read_text(encoding="utf-8")
+        from difflib import unified_diff
+        diff_body = "\n".join(
+            unified_diff(old_text.splitlines(), new_text.splitlines(), fromfile=f"a/{target}", tofile=f"b/{target}", lineterm="")
+        )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=f"diff --git a/{target} b/{target}\n{diff_body}\n", files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload_blocked = build_run_payload(
+        options=TaskOptions(
+            task="add POST /todos endpoint with request body validation, tests, and README usage example",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["app/main.py", "tests/test_main.py", "README.md"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload_blocked["patch_diff"]["status"] == "invalid"
+    assert payload_blocked["patch_diff"]["error"] == "readme_title_changed"
+
+    payload_allowed = build_run_payload(
+        options=TaskOptions(
+            task="add POST /todos endpoint and change README title to Todo API",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["app/main.py", "tests/test_main.py", "README.md"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload_allowed["patch_diff"]["status"] == "generated"

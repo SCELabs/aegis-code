@@ -57,6 +57,14 @@ def _resolve_invalid_diff_preview(patch_diff: dict[str, Any], cwd: Path | None) 
 def _collect_files_touched(patch_diff: dict[str, Any], structured_patch: dict[str, Any], patch_plan: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
+    touched = patch_diff.get("touched_files", [])
+    if isinstance(touched, list) and touched:
+        for item in touched:
+            path = str(item).strip().replace("\\", "/")
+            if path and path not in seen:
+                seen.add(path)
+                out.append(path)
+        return out
     validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}
     files = validation.get("files", []) if isinstance(validation.get("files", []), list) else []
     for item in files:
@@ -65,17 +73,8 @@ def _collect_files_touched(patch_diff: dict[str, Any], structured_patch: dict[st
             if path and path not in seen:
                 seen.add(path)
                 out.append(path)
-    for item in structured_patch.get("files", []) if isinstance(structured_patch.get("files", []), list) else []:
-        path = str(item).strip()
-        if path and path not in seen:
-            seen.add(path)
-            out.append(path)
-    for item in patch_plan.get("proposed_changes", []) if isinstance(patch_plan.get("proposed_changes", []), list) else []:
-        if isinstance(item, dict):
-            path = str(item.get("file", "")).strip()
-            if path and path not in seen:
-                seen.add(path)
-                out.append(path)
+    _ = structured_patch
+    _ = patch_plan
     return out
 
 
@@ -101,6 +100,7 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
     verification = payload.get("verification", {})
+    verification_diagnostics = payload.get("verification_diagnostics", {}) if isinstance(payload.get("verification_diagnostics"), dict) else {}
     impact = payload.get("impact", {}) if isinstance(payload.get("impact"), dict) else {}
     retry_policy = payload.get("retry_policy", {})
     symptoms = payload.get("symptoms", [])
@@ -147,6 +147,22 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
         f"- Test command: `{verification.get('test_command', 'none')}`",
         f"- Confidence: `{verification.get('confidence', 'low')}`",
         f"- Reason: `{verification.get('reason', 'n/a')}`",
+        *(
+            [
+                "",
+                "### Verification Diagnostics",
+                "",
+                f"- Command: `{verification_diagnostics.get('command', '')}`",
+                f"- Status: `{verification_diagnostics.get('status', '')}`",
+                f"- Exit code: `{verification_diagnostics.get('exit_code')}`",
+                "- Output:",
+                "```text",
+                str(verification_diagnostics.get("output", "") or "")[:4000],
+                "```",
+            ]
+            if verification_diagnostics
+            else []
+        ),
         "",
         "## Runtime Control",
         "",
@@ -364,6 +380,10 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
     )
 
     proposed_changes = patch_plan.get("proposed_changes", [])
+    executed_touched = patch_diff.get("touched_files", []) if isinstance(patch_diff.get("touched_files", []), list) else []
+    patch_generated = str(patch_diff.get("status", "") or "") == "generated"
+    if patch_generated and executed_touched:
+        proposed_changes = [{"file": str(path), "change_type": "modify", "description": "Applied in accepted diff.", "reason": "accepted_diff"} for path in executed_touched]
     if proposed_changes:
         for change in proposed_changes:
             lines.append(

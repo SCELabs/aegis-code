@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 from aegis_code.models import CommandResult
@@ -27,15 +29,28 @@ def run_shell_command(
         )
 
     try:
-        parts = shlex.split(command, posix=False)
-        completed = subprocess.run(
-            parts,
-            cwd=str(cwd or Path.cwd()),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        run_cwd = str(cwd or Path.cwd())
+        if sys.platform.startswith("win"):
+            completed = subprocess.run(
+                command,
+                cwd=run_cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                shell=True,
+                executable=os.environ.get("COMSPEC", None),
+            )
+        else:
+            parts = shlex.split(command, posix=False)
+            completed = subprocess.run(
+                parts,
+                cwd=run_cwd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
         stdout = completed.stdout or ""
         stderr = completed.stderr or ""
         output = (stdout + "\n" + stderr).strip()

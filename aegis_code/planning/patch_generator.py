@@ -23,6 +23,33 @@ def _has_implementation_intent(task: str) -> bool:
     return any(phrase in lowered for phrase in impl_phrases)
 
 
+def _has_feature_implementation_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    feature_phrases = (
+        "add endpoint",
+        "add api route",
+        "api route",
+        "add route",
+        "post /",
+        "get /",
+        "put /",
+        "delete /",
+        "add feature",
+        "add handler",
+        "implement handler",
+        "add schema",
+        "implement schema",
+        "request body validation",
+        "body validation",
+        "payload validation",
+    )
+    if any(phrase in lowered for phrase in feature_phrases):
+        return True
+    if "implement" in lowered and any(token in lowered for token in ("endpoint", "route", "handler", "schema", "validation", "api")):
+        return True
+    return False
+
+
 def _has_test_intent(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     return any(phrase in lowered for phrase in ("test", "tests", "coverage"))
@@ -50,6 +77,8 @@ def _classify_task_type(task: str) -> str:
         return "general"
     if _is_explicit_tests_only_task(lowered):
         return "test_generation"
+    if _has_feature_implementation_intent(lowered):
+        return "feature_implementation"
     if _is_docs_task(lowered):
         return "docs_task"
     if _has_implementation_intent(lowered) and _has_test_intent(lowered):

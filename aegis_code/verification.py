@@ -9,6 +9,17 @@ from aegis_code.probe import load_capabilities
 
 
 def resolve_verification_command(cwd: Path) -> dict[str, Any]:
+    cfg = load_config(cwd)
+    config_path = project_paths(cwd)["config_path"]
+    config_command = str(cfg.commands.test or "").strip()
+    if config_path.exists() and config_command:
+        return {
+            "command": config_command,
+            "available": True,
+            "source": "config",
+            "observed": False,
+        }
+
     capabilities = load_capabilities(cwd)
     if isinstance(capabilities, dict):
         command = str(capabilities.get("test_command", "") or "").strip()
@@ -20,17 +31,6 @@ def resolve_verification_command(cwd: Path) -> dict[str, Any]:
                 "source": "capabilities",
                 "observed": True,
             }
-
-    cfg = load_config(cwd)
-    config_path = project_paths(cwd)["config_path"]
-    config_command = str(cfg.commands.test or "").strip()
-    if config_path.exists() and config_command:
-        return {
-            "command": config_command,
-            "available": True,
-            "source": "config",
-            "observed": False,
-        }
 
     detected = detect_capabilities(cwd)
     detected_command = str(detected.get("test_command", "") or "").strip()

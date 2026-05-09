@@ -6,7 +6,7 @@ from pathlib import Path
 from aegis_code.verification import resolve_verification_command
 
 
-def test_verification_capabilities_priority_when_observed_true(tmp_path: Path) -> None:
+def test_verification_config_priority_when_capabilities_observed_true(tmp_path: Path) -> None:
     aegis_dir = tmp_path / ".aegis"
     aegis_dir.mkdir(parents=True, exist_ok=True)
     (aegis_dir / "aegis-code.yml").write_text('commands:\n  test: "python -m pytest -q"\n', encoding="utf-8")
@@ -15,10 +15,10 @@ def test_verification_capabilities_priority_when_observed_true(tmp_path: Path) -
         encoding="utf-8",
     )
     resolved = resolve_verification_command(tmp_path)
-    assert resolved["command"] == "pytest -q"
+    assert resolved["command"] == "python -m pytest -q"
     assert resolved["available"] is True
-    assert resolved["source"] == "capabilities"
-    assert resolved["observed"] is True
+    assert resolved["source"] == "config"
+    assert resolved["observed"] is False
 
 
 def test_verification_config_used_when_capabilities_not_observed(tmp_path: Path) -> None:

@@ -40,6 +40,68 @@ def _task_intent_tokens(task_text: str) -> set[str]:
     return {tok for tok in tokens if tok not in stop}
 
 
+def _task_requests_readme_title_change(task_text: str) -> bool:
+    lowered = str(task_text or "").lower()
+    title_tokens = (
+        "rename readme title",
+        "change readme title",
+        "update readme title",
+        "change title",
+        "rename title",
+        "retitle",
+        "project name",
+    )
+    return any(token in lowered for token in title_tokens)
+
+
+def _readme_title_changed(diff_text: str) -> bool:
+    removed: list[str] = []
+    added: list[str] = []
+    for line in str(diff_text or "").splitlines():
+        if line.startswith("-# "):
+            removed.append(line[2:].strip())
+        elif line.startswith("+# "):
+            added.append(line[2:].strip())
+    if not removed or not added:
+        return False
+    return removed[0] != added[0]
+
+
+def _todo_contract_incoherent(diff_text: str, task_text: str) -> bool:
+    lowered_task = str(task_text or "").lower()
+    if "todo" not in lowered_task or not any(token in lowered_task for token in ("endpoint", "route", "/todos", "api")):
+        return False
+    lines = str(diff_text or "").splitlines()
+    current_target = ""
+    src_added: list[str] = []
+    test_docs_added: list[str] = []
+    for line in lines:
+        if line.startswith("+++ "):
+            current_target = line[4:].strip()
+            if current_target.startswith("a/") or current_target.startswith("b/"):
+                current_target = current_target[2:]
+            continue
+        if not line.startswith("+") or line.startswith("+++ "):
+            continue
+        content = line[1:]
+        normalized = current_target.replace("\\", "/").lower()
+        if normalized.startswith("tests/") or normalized == "readme.md" or normalized.startswith("docs/"):
+            test_docs_added.append(content)
+        elif normalized.endswith(".py"):
+            src_added.append(content)
+    tests_docs_blob = "\n".join(test_docs_added).lower()
+    src_blob = "\n".join(src_added).lower()
+    expects_id = any(token in tests_docs_blob for token in ('["id"]', "['id']", '"id"', " id:"))
+    expects_description = "description" in tests_docs_blob
+    impl_has_id_generation = any(token in src_blob for token in ("uuid4(", "uuid.uuid4", '"id"', "'id'"))
+    impl_has_description = "description" in src_blob
+    if expects_id and not impl_has_id_generation:
+        return True
+    if expects_description and not impl_has_description:
+        return True
+    return False
+
+
 def hard_invalid_content_reason(
     *,
     diff_text: str,
@@ -56,6 +118,10 @@ def hard_invalid_content_reason(
             return "placeholder_content"
 
     if not test_task:
+        if _readme_title_changed(text) and not _task_requests_readme_title_change(task_text):
+            return "readme_title_changed"
+        if _todo_contract_incoherent(text, task_text):
+            return "contract_incoherent_todo_api"
         files = validation.get("files", []) if isinstance(validation, dict) else []
         for item in files if isinstance(files, list) else []:
             if not isinstance(item, dict):
