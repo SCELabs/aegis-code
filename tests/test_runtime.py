@@ -1553,3 +1553,157 @@ def test_readme_title_preserved_unless_explicitly_requested(monkeypatch, tmp_pat
         client=_CapturingClient(),
     )
     assert payload_allowed["patch_diff"]["status"] == "generated"
+
+
+def test_append_blocks_require_in_esm_js_target(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"notes","type":"module"}', encoding="utf-8")
+    target = tmp_path / "tests" / "notes.test.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("import test from 'node:test';\n", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "notes.js").write_text("export function addNote() { return 1; }\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\nconst x = require(\\"assert\\");\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add test for deleteNote",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["tests/notes.test.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "append_source_conflict"
+
+
+def test_append_blocks_jest_style_when_node_test_detected(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "notes.test.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("import test from 'node:test';\nimport assert from 'node:assert/strict';\n", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "notes.js").write_text("export function addNote() { return 1; }\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\n\\ndescribe(\\"notes\\", () => {\\n  expect(1).toBe(1);\\n});\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add test for deleteNote",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["tests/notes.test.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "append_source_conflict"
+
+
+def test_additive_source_rewrite_is_blocked(monkeypatch, tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    target = src / "notes.js"
+    target.write_text(
+        "export function addNote() { return 1; }\n"
+        "export function listNotes() { return []; }\n"
+        "export default { addNote, listNotes };\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(
+                diff=(
+                    "diff --git a/src/notes.js b/src/notes.js\n"
+                    "--- a/src/notes.js\n"
+                    "+++ b/src/notes.js\n"
+                    "@@ -1,3 +1,1 @@\n"
+                    "-export function addNote() { return 1; }\n"
+                    "-export function listNotes() { return []; }\n"
+                    "-export default { addNote, listNotes };\n"
+                    "+export function deleteNote() { return 1; }\n"
+                ),
+                files=["src/notes.js"],
+            ),
+            "provider_result": {},
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add deleteNote(notes, index)",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_source_rewrite"

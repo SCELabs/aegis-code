@@ -644,7 +644,12 @@ def _append_source_conflict_error(
         is_esm = normalized_path.endswith(".mjs") or package_type == "module" or "import " in source_text or "export " in source_text
         if is_esm and "require(" in appended:
             return "append_source_conflict"
-        node_test_source = "node:test" in source_text
+        target_text = ""
+        try:
+            target_text = ((cwd / normalized_path).resolve()).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            target_text = ""
+        node_test_source = ("node:test" in source_text) or ("node:test" in target_text)
         if node_test_source and ("describe(" in appended or "expect(" in appended):
             return "append_source_conflict"
         if re.search(r"\bslugify\b", appended, flags=re.IGNORECASE) and re.search(r"\bslugify\b", source_text, flags=re.IGNORECASE) is None:
