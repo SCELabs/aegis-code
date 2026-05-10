@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
 from aegis_code.patches.apply_check import check_patch_text
+from aegis_code.patches.policy import hard_invalid_content_evaluate
 from aegis_code.report import render_markdown_report
 from aegis_code.runtime import TaskOptions, _compute_apply_safety, build_run_payload, run_task
 from tests.helpers import (
@@ -1706,4 +1707,430 @@ def test_additive_source_rewrite_is_blocked(monkeypatch, tmp_path: Path) -> None
         client=_CapturingClient(),
     )
     assert payload["patch_diff"]["status"] == "invalid"
-    assert payload["patch_diff"]["error"] == "destructive_source_rewrite"
+    assert payload["patch_diff"]["error"] == "destructive_public_api_rewrite"
+
+
+def test_js_additive_task_preserves_existing_exports(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"notes","type":"module","scripts":{"test":"node --test"}}', encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "notes.js").write_text(
+        "export function addNote() { return 1; }\n"
+        "export function listNotes() { return []; }\n"
+        "export function completeNote() { return true; }\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/notes.js b/src/notes.js\n"
+                "--- a/src/notes.js\n"
+                "+++ b/src/notes.js\n"
+                "@@ -1,3 +1,2 @@\n"
+                "-export function addNote() { return 1; }\n"
+                "-export function listNotes() { return []; }\n"
+                " export function completeNote() { return true; }\n"
+                "+export function deleteNote() { return true; }\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add deleteNote(notes, index)", propose_patch=True),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_public_api_rewrite"
+
+
+def test_python_additive_task_preserves_existing_public_functions(monkeypatch, tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "notes.py").write_text(
+        "def add_note(text: str) -> str:\n    return text\n\n"
+        "def list_notes() -> list[str]:\n    return []\n\n"
+        "def complete_note(idx: int) -> bool:\n    return True\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/notes.py b/src/notes.py\n"
+                "--- a/src/notes.py\n"
+                "+++ b/src/notes.py\n"
+                "@@ -1,7 +1,7 @@\n"
+                "-def add_note(text: str) -> str:\n"
+                "-    return text\n"
+                "+def delete_note(notes: list[str], index: int) -> list[str]:\n"
+                "+    return notes[:index] + notes[index+1:]\n"
+                " def list_notes() -> list[str]:\n"
+                "     return []\n"
+                " def complete_note(idx: int) -> bool:\n"
+                "     return True\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add delete_note(notes, index)", propose_patch=True),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_public_api_rewrite"
+
+
+def test_js_readme_blocks_python_examples(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"notes","type":"module","scripts":{"test":"node --test"}}', encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Notes\n\n## Summary\n\nJS notes app.\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@ -3,3 +3,9 @@\n"
+                " ## Summary\n"
+                " \n"
+                " JS notes app.\n"
+                "+\n"
+                "+## Usage\n"
+                "+\n"
+                "+```python\n"
+                "+def add_note(text):\n"
+                "+    return text\n"
+                "+```\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add README usage examples", propose_patch=True),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "docs_language_mismatch"
+
+
+def test_readme_summary_rewrite_blocked_without_explicit_request(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Notes\n\n## Summary\n\nOriginal summary.\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@ -1,4 +1,4 @@\n"
+                " # Notes\n"
+                "-## Summary\n"
+                "+## Overview\n"
+                " \n"
+                "-Original summary.\n"
+                "+Rewritten summary.\n"
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(task="add README usage examples", propose_patch=True),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] == "destructive_docs_rewrite"
+
+
+def test_multi_file_feature_bad_node_diff_is_blocked_by_policy(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("commands:\n  test: \"npm test\"\n", encoding="utf-8")
+    (tmp_path / "package.json").write_text(
+        '{"name":"notes","type":"module","scripts":{"test":"node --test"}}',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text(
+        "export function addNote(notes, text) { return [...notes, text]; }\n"
+        "export function listNotes(notes) { return notes; }\n"
+        "export function completeNote(notes, index) { return notes; }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "notes.test.js").write_text(
+        "import test from 'node:test';\n"
+        "import assert from 'node:assert/strict';\n"
+        "test('add note', () => assert.equal(1, 1));\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.md").write_text("# Notes CLI\n\n## Summary\n\nJavaScript notes CLI.\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _controller(*, contract, cwd, **_kwargs):
+        target = str(contract.allowed_targets[0])
+        if target == "src/notes.js":
+            diff = (
+                "diff --git a/src/notes.js b/src/notes.js\n"
+                "--- a/src/notes.js\n"
+                "+++ b/src/notes.js\n"
+                "@@ -1,3 +1,2 @@\n"
+                "-export function addNote(notes, text) { return [...notes, text]; }\n"
+                "-export function listNotes(notes) { return notes; }\n"
+                "-export function completeNote(notes, index) { return notes; }\n"
+                "+export function addNote(notes, text) { return [{ text }]; }\n"
+                "+export function deleteNote(notes, index) { return notes.filter((_, i) => i !== index); }\n"
+            )
+        elif target == "tests/notes.test.js":
+            diff = (
+                "diff --git a/tests/notes.test.js b/tests/notes.test.js\n"
+                "--- a/tests/notes.test.js\n"
+                "+++ b/tests/notes.test.js\n"
+                "@@ -1,3 +1,6 @@\n"
+                "-import test from 'node:test';\n"
+                "-import assert from 'node:assert/strict';\n"
+                "-test('add note', () => assert.equal(1, 1));\n"
+                "+const assert = require('assert');\n"
+                "+describe('notes', () => {\n"
+                "+  beforeEach(() => {});\n"
+                "+  expect(1).toBe(1);\n"
+                "+});\n"
+            )
+        else:
+            diff = (
+                "diff --git a/README.md b/README.md\n"
+                "--- a/README.md\n"
+                "+++ b/README.md\n"
+                "@@ -1,4 +1,10 @@\n"
+                "-# Notes CLI\n"
+                "+# Notes Python CLI\n"
+                " \n"
+                " ## Summary\n"
+                " \n"
+                "-JavaScript notes CLI.\n"
+                "+```python\n"
+                "+def add_note(text):\n"
+                "+    return text\n"
+                "+```\n"
+            )
+        return {
+            "attempted": True,
+            "available": True,
+            "status": "accepted",
+            "failure_reason": None,
+            "errors": [],
+            "retry_attempted": False,
+            "retry_count": 0,
+            "result": types.SimpleNamespace(diff=diff, files=[target]),
+            "provider_result": {},
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.run_structured_proposal_controller", _controller)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add deleteNote(notes, index) with tests and README usage",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/notes.js", "tests/notes.test.js", "README.md"],
+                "max_files": 3,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "invalid"
+    assert payload["patch_diff"]["error"] in {
+        "destructive_public_api_rewrite",
+        "ecosystem_test_framework_mismatch",
+        "docs_language_mismatch",
+        "readme_title_changed",
+    }
+    diagnostics = payload["patch_diff"].get("policy_diagnostics")
+    assert isinstance(diagnostics, dict)
+    assert diagnostics.get("policy_checked") is True
+    assert int(diagnostics.get("policy_input_length", 0) or 0) > 200
+    preview = str(diagnostics.get("policy_input_preview", "") or "")
+    assert "diff --git a/src/notes.js b/src/notes.js" in preview
+    assert diagnostics.get("detected_js_project") is True
+    assert diagnostics.get("detected_node_test") is True
+    assert diagnostics.get("detected_docs_language_mismatch") is True
+    assert diagnostics.get("detected_readme_title_change") is True
+    removed_symbols = diagnostics.get("detected_removed_public_symbols", [])
+    assert "listNotes" in removed_symbols
+    assert "completeNote" in removed_symbols
+    assert diagnostics.get("final_policy_reason") == payload["patch_diff"]["error"]
+    assert isinstance(diagnostics.get("policy_input_files"), list)
+    assert "src/notes.js" in diagnostics.get("policy_input_files", [])
+    assert "tests/notes.test.js" in diagnostics.get("policy_input_files", [])
+    assert "README.md" in diagnostics.get("policy_input_files", [])
+    assert not (tmp_path / ".aegis" / "runs" / "latest.diff").exists()
+    assert (tmp_path / ".aegis" / "runs" / "latest.invalid.diff").exists()
+
+
+def test_generated_low_confidence_diff_includes_policy_diagnostics(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("commands:\n  test: \"python -m pytest -q\"\n", encoding="utf-8")
+    (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app" / "main.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_main.py").write_text("def test_main():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+
+    def _provider(**_kwargs):
+        diff = (
+            "diff --git a/app/main.py b/app/main.py\n"
+            "--- a/app/main.py\n"
+            "+++ b/app/main.py\n"
+            "@@ -1,2 +1,5 @@\n"
+            " def main():\n"
+            "     return 1\n"
+            "+\n"
+            "+def delete_note(notes, index):\n"
+            "+    return notes[:index] + notes[index+1:]\n"
+        )
+        return {"available": True, "provider": "openai", "model": "gpt-4.1-mini", "diff": diff, "error": None}
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    monkeypatch.setattr(
+        "aegis_code.runtime.evaluate_diff",
+        lambda *args, **kwargs: {
+            "grounded": True,
+            "relevant_files": True,
+            "confidence": 0.35,
+            "issues": [],
+        },
+    )
+
+    payload = build_run_payload(
+        options=TaskOptions(task="add delete_note helper", propose_patch=True),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    diagnostics = payload["patch_diff"].get("policy_diagnostics")
+    assert isinstance(diagnostics, dict)
+    assert diagnostics.get("policy_checked") is True
+    assert diagnostics.get("final_policy_reason") is None
+
+
+def test_real_node_unified_diff_policy_detectors_surface_diagnostics(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"node-cli-notes","type":"module","scripts":{"test":"node --test"}}', encoding="utf-8")
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "notes.test.js").write_text(
+        "import test from 'node:test';\nimport assert from 'node:assert/strict';\n",
+        encoding="utf-8",
+    )
+    diff_text = (
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,8 +1,5 @@\n"
+        "-export function addNote(notes, text) { return [...notes, text]; }\n"
+        "-export function listNotes(notes) { return notes; }\n"
+        "-export function completeNote(notes, index) { return notes; }\n"
+        "+export function addNote(notes, text) { return notes.concat(text.toUpperCase()); }\n"
+        "+export function deleteNote(notes, index) { return notes.filter((_, i) => i !== index); }\n"
+        "diff --git a/tests/notes.test.js b/tests/notes.test.js\n"
+        "--- a/tests/notes.test.js\n"
+        "+++ b/tests/notes.test.js\n"
+        "@@ -1,2 +1,6 @@\n"
+        "+const assert = require('assert');\n"
+        "+describe('notes', () => {\n"
+        "+  beforeEach(() => {});\n"
+        "+  expect(1).toBe(1);\n"
+        "+});\n"
+        "diff --git a/README.md b/README.md\n"
+        "--- a/README.md\n"
+        "+++ b/README.md\n"
+        "@@ -1,5 +1,10 @@\n"
+        "-# Node CLI Notes Validation\n"
+        "+# Notes Application\n"
+        " \n"
+        " ## Summary\n"
+        " \n"
+        "+```python\n"
+        "+def add_note(text):\n"
+        "+    print(len(text))\n"
+        "+    del notes[index]\n"
+        "+```\n"
+    )
+    validation = {
+        "valid": True,
+        "files": [
+            {"new_path": "src/notes.js", "old_path": "src/notes.js", "additions": 2, "deletions": 3},
+            {"new_path": "tests/notes.test.js", "old_path": "tests/notes.test.js", "additions": 5, "deletions": 0},
+            {"new_path": "README.md", "old_path": "README.md", "additions": 5, "deletions": 1},
+        ],
+        "summary": {"additions": 12, "deletions": 4},
+    }
+    diagnostics = hard_invalid_content_evaluate(
+        diff_text=diff_text,
+        validation=validation,
+        test_task=False,
+        task_text="add deleteNote(notes, index) with tests and README usage",
+        cwd=tmp_path,
+    )
+    assert diagnostics.get("policy_checked") is True
+    assert diagnostics.get("detected_js_project") is True
+    assert diagnostics.get("detected_node_test") is True
+    assert diagnostics.get("detected_readme_title_change") is True
+    assert diagnostics.get("detected_docs_language_mismatch") is True
+    removed = diagnostics.get("detected_removed_public_symbols", [])
+    assert "listNotes" in removed
+    assert "completeNote" in removed
+    assert diagnostics.get("final_policy_reason") in {
+        "destructive_public_api_rewrite",
+        "ecosystem_test_framework_mismatch",
+        "docs_language_mismatch",
+        "readme_title_changed",
+    }

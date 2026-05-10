@@ -27,7 +27,11 @@ from aegis_code.patches.constraints import build_patch_constraints, detect_named
 from aegis_code.patches.diff_evaluator import evaluate_diff
 from aegis_code.patches.diff_inspector import inspect_diff
 from aegis_code.patches.diff_normalizer import normalize_unified_diff
-from aegis_code.patches.policy import hard_invalid_content_reason, hard_invalid_reason
+from aegis_code.patches.policy import (
+    hard_invalid_content_evaluate,
+    hard_invalid_content_reason,
+    hard_invalid_reason,
+)
 from aegis_code.patches.diff_repair import repair_malformed_diff
 from aegis_code.patches.diff_writer import (
     remove_latest_diff,
@@ -473,6 +477,7 @@ def _hard_invalid_reason(
     validation: dict[str, Any] | None = None,
     test_task: bool = False,
     task_text: str = "",
+    cwd: Path | None = None,
 ) -> str | None:
     return hard_invalid_reason(
         syntactic_valid=syntactic_valid,
@@ -483,6 +488,7 @@ def _hard_invalid_reason(
         validation=validation,
         test_task=test_task,
         task_text=task_text,
+        cwd=cwd,
     )
 
 
@@ -492,12 +498,31 @@ def _hard_invalid_content_reason(
     validation: dict[str, Any],
     test_task: bool,
     task_text: str,
+    cwd: Path | None = None,
 ) -> str | None:
     return hard_invalid_content_reason(
         diff_text=diff_text,
         validation=validation,
         test_task=test_task,
         task_text=task_text,
+        cwd=cwd,
+    )
+
+
+def _hard_invalid_content_evaluate(
+    *,
+    diff_text: str,
+    validation: dict[str, Any],
+    test_task: bool,
+    task_text: str,
+    cwd: Path | None = None,
+) -> dict[str, Any]:
+    return hard_invalid_content_evaluate(
+        diff_text=diff_text,
+        validation=validation,
+        test_task=test_task,
+        task_text=task_text,
+        cwd=cwd,
     )
 
 
@@ -519,6 +544,28 @@ def _compute_apply_safety(
     if confidence >= 0.70:
         return "MEDIUM"
     return "LOW"
+
+
+def _should_attach_policy_diagnostics_for_generated(patch_diff: dict[str, Any]) -> bool:
+    if str(patch_diff.get("status", "") or "") != "generated":
+        return False
+    if patch_diff.get("policy_diagnostics") is not None:
+        return False
+    try:
+        confidence = float(patch_diff.get("quality_score", 0.0) or 0.0)
+    except Exception:
+        confidence = 0.0
+    issues = patch_diff.get("issues", [])
+    issue_set = {str(item).strip() for item in issues} if isinstance(issues, list) else set()
+    if confidence <= 0.4:
+        return True
+    return bool(
+        {
+            "unrelated_files",
+            "unexpected_source_modification_for_test_task",
+        }
+        & issue_set
+    )
 
 
 def _build_feature_plan(
@@ -1584,7 +1631,11 @@ def build_run_payload(
                 {
                     "file": module_file,
                     "change_type": impl_change_type,
-                    "description": f"Add {function_name}(text) helper function.",
+                    "description": (
+                        f"Add {function_name}(text) helper function."
+                        if any(token in lowered_task for token in ("helper", "slugify"))
+                        else f"Implement requested source changes for {function_name}."
+                    ),
                     "reason": "implementation_with_tests_task",
                 }
             )
@@ -1609,7 +1660,7 @@ def build_run_payload(
                 {
                     "file": "README.md",
                     "change_type": "modify" if readme_exists else "create",
-                    "description": "Add usage examples for slugify and CLI usage.",
+                    "description": "Add requested README usage examples.",
                     "reason": "documentation_task",
                 }
             )
@@ -2355,6 +2406,7 @@ def build_run_payload(
             validation=validation_result if isinstance(validation_result, dict) else {},
             test_task=test_task,
             task_text=options.task,
+            cwd=(cwd or Path.cwd()),
         )
         if early_content_invalid_reason:
             repair_result = {
@@ -2429,6 +2481,7 @@ def build_run_payload(
                     validation=validation_result,
                     test_task=test_task,
                     task_text=options.task,
+                    cwd=(cwd or Path.cwd()),
                 )
         initial_quality = evaluate_diff(
             initial_diff,
@@ -2625,6 +2678,7 @@ def build_run_payload(
                 validation=second_validation,
                 test_task=test_task,
                 task_text=options.task,
+                cwd=(cwd or Path.cwd()),
             )
             second_candidate_failed = (
                 not bool(second_validation.get("valid", False))
@@ -2678,12 +2732,14 @@ def build_run_payload(
             syntactic_valid, syntactic_error = _syntactic_python_check(diff_text, cwd=(cwd or Path.cwd()))
             additions = int((validation_used.get("summary", {}) or {}).get("additions", 0))
             size_threshold = 500 if test_task else 800
-            content_hard_invalid = _hard_invalid_content_reason(
+            policy_evaluation = _hard_invalid_content_evaluate(
                 diff_text=diff_text,
                 validation=validation_used if isinstance(validation_used, dict) else {},
                 test_task=test_task,
                 task_text=options.task,
+                cwd=(cwd or Path.cwd()),
             )
+            content_hard_invalid = str(policy_evaluation.get("final_policy_reason", "") or "") or None
             if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_docs_rewrite"
             if content_hard_invalid is None and _is_destructive_source_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
@@ -2780,18 +2836,21 @@ def build_run_payload(
         if provider_used.get("available", False) and not path_value:
             patch_diff["available"] = False
             validation_errors = validation_used.get("errors", [])
-            content_hard_invalid = _hard_invalid_content_reason(
+            policy_evaluation = _hard_invalid_content_evaluate(
                 diff_text=diff_text,
                 validation=validation_used if isinstance(validation_used, dict) else {},
                 test_task=test_task,
                 task_text=options.task,
+                cwd=(cwd or Path.cwd()),
             )
+            content_hard_invalid = str(policy_evaluation.get("final_policy_reason", "") or "") or None
             if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_docs_rewrite"
             if content_hard_invalid is None and _is_destructive_source_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_source_rewrite"
             if content_hard_invalid:
                 patch_diff["error"] = content_hard_invalid
+                patch_diff["policy_diagnostics"] = policy_evaluation
             elif syntactic_valid is False:
                 patch_diff["error"] = "syntactic_invalid"
             elif provider_used.get("available", False) and syntactic_valid is True:
@@ -2971,6 +3030,7 @@ def build_run_payload(
                 validation=second_validation,
                 test_task=test_task,
                 task_text=options.task,
+                cwd=(cwd or Path.cwd()),
             )
 
             provider_used = second
@@ -3146,6 +3206,25 @@ def build_run_payload(
             "error": "Provider unavailable",
             "preview": "",
         }
+
+    if isinstance(patch_diff, dict) and _should_attach_policy_diagnostics_for_generated(patch_diff):
+        diagnostics_diff_text = ""
+        path_value = str(patch_diff.get("path", "") or "").strip()
+        if path_value:
+            try:
+                diagnostics_diff_text = Path(path_value).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                diagnostics_diff_text = ""
+        if not diagnostics_diff_text:
+            diagnostics_diff_text = str(patch_diff.get("preview", "") or "")
+        diagnostics = _hard_invalid_content_evaluate(
+            diff_text=diagnostics_diff_text,
+            validation=patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {},
+            test_task=test_task,
+            task_text=options.task,
+            cwd=(cwd or Path.cwd()),
+        )
+        patch_diff["policy_diagnostics"] = diagnostics
 
     if isinstance(patch_diff, dict):
         validation_for_touched = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result", {}), dict) else {}

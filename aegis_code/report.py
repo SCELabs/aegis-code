@@ -78,6 +78,28 @@ def _collect_files_touched(patch_diff: dict[str, Any], structured_patch: dict[st
     return out
 
 
+def _append_policy_diagnostics(lines: list[str], patch_diff: dict[str, Any]) -> None:
+    diagnostics = patch_diff.get("policy_diagnostics")
+    if not isinstance(diagnostics, dict):
+        return
+    lines.extend(
+        [
+            "",
+            "## Policy Diagnostics",
+            "",
+            f"- policy_checked: `{diagnostics.get('policy_checked')}`",
+            f"- policy_input_files: `{', '.join(str(item) for item in diagnostics.get('policy_input_files', [])) if isinstance(diagnostics.get('policy_input_files', []), list) else ''}`",
+            f"- detected_project_stack: `{diagnostics.get('detected_project_stack')}`",
+            f"- detected_js_project: `{diagnostics.get('detected_js_project')}`",
+            f"- detected_node_test: `{diagnostics.get('detected_node_test')}`",
+            f"- detected_removed_public_symbols: `{', '.join(str(item) for item in diagnostics.get('detected_removed_public_symbols', [])) if isinstance(diagnostics.get('detected_removed_public_symbols', []), list) else ''}`",
+            f"- detected_docs_language_mismatch: `{diagnostics.get('detected_docs_language_mismatch')}`",
+            f"- detected_readme_title_change: `{diagnostics.get('detected_readme_title_change')}`",
+            f"- final_policy_reason: `{diagnostics.get('final_policy_reason')}`",
+        ]
+    )
+
+
 def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> str:
     budget = payload.get("budget", {})
     commands_run = payload.get("commands_run", [])
@@ -549,6 +571,8 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
             lines.append(f"- Repair targets: `{', '.join(str(item) for item in repair_targets)}`")
         if patch_diff.get("repair_error"):
             lines.append(f"- Repair error: `{patch_diff.get('repair_error')}`")
+
+    _append_policy_diagnostics(lines, patch_diff)
 
     if patch_diff.get("attempted", False) and patch_diff.get("plan_consistent") is not None:
         lines.extend(

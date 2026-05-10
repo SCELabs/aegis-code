@@ -107,7 +107,7 @@ def _append_source_conflict_error(
         except Exception:
             target_text = ""
         node_test_source = ("node:test" in source_text) or ("node:test" in target_text)
-        if node_test_source and ("describe(" in appended or "expect(" in appended):
+        if node_test_source and ("describe(" in appended or "expect(" in appended or "beforeEach(" in appended):
             return "append_source_conflict"
         if re.search(r"\bslugify\b", appended, flags=re.IGNORECASE) and re.search(r"\bslugify\b", source_text, flags=re.IGNORECASE) is None:
             return "append_source_conflict"
@@ -303,4 +303,3 @@ def _prioritize_patch_error(
         return current_error
     best = sorted(candidates, key=lambda item: priority.get(str(item), 50))[0]
     return str(best)
-
