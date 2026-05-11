@@ -93,6 +93,7 @@ def _append_policy_diagnostics(lines: list[str], patch_diff: dict[str, Any]) -> 
             f"- detected_project_stack: `{diagnostics.get('detected_project_stack')}`",
             f"- detected_js_project: `{diagnostics.get('detected_js_project')}`",
             f"- detected_node_test: `{diagnostics.get('detected_node_test')}`",
+            f"- detected_additive_task: `{diagnostics.get('detected_additive_task')}`",
             f"- detected_removed_public_symbols: `{', '.join(str(item) for item in diagnostics.get('detected_removed_public_symbols', [])) if isinstance(diagnostics.get('detected_removed_public_symbols', []), list) else ''}`",
             f"- detected_docs_language_mismatch: `{diagnostics.get('detected_docs_language_mismatch')}`",
             f"- detected_readme_title_change: `{diagnostics.get('detected_readme_title_change')}`",

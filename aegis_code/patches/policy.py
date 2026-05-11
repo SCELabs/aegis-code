@@ -255,6 +255,8 @@ def hard_invalid_content_evaluate(
     task_text: str,
     cwd: Path | None = None,
 ) -> dict[str, Any]:
+    # `test_task` here means tests-only generation scope, not "task mentions tests".
+    tests_only_task = bool(test_task)
     diagnostics: dict[str, Any] = {
         "policy_checked": False,
         "policy_input_files": [],
@@ -298,7 +300,7 @@ def hard_invalid_content_evaluate(
             diagnostics["final_policy_reason"] = "placeholder_content"
             return diagnostics
 
-    if not test_task:
+    if not tests_only_task:
         readme_title_changed = _readme_title_changed(text) and not _task_requests_readme_title_change(task_text)
         diagnostics["detected_readme_title_change"] = bool(readme_title_changed)
         if _todo_contract_incoherent(text, task_text):

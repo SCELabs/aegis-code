@@ -1891,7 +1891,7 @@ def build_run_payload(
         sll_pre_call = run_sll_analysis(str(options.task or ""))
         sll_risk = classify_sll_risk(sll_pre_call)
         task_type = str(patch_plan.get("task_type", "general") or "general")
-        test_task = task_type == "test_generation" or is_test_generation_task(options.task)
+        test_task = task_type == "test_generation"
         impl_with_tests_task = task_type in {"implementation_with_tests", "feature_implementation"}
         docs_task = task_type == "docs_task"
         if impl_with_tests_task:

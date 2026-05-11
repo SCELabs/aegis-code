@@ -504,6 +504,13 @@ def test_mixed_feature_and_readme_task_classifies_as_feature_implementation() ->
     )
 
 
+def test_add_function_with_tests_and_readme_classifies_as_implementation_with_tests() -> None:
+    task = "add deleteNote(notes, index), tests for deleting a note, and README usage example"
+    assert classify_task_type(task) == "implementation_with_tests"
+    assert classify_task_type(task) != "docs_task"
+    assert classify_task_type(task) != "test_generation"
+
+
 def test_fastapi_endpoint_task_plan_uses_feature_implementation(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",

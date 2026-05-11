@@ -913,6 +913,7 @@ def test_report_renders_policy_diagnostics_section(tmp_path: Path) -> None:
                 "detected_project_stack": "python_pytest",
                 "detected_js_project": False,
                 "detected_node_test": False,
+                "detected_additive_task": True,
                 "detected_removed_public_symbols": [],
                 "detected_docs_language_mismatch": False,
                 "detected_readme_title_change": False,
@@ -931,3 +932,4 @@ def test_report_renders_policy_diagnostics_section(tmp_path: Path) -> None:
     assert "```text" in content
     assert "diff --git a/app/main.py b/app/main.py" in content
     assert "detected_project_stack: `python_pytest`" in content
+    assert "detected_additive_task: `True`" in content

@@ -1985,12 +1985,7 @@ def test_multi_file_feature_bad_node_diff_is_blocked_by_policy(monkeypatch, tmp_
         client=_CapturingClient(),
     )
     assert payload["patch_diff"]["status"] == "invalid"
-    assert payload["patch_diff"]["error"] in {
-        "destructive_public_api_rewrite",
-        "ecosystem_test_framework_mismatch",
-        "docs_language_mismatch",
-        "readme_title_changed",
-    }
+    assert payload["patch_diff"]["error"] == "destructive_public_api_rewrite"
     diagnostics = payload["patch_diff"].get("policy_diagnostics")
     assert isinstance(diagnostics, dict)
     assert diagnostics.get("policy_checked") is True
@@ -1999,12 +1994,13 @@ def test_multi_file_feature_bad_node_diff_is_blocked_by_policy(monkeypatch, tmp_
     assert "diff --git a/src/notes.js b/src/notes.js" in preview
     assert diagnostics.get("detected_js_project") is True
     assert diagnostics.get("detected_node_test") is True
+    assert diagnostics.get("detected_additive_task") is True
     assert diagnostics.get("detected_docs_language_mismatch") is True
     assert diagnostics.get("detected_readme_title_change") is True
     removed_symbols = diagnostics.get("detected_removed_public_symbols", [])
     assert "listNotes" in removed_symbols
     assert "completeNote" in removed_symbols
-    assert diagnostics.get("final_policy_reason") == payload["patch_diff"]["error"]
+    assert diagnostics.get("final_policy_reason") == "destructive_public_api_rewrite"
     assert isinstance(diagnostics.get("policy_input_files"), list)
     assert "src/notes.js" in diagnostics.get("policy_input_files", [])
     assert "tests/notes.test.js" in diagnostics.get("policy_input_files", [])

@@ -1,118 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
-
-def _has_implementation_intent(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    impl_phrases = (
-        "fix",
-        "update",
-        "change",
-        "modify",
-        "add a module",
-        "create a module",
-        "add a helpers module",
-        "add helpers module",
-        "add helper",
-        "create helper",
-        "add function",
-        "create function",
-        "implement",
-        "helpers module",
-    )
-    return any(phrase in lowered for phrase in impl_phrases)
-
-
-def _has_feature_implementation_intent(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    feature_phrases = (
-        "add endpoint",
-        "add api route",
-        "api route",
-        "add route",
-        "post /",
-        "get /",
-        "put /",
-        "delete /",
-        "add feature",
-        "add handler",
-        "implement handler",
-        "add schema",
-        "implement schema",
-        "request body validation",
-        "body validation",
-        "payload validation",
-    )
-    if any(phrase in lowered for phrase in feature_phrases):
-        return True
-    if "implement" in lowered and any(token in lowered for token in ("endpoint", "route", "handler", "schema", "validation", "api")):
-        return True
-    return False
-
-
-def _has_test_intent(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    return any(phrase in lowered for phrase in ("test", "tests", "coverage"))
-
-
-def _is_explicit_tests_only_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    return any(
-        phrase in lowered
-        for phrase in ("tests only", "test only", "write tests only", "do not modify source files", "do not modify source")
-    )
-
-
-def _is_docs_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    return any(
-        phrase in lowered
-        for phrase in ("readme", "docs", "documentation", "usage examples", "setup instructions")
-    )
-
-
-def _classify_task_type(task: str) -> str:
-    lowered = str(task or "").lower().strip()
-    if not lowered:
-        return "general"
-    if _is_explicit_tests_only_task(lowered):
-        return "test_generation"
-    if _has_feature_implementation_intent(lowered):
-        return "feature_implementation"
-    if _is_docs_task(lowered):
-        return "docs_task"
-    if _has_implementation_intent(lowered) and _has_test_intent(lowered):
-        return "implementation_with_tests"
-    if _is_test_generation_task(lowered):
-        return "test_generation"
-    return "general"
-
-
-def _is_test_generation_task(task: str) -> bool:
-    lowered = str(task or "").lower().strip()
-    if not lowered:
-        return False
-    if _has_implementation_intent(lowered) and _has_test_intent(lowered) and not _is_explicit_tests_only_task(lowered):
-        return False
-    verification_only = ("run tests", "execute tests", "check tests")
-    if any(phrase in lowered for phrase in verification_only):
-        return False
-    if _is_explicit_tests_only_task(lowered):
-        return True
-    generation_phrases = (
-        "add test",
-        "add tests",
-        "write test",
-        "write tests",
-        "generate test",
-        "generate tests",
-        "test for",
-        "tests for",
-        "coverage",
-        "verify behavior",
-        "assert",
-    )
-    return any(phrase in lowered for phrase in generation_phrases)
+from aegis_code.runtime_components.task_classification import classify_task_type
 
 
 def _pick_target_file(
@@ -133,7 +22,9 @@ def generate_patch_plan(
     aegis_decision: dict[str, Any],
     sll_analysis: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    task_type = _classify_task_type(task)
+    task_type = classify_task_type(task)
+    if failures and task_type == "vague_task":
+        task_type = "general"
     test_task = task_type == "test_generation"
     if not failures:
         return {

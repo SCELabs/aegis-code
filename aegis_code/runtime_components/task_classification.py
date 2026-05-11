@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 
 
 def is_constructive_task(task: str) -> bool:
@@ -27,9 +28,6 @@ def _has_implementation_intent(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     impl_phrases = (
         "fix",
-        "update",
-        "change",
-        "modify",
         "add a module",
         "create a module",
         "add a helpers module",
@@ -49,6 +47,11 @@ def _has_implementation_intent(task: str) -> bool:
         "validation",
     )
     return any(phrase in lowered for phrase in impl_phrases)
+
+
+def _has_symbol_add_intent(task: str) -> bool:
+    lowered = str(task or "").lower().strip()
+    return bool(re.search(r"\b(?:add|create|implement)\s+[a-z_][a-z0-9_]*\s*\(", lowered))
 
 
 def _has_test_intent(task: str) -> bool:
@@ -133,16 +136,22 @@ def classify_task_type(task: str) -> str:
     lowered = str(task or "").lower().strip()
     if not lowered:
         return "general"
+    source_intent = (
+        _has_implementation_intent(lowered)
+        or _has_symbol_add_intent(lowered)
+        or _has_feature_implementation_intent(lowered)
+    )
+    test_intent = _has_test_intent(lowered)
     if _is_vague_feature_task(lowered):
         return "vague_task"
     if _is_explicit_tests_only_task(lowered):
         return "test_generation"
     if _has_feature_implementation_intent(lowered):
         return "feature_implementation"
-    if _is_docs_task(lowered):
-        return "docs_task"
-    if _has_implementation_intent(lowered) and _has_test_intent(lowered):
+    if source_intent and test_intent:
         return "implementation_with_tests"
+    if _is_docs_task(lowered) and not source_intent and not test_intent:
+        return "docs_task"
     if is_test_generation_task(lowered):
         return "test_generation"
     return "general"
@@ -152,7 +161,12 @@ def is_test_generation_task(task: str) -> bool:
     lowered = str(task or "").lower().strip()
     if not lowered:
         return False
-    if _has_implementation_intent(lowered) and _has_test_intent(lowered) and not _is_explicit_tests_only_task(lowered):
+    source_intent = (
+        _has_implementation_intent(lowered)
+        or _has_symbol_add_intent(lowered)
+        or _has_feature_implementation_intent(lowered)
+    )
+    if source_intent and _has_test_intent(lowered) and not _is_explicit_tests_only_task(lowered):
         return False
     verification_only = ("run tests", "execute tests", "check tests")
     if any(phrase in lowered for phrase in verification_only):
@@ -174,4 +188,3 @@ def is_test_generation_task(task: str) -> bool:
         "assert",
     )
     return any(phrase in lowered for phrase in generation_phrases)
-
