@@ -38,6 +38,12 @@ def _task_implies_test_fix_or_validation(options: TaskOptions) -> bool:
     return any(p in task for p in phrases)
 
 
+def _is_explicit_patch_operation(options: TaskOptions) -> bool:
+    command = str(getattr(options, "command", "") or "").strip().lower()
+    operation = str(getattr(options, "patch_operation", "") or "").strip().lower()
+    return command == "patch" and bool(operation)
+
+
 def _latest_payload(cwd: Path) -> dict[str, Any] | None:
     latest = project_paths(cwd)["latest_json"]
     if not latest.exists():
@@ -108,7 +114,7 @@ def should_skip_provider(options: TaskOptions, cwd: Path) -> dict[str, Any]:
                 "action": "Inspect/apply existing diff instead of regenerating",
             }
 
-    if _has_repeated_failure_signature(cwd):
+    if _has_repeated_failure_signature(cwd) and not _is_explicit_patch_operation(options):
         return {
             "skip": True,
             "reason": "repeated_failure",

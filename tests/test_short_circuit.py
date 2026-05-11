@@ -81,6 +81,23 @@ def test_short_circuit_repeated_failure_does_not_skip_without_available_proposal
     assert decision["reason"] == "none"
 
 
+def test_short_circuit_repeated_failure_does_not_skip_explicit_patch_operation(tmp_path: Path) -> None:
+    ensure_project_files(cwd=tmp_path, force=True)
+    payload = {
+        "status": "completed_tests_failed",
+        "patch_diff": {"attempted": True, "available": True},
+        "initial_failures": {"failure_count": 1, "failed_tests": [{"test_name": "tests/test_x.py::test_a", "file": "tests/test_x.py", "error": "AssertionError: x"}]},
+        "final_failures": {"failure_count": 1, "failed_tests": [{"test_name": "tests/test_x.py::test_a", "file": "tests/test_x.py", "error": "AssertionError: x"}]},
+    }
+    _write_latest(tmp_path, payload)
+    decision = should_skip_provider(
+        TaskOptions(task="add hasNotes(notes)", propose_patch=True, command="patch", patch_operation="append"),
+        tmp_path,
+    )
+    assert decision["skip"] is False
+    assert decision["reason"] == "none"
+
+
 def test_short_circuit_budget_exceeded_skips_provider(tmp_path: Path) -> None:
     ensure_project_files(cwd=tmp_path, force=True)
     set_budget(0.0, cwd=tmp_path)
