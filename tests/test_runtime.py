@@ -6,7 +6,7 @@ from pathlib import Path
 
 from aegis_code.models import AegisDecision, CommandResult
 from aegis_code.patches.apply_check import check_patch_text
-from aegis_code.patches.policy import hard_invalid_content_evaluate
+from aegis_code.patches.policy import _is_additive_task, _js_exported_symbol_names, hard_invalid_content_evaluate
 from aegis_code.report import render_markdown_report
 from aegis_code.runtime import TaskOptions, _compute_apply_safety, build_run_payload, run_task
 from tests.helpers import (
@@ -2134,3 +2134,134 @@ def test_real_node_unified_diff_policy_detectors_surface_diagnostics(tmp_path: P
         "docs_language_mismatch",
         "readme_title_changed",
     }
+
+
+def test_add_delete_note_task_detects_removed_js_exports_as_destructive(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"node-cli-notes","type":"module","scripts":{"test":"node --test"}}', encoding="utf-8")
+    diff_text = (
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,6 +1,5 @@\n"
+        " export function addNote(notes, text) { return [...notes, text]; }\n"
+        "-export function listNotes(notes) { return notes; }\n"
+        "-export function completeNote(notes, index) { return notes; }\n"
+        "+export function deleteNote(notes, index) { return notes.filter((_, i) => i !== index); }\n"
+    )
+    validation = {
+        "valid": True,
+        "files": [{"new_path": "src/notes.js", "old_path": "src/notes.js", "additions": 1, "deletions": 2}],
+        "summary": {"additions": 1, "deletions": 2},
+    }
+    diagnostics = hard_invalid_content_evaluate(
+        diff_text=diff_text,
+        validation=validation,
+        test_task=False,
+        task_text="add deleteNote(notes, index), tests and README usage",
+        cwd=tmp_path,
+    )
+    removed = diagnostics.get("detected_removed_public_symbols", [])
+    assert "listNotes" in removed
+    assert "completeNote" in removed
+    assert diagnostics.get("final_policy_reason") == "destructive_public_api_rewrite"
+
+
+def test_explicit_remove_task_allows_js_export_removal(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"node-cli-notes","type":"module"}', encoding="utf-8")
+    diff_text = (
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,3 +1,2 @@\n"
+        " export function addNote(notes, text) { return [...notes, text]; }\n"
+        "-export function listNotes(notes) { return notes; }\n"
+        " export function completeNote(notes, index) { return notes; }\n"
+    )
+    validation = {
+        "valid": True,
+        "files": [{"new_path": "src/notes.js", "old_path": "src/notes.js", "additions": 0, "deletions": 1}],
+        "summary": {"additions": 0, "deletions": 1},
+    }
+    diagnostics = hard_invalid_content_evaluate(
+        diff_text=diff_text,
+        validation=validation,
+        test_task=False,
+        task_text="remove listNotes",
+        cwd=tmp_path,
+    )
+    assert diagnostics.get("final_policy_reason") is None
+
+
+def test_js_exported_symbol_names_detects_removed_function_exports() -> None:
+    symbols = _js_exported_symbol_names(
+        [
+            "export function listNotes(notes) {",
+            "export function completeNote(notes, index) {",
+        ]
+    )
+    assert symbols == {"listNotes", "completeNote"}
+
+
+def test_policy_evaluator_minimal_js_removed_exports_diff_detected(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"node-cli-notes","type":"module"}', encoding="utf-8")
+    diff_text = (
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,3 +1,2 @@\n"
+        "-export function listNotes(notes) {\n"
+        "-export function completeNote(notes, index) {\n"
+        "+export function deleteNote(notes, index) {\n"
+    )
+    diagnostics = hard_invalid_content_evaluate(
+        diff_text=diff_text,
+        validation={
+            "valid": True,
+            "files": [{"new_path": "src/notes.js", "old_path": "src/notes.js", "additions": 1, "deletions": 2}],
+            "summary": {"additions": 1, "deletions": 2},
+        },
+        test_task=False,
+        task_text="add deleteNote(notes, index)",
+        cwd=tmp_path,
+    )
+    removed = diagnostics.get("detected_removed_public_symbols", [])
+    assert "listNotes" in removed
+    assert "completeNote" in removed
+    assert diagnostics.get("final_policy_reason") == "destructive_public_api_rewrite"
+
+
+def test_is_additive_task_for_real_delete_note_addition_text() -> None:
+    task = "add deleteNote(notes, index), tests for deleting a note, and README usage example"
+    assert _is_additive_task(task) is True
+
+
+def test_runtime_path_real_delete_note_task_sets_additive_and_detects_removed_exports(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"node-cli-notes","type":"module","scripts":{"test":"node --test"}}', encoding="utf-8")
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "notes.test.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+    diff_text = (
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,6 +1,5 @@\n"
+        " export function addNote(notes, text) { return [...notes, text]; }\n"
+        "-export function listNotes(notes) { return notes; }\n"
+        "-export function completeNote(notes, index) { return notes; }\n"
+        "+export function deleteNote(notes, index) { return notes.filter((_, i) => i !== index); }\n"
+    )
+    diagnostics = hard_invalid_content_evaluate(
+        diff_text=diff_text,
+        validation={
+            "valid": True,
+            "files": [{"new_path": "src/notes.js", "old_path": "src/notes.js", "additions": 1, "deletions": 2}],
+            "summary": {"additions": 1, "deletions": 2},
+        },
+        test_task=False,
+        task_text="add deleteNote(notes, index), tests for deleting a note, and README usage example",
+        cwd=tmp_path,
+    )
+    assert diagnostics.get("detected_additive_task") is True
+    removed = diagnostics.get("detected_removed_public_symbols", [])
+    assert "listNotes" in removed
+    assert "completeNote" in removed
+    assert diagnostics.get("final_policy_reason") == "destructive_public_api_rewrite"

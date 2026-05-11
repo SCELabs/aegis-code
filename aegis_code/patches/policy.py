@@ -113,15 +113,19 @@ def _todo_contract_incoherent(diff_text: str, task_text: str) -> bool:
 def _task_requests_destructive_change(task_text: str) -> bool:
     lowered = str(task_text or "").lower()
     patterns = (
-        r"\bremove\s+(?:function|class|method|export|api|route|file|files|section|summary|title)\b",
-        r"\bdelete\s+(?:function|class|method|export|api|route|file|files|section|summary|title)\b",
+        r"\bremove\s+(?:existing\s+)?(?:function|class|method|export|api|route|file|files|section|summary|title|module)\b",
+        r"\bdelete\s+(?:existing\s+)?(?:function|class|method|export|api|route|file|files|section|summary|title|module)\b",
+        r"\bremove\s+[a-z_][a-z0-9_]*\b",
+        r"\bdelete\s+[a-z_][a-z0-9_]*\b",
         r"\bdrop\s+(?:function|class|method|export|api|route|file|files|section)\b",
-        r"\brewrite\b",
-        r"\breplace\b",
+        r"\brewrite\s+(?:file|module|api|section|readme|summary|title)\b",
+        r"\breplace\s+(?:file|module|api|section|readme|summary|title)\b",
         r"\brename\b",
         r"\brefactor\b",
         r"\bdeprecate\b",
     )
+    if re.search(r"\badd\s+delete[a-z_0-9]*\s*\(", lowered):
+        return False
     return any(re.search(pat, lowered) for pat in patterns)
 
 
@@ -256,6 +260,8 @@ def hard_invalid_content_evaluate(
         "policy_input_files": [],
         "policy_input_length": 0,
         "policy_input_preview": "",
+        "detected_additive_task": False,
+        "detected_destructive_intent": False,
         "detected_project_stack": None,
         "detected_js_project": False,
         "detected_node_test": False,
@@ -300,6 +306,8 @@ def hard_invalid_content_evaluate(
             return diagnostics
         is_additive = _is_additive_task(task_text)
         destructive_requested = _task_requests_destructive_change(task_text)
+        diagnostics["detected_additive_task"] = bool(is_additive)
+        diagnostics["detected_destructive_intent"] = bool(destructive_requested)
         removed_public_symbols: set[str] = set()
         test_framework_mismatch = False
         docs_language_mismatch = False

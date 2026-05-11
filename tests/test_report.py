@@ -908,6 +908,8 @@ def test_report_renders_policy_diagnostics_section(tmp_path: Path) -> None:
             "policy_diagnostics": {
                 "policy_checked": True,
                 "policy_input_files": ["app/main.py"],
+                "policy_input_length": 321,
+                "policy_input_preview": "diff --git a/app/main.py b/app/main.py\n+def helper():\n+    return 1",
                 "detected_project_stack": "python_pytest",
                 "detected_js_project": False,
                 "detected_node_test": False,
@@ -924,4 +926,8 @@ def test_report_renders_policy_diagnostics_section(tmp_path: Path) -> None:
     content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
     assert "## Policy Diagnostics" in content
     assert "policy_checked: `True`" in content
+    assert "policy_input_length: `321`" in content
+    assert "policy_input_preview:" in content
+    assert "```text" in content
+    assert "diff --git a/app/main.py b/app/main.py" in content
     assert "detected_project_stack: `python_pytest`" in content

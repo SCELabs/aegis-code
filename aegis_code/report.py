@@ -89,6 +89,7 @@ def _append_policy_diagnostics(lines: list[str], patch_diff: dict[str, Any]) -> 
             "",
             f"- policy_checked: `{diagnostics.get('policy_checked')}`",
             f"- policy_input_files: `{', '.join(str(item) for item in diagnostics.get('policy_input_files', [])) if isinstance(diagnostics.get('policy_input_files', []), list) else ''}`",
+            f"- policy_input_length: `{diagnostics.get('policy_input_length')}`",
             f"- detected_project_stack: `{diagnostics.get('detected_project_stack')}`",
             f"- detected_js_project: `{diagnostics.get('detected_js_project')}`",
             f"- detected_node_test: `{diagnostics.get('detected_node_test')}`",
@@ -98,6 +99,16 @@ def _append_policy_diagnostics(lines: list[str], patch_diff: dict[str, Any]) -> 
             f"- final_policy_reason: `{diagnostics.get('final_policy_reason')}`",
         ]
     )
+    preview = str(diagnostics.get("policy_input_preview", "") or "")
+    if preview:
+        lines.extend(
+            [
+                "- policy_input_preview:",
+                "```text",
+                preview,
+                "```",
+            ]
+        )
 
 
 def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> str:
