@@ -949,6 +949,46 @@ def test_patch_command_append_threads_operation_into_scope_and_output(tmp_path: 
     assert scope["allow_new_files"] is False
 
 
+def test_patch_parser_path_sets_command_and_operation_for_explicit_append(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "test_cli.py").write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["command"] = getattr(options, "command", None)
+        captured["operation"] = getattr(options, "patch_operation", None)
+        return {
+            "task": "add tests for todo CLI",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "append_output_invalid"},
+            "patch_operation": {"operation": "append"},
+            "structured_patch": {"status": "failed"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "python -m pytest -q"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "tests/test_cli.py", "--operation", "append", "add tests for todo CLI"])
+    assert exit_code == 1
+    assert captured["command"] == "patch"
+    assert captured["operation"] == "append"
+
+
 def test_patch_command_does_not_auto_select_append_for_additive_single_existing_target(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)

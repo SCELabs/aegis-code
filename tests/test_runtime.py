@@ -40,6 +40,12 @@ class _CapturingClient:
         return self.decision
 
 
+def _write_latest_runtime(cwd: Path, payload: dict[str, object]) -> None:
+    runs = cwd / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    (runs / "latest.json").write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_runtime_calls_aegis_after_observation(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
@@ -75,6 +81,81 @@ def test_runtime_calls_aegis_after_observation(monkeypatch, tmp_path: Path) -> N
     assert "ungrounded_output" in client.last_symptoms
     for key in ("attempted", "available", "provider", "model", "path", "error", "preview"):
         assert key in payload["patch_diff"]
+
+
+def test_runtime_explicit_append_not_skipped_by_repeated_failure(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    _write_latest_runtime(
+        tmp_path,
+        {
+            "status": "completed_tests_failed",
+            "patch_diff": {"attempted": True, "available": True},
+            "initial_failures": {
+                "failure_count": 1,
+                "failed_tests": [
+                    {
+                        "test_name": "tests/test_x.py::test_a",
+                        "file": "tests/test_x.py",
+                        "error": "AssertionError: x",
+                    }
+                ],
+            },
+            "final_failures": {
+                "failure_count": 1,
+                "failed_tests": [
+                    {
+                        "test_name": "tests/test_x.py::test_a",
+                        "file": "tests/test_x.py",
+                        "error": "AssertionError: x",
+                    }
+                ],
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": "not-json",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add tests for todo CLI",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["tests/test_cli.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload.get("status") != "skipped_provider"
+    assert payload.get("skip_reason") != "repeated_failure"
+    assert payload["patch_diff"]["attempted"] is True
+    assert payload["patch_diff"]["error"] == "append_output_invalid"
 
 
 def test_runtime_sll_active_failure_path_maps_expected_symptoms_and_metadata(
