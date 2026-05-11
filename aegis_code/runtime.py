@@ -57,7 +57,7 @@ from aegis_code.runtime_components import task_classification as _task_classific
 from aegis_code.runtime_components import plan_consistency as _plan_consistency
 from aegis_code.runtime_components import semantic_guards as _semantic_guards
 from aegis_code.runtime_components import append_context as _append_context
-from aegis_code.runtime_components import append_pipeline as _append_pipeline
+from aegis_code.operations import append as _append_pipeline
 from aegis_code.runtime_components import feature_plan as _feature_plan
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
