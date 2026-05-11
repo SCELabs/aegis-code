@@ -1839,7 +1839,41 @@ def _looks_additive_task(task: str) -> bool:
         "add examples",
         "append",
     )
-    return any(token in lowered for token in hints)
+    if any(token in lowered for token in hints):
+        return True
+    if re.search(r"\b(?:add|create|implement)\s+[a-z_][a-z0-9_]*\s*\(", lowered):
+        return True
+    return False
+
+
+def _has_destructive_wording(task: str) -> bool:
+    lowered = str(task or "").strip().lower()
+    if not lowered:
+        return False
+    patterns = (
+        r"\bremove\b",
+        r"\bdelete\b",
+        r"\bdrop\b",
+        r"\brewrite\b",
+        r"\breplace\b",
+        r"\brename\b",
+        r"\bdeprecate\b",
+    )
+    return any(re.search(pat, lowered) for pat in patterns)
+
+
+def _should_auto_append_operation(*, task: str, files: Sequence[str], cwd: Path) -> bool:
+    normalized = [str(item).replace("\\", "/").strip() for item in files if str(item).strip()]
+    if len(normalized) != 1:
+        return False
+    target = normalized[0]
+    if not (cwd / target).exists():
+        return False
+    if not _looks_additive_task(task):
+        return False
+    if _has_destructive_wording(task):
+        return False
+    return True
 
 
 def _looks_additive_docs_task(task: str, files: Sequence[str]) -> bool:
@@ -2195,12 +2229,13 @@ def handle_patch(argv: Sequence[str]) -> int:
     if not args.files:
         print("Patch blocked: explicit scope required. Use --file at least once.")
         return 2
+    effective_operation = args.operation
     scope_contract = build_scope_contract_from_cli(
         files=[str(item) for item in args.files],
         allow_create=bool(args.allow_create),
         max_files=args.max_files,
         cwd=cwd.resolve(),
-        operation=args.operation,
+        operation=effective_operation,
     )
     options = TaskOptions(
         task=args.task,
@@ -2218,7 +2253,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         provider_timeout_seconds=args.provider_timeout,
         command="patch",
         scope_contract=asdict(scope_contract),
-        patch_operation=args.operation,
+        patch_operation=effective_operation,
     )
     payload = run_task(options=options, cwd=cwd)
     patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
@@ -2227,12 +2262,12 @@ def handle_patch(argv: Sequence[str]) -> int:
     if str(patch_operation.get("operation", "")).strip():
         print(f"Patch operation: {patch_operation.get('operation')}")
     normalized_files = [str(item).replace("\\", "/") for item in args.files]
-    if not args.operation and args.files and _looks_additive_docs_task(args.task, normalized_files):
+    if not effective_operation and args.files and _looks_additive_docs_task(args.task, normalized_files):
         print("")
         print("This looks like an additive docs task.")
         print("For controlled additive edits, rerun with:")
         print("--operation append")
-    elif not args.operation and args.files and _looks_additive_task(args.task):
+    elif not effective_operation and args.files and _looks_additive_task(args.task):
         print("")
         print("This task appears additive.")
         print("For safer patch generation consider:")

@@ -2261,3 +2261,81 @@ def test_runtime_path_real_delete_note_task_sets_additive_and_detects_removed_ex
     assert "listNotes" in removed
     assert "completeNote" in removed
     assert diagnostics.get("final_policy_reason") == "destructive_public_api_rewrite"
+
+
+def test_additive_destructive_public_api_rewrite_triggers_one_corrective_regeneration(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"name":"node-cli-notes","type":"module","scripts":{"test":"node --test"}}', encoding="utf-8")
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text(
+        "export function addNote(notes, text) { return [...notes, text]; }\n"
+        "export function listNotes(notes) { return notes; }\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    calls = {"count": 0}
+
+    def _provider(**_kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return {
+                "available": True,
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "diff": (
+                    "diff --git a/src/notes.js b/src/notes.js\n"
+                    "--- a/src/notes.js\n"
+                    "+++ b/src/notes.js\n"
+                    "@@ -1,2 +1,4 @@\n"
+                    "-export function addNote(notes, text) { return [...notes, text]; }\n"
+                    "-export function listNotes(notes) { return notes; }\n"
+                    "+export function addNote(notes, text) { return [{ text }]; }\n"
+                    "+export function hasNotes(notes) { return notes.length > 0; }\n"
+                ),
+                "error": None,
+            }
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "diff": (
+                "diff --git a/src/notes.js b/src/notes.js\n"
+                "--- a/src/notes.js\n"
+                "+++ b/src/notes.js\n"
+                "@@ -1,2 +1,6 @@\n"
+                " export function addNote(notes, text) { return [...notes, text]; }\n"
+                " export function listNotes(notes) { return notes; }\n"
+                "+\n"
+                "+export function hasNotes(notes) {\n"
+                "+  return notes.length > 0;\n"
+                "+}\n"
+            ),
+            "error": None,
+        }
+
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", _provider)
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add hasNotes(notes)",
+            propose_patch=True,
+            command="patch",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert calls["count"] == 2
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["error"] is None
+    assert payload["patch_diff"]["regeneration_attempted"] is True

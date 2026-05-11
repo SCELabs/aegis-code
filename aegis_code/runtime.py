@@ -1733,6 +1733,18 @@ def build_run_payload(
         patch_plan["max_files"] = scope_max_files
         patch_plan["allow_new_files"] = scope_allow_new
         patch_plan["allowed_operations"] = scope_ops
+        if task_driven_patch_proposal and scope_targets:
+            patch_plan["proposed_changes"] = [
+                {
+                    "file": path,
+                    "change_type": "modify" if (cwd or Path.cwd()).resolve().joinpath(path).exists() else "create",
+                    "description": "Apply requested task changes to explicit target.",
+                    "reason": "explicit_scope_target",
+                }
+                for path in scope_targets
+            ]
+            if not patch_plan.get("target_file"):
+                patch_plan["target_file"] = scope_targets[0]
         structured_patch["allowed_targets"] = scope_targets
         structured_patch["missing_targets"] = scope_missing
         block_reason = str(explicit_scope.get("block_reason", "") or "").strip() or None
@@ -2874,7 +2886,12 @@ def build_run_payload(
             patch_diff["initial_invalid_reason"] = patch_diff.get("error")
 
         hard_regen_reason = str(patch_diff.get("error") or "")
-        hard_regen_allowed = hard_regen_reason in {"excessive_diff_size", "syntactic_invalid", "plan_inconsistent"}
+        hard_policy = patch_diff.get("policy_diagnostics", {}) if isinstance(patch_diff.get("policy_diagnostics"), dict) else {}
+        additive_destructive_rewrite = (
+            hard_regen_reason == "destructive_public_api_rewrite"
+            and bool(hard_policy.get("detected_additive_task", False))
+        )
+        hard_regen_allowed = hard_regen_reason in {"excessive_diff_size", "syntactic_invalid", "plan_inconsistent"} or additive_destructive_rewrite
         if (
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
@@ -2910,6 +2927,14 @@ def build_run_payload(
                 "Ensure patch aligns with patch plan targets.",
                 "Include every planned target file in the diff.",
             ]
+            if additive_destructive_rewrite:
+                regen_constraints.extend(
+                    [
+                        "Additive task safety: preserve all existing exports and public functions.",
+                        "Do not remove, rename, or rewrite unrelated existing code.",
+                        "Only add the requested code and minimal integration lines.",
+                    ]
+                )
             if planned_targets and not explicit_scope_active:
                 regen_plan["allowed_targets"] = planned_targets
 

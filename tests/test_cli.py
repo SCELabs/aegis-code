@@ -949,13 +949,62 @@ def test_patch_command_append_threads_operation_into_scope_and_output(tmp_path: 
     assert scope["allow_new_files"] is False
 
 
+def test_patch_command_does_not_auto_select_append_for_additive_single_existing_target(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text("export function addNote() {}\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_run_task(**kwargs: object):
+        options = kwargs["options"]
+        captured["scope"] = getattr(options, "scope_contract", None)
+        captured["operation"] = getattr(options, "patch_operation", None)
+        return {
+            "task": "add hasNotes(notes)",
+            "mode": "balanced",
+            "dry_run": False,
+            "status": "completed_tests_failed",
+            "failures": {"failure_count": 1},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {"proposed_changes": []},
+            "patch_diff": {"attempted": True, "available": True, "status": "generated", "path": ".aegis/runs/latest.diff"},
+            "patch_operation": {},
+            "structured_patch": {"status": "accepted"},
+            "patch_quality": None,
+            "sll_analysis": {"available": False},
+            "verification": {"available": True, "test_command": "npm test"},
+            "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+            "budget_state": {"available": False, "remaining_estimate": None},
+            "project_context": {"available": False},
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "disabled"},
+            "selected_model_tier": "mid",
+            "selected_model": "openai:gpt-4.1-mini",
+        }
+
+    monkeypatch.setattr("aegis_code.cli.run_task", _fake_run_task)
+    exit_code = cli.main(["patch", "--file", "src/notes.js", "add hasNotes(notes)"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Patch operation: append" not in out
+    assert captured["operation"] is None
+    scope = captured["scope"]
+    assert isinstance(scope, dict)
+    assert scope["allowed_operations"] == ["replace"]
+    assert "This task appears additive." in out
+    assert "For safer patch generation consider:" in out
+    assert "--operation append" in out
+
+
 def test_patch_command_shows_additive_append_hint_without_operation(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
     (tmp_path / "tests" / "test_cli.py").write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    captured: dict[str, object] = {}
 
     def _fake_run_task(**kwargs: object):
-        _ = kwargs["options"]
+        options = kwargs["options"]
+        captured["operation"] = getattr(options, "patch_operation", None)
         return {
             "task": "add tests for todo CLI",
             "mode": "balanced",
@@ -982,6 +1031,7 @@ def test_patch_command_shows_additive_append_hint_without_operation(tmp_path: Pa
     exit_code = cli.main(["patch", "--file", "tests/test_cli.py", "add tests for todo CLI"])
     out = capsys.readouterr().out
     assert exit_code == 1
+    assert captured["operation"] is None
     assert "This task appears additive." in out
     assert "For safer patch generation consider:" in out
     assert "--operation append" in out

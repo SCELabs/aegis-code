@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from aegis_code.patches.constraints import build_patch_constraints
@@ -39,6 +40,29 @@ def _is_docs_task(task: str, patch_plan: dict[str, Any]) -> bool:
     if saw_doc:
         return True
     return any(token in lowered for token in ("readme", "docs", "documentation"))
+
+
+def _task_requests_destructive_change(task: str) -> bool:
+    lowered = str(task or "").lower()
+    patterns = (
+        r"\bremove\b",
+        r"\bdelete\b",
+        r"\bdrop\b",
+        r"\brewrite\b",
+        r"\breplace\b",
+        r"\brename\b",
+        r"\bdeprecate\b",
+    )
+    return any(re.search(pat, lowered) for pat in patterns)
+
+
+def _is_additive_task(task: str) -> bool:
+    lowered = str(task or "").lower()
+    if not any(token in lowered for token in ("add ", "append ", "new ")):
+        return False
+    if _task_requests_destructive_change(task):
+        return False
+    return True
 
 
 def _strip_provider_prefix(model: str) -> str:
@@ -206,6 +230,23 @@ def build_diff_prompt(
             regen_constraints.append("- Modify README.md.")
         if not any("Do not output explanation" in item for item in regen_constraints):
             regen_constraints.append("- Do not output explanation.")
+    if _is_additive_task(task) and not _is_docs_task(task, patch_plan):
+        test_constraints.extend(
+            [
+                "Additive-change safety guidance:",
+                "- Preserve all existing exports and public functions.",
+                "- Do not remove or rewrite unrelated code.",
+                "- Only add the requested code and minimal wiring needed for it.",
+                "- Keep existing behavior unchanged unless task explicitly requests behavior changes.",
+            ]
+        )
+        regen_constraints.extend(
+            [
+                "- Preserve all existing exports and public functions.",
+                "- Do not rewrite unrelated code.",
+                "- Only add the requested code.",
+            ]
+        )
     allowed_targets = patch_plan.get("allowed_targets", [])
     if isinstance(allowed_targets, list) and allowed_targets:
         test_constraints.extend(
