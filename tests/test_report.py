@@ -747,6 +747,37 @@ def test_report_patch_diagnosis_handles_append_source_conflict(tmp_path: Path) -
     assert "tests/test_placeholder.py" not in content
 
 
+def test_report_patch_diagnosis_handles_invalid_append_operation(tmp_path: Path) -> None:
+    payload = {
+        "task": "add tests",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "repo_scan": {"file_count": 1, "top_level_directories": ["tests"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "append tests", "confidence": 0.7, "proposed_changes": [{"file": "tests/test_cli.py"}]},
+        "patch_operation": {"operation": "append", "source": "cli"},
+        "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "invalid_append_operation"},
+        "patch_quality": None,
+        "status": "completed_tests_failed",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Patch error: `invalid_append_operation`" in content
+    assert "Patch operation: `append`" in content
+
+
 def test_report_invalid_diff_preview_is_compact(tmp_path: Path) -> None:
     runs = tmp_path / ".aegis" / "runs"
     runs.mkdir(parents=True, exist_ok=True)

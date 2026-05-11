@@ -3685,6 +3685,54 @@ def test_append_python_obvious_undefined_name_blocks_as_semantic_suspicious(monk
     )
     assert payload["patch_diff"]["status"] == "blocked"
     assert payload["patch_diff"]["error"] == "append_semantic_suspicious"
+
+
+def test_append_invalid_diff_validation_surfaces_invalid_append_operation(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "tests" / "test_cli.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_old():\n    assert True\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"\\n\\ndef test_more():\\n    assert 2 == 2\\n"}',
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime._validate_append_diff",
+        lambda **_: (False, "invalid_append_operation"),
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="add tests for todo CLI",
+            propose_patch=True,
+            command="patch",
+            patch_operation="append",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["tests/test_cli.py"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["append"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] in {"blocked", "unavailable"}
+    assert payload["patch_diff"]["error"] == "invalid_append_operation"
+    assert payload["patch_diff"]["error"] not in {"repeated_failure", "skipped_provider"}
     assert payload["patch_diff"]["path"] is None
 
 
