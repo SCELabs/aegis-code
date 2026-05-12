@@ -54,3 +54,16 @@ def test_scope_contract_append_operation_requires_append_only(tmp_path: Path) ->
     )
     assert contract.allow_new_files is False
     assert contract.allowed_operations == ["append"]
+
+
+def test_scope_contract_create_file_operation_requires_create_file_mode(tmp_path: Path) -> None:
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=True,
+        max_files=None,
+        cwd=tmp_path,
+        operation="create-file",
+    )
+    assert contract.allow_new_files is True
+    assert contract.allowed_operations == ["create-file"]
+    assert contract.block_reason is None

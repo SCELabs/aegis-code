@@ -47,10 +47,13 @@ def build_scope_contract_from_cli(
     if normalized_operation == "append":
         allow_new_files = False
         allowed_operations = ["append"]
+    elif normalized_operation == "create-file":
+        allow_new_files = bool(allow_create)
+        allowed_operations = ["create-file"]
     else:
         allow_new_files = bool(allow_create)
         allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]
-    block_reason = "requested_target_missing" if missing_targets and not allow_new_files else None
+    block_reason = "requested_target_missing" if (normalized_operation != "create-file" and missing_targets and not allow_new_files) else None
     return ScopeContract(
         source="cli_explicit",
         allowed_targets=normalized,

@@ -58,6 +58,12 @@ from aegis_code.runtime_components import plan_consistency as _plan_consistency
 from aegis_code.runtime_components import semantic_guards as _semantic_guards
 from aegis_code.runtime_components import append_context as _append_context
 from aegis_code.operations import append as _append_pipeline
+from aegis_code.operations import create_file as _create_file_operation
+from aegis_code.operations.errors import (
+    CREATE_FILE_OUTPUT_INVALID,
+    OPERATION_CONTRACT_INVALID,
+    OPERATION_TARGET_EXISTS,
+)
 from aegis_code.runtime_components import feature_plan as _feature_plan
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
@@ -366,6 +372,22 @@ def _validate_append_diff(*, diff_text: str, original_text: str, target_path: st
         target_path=target_path,
         cwd=cwd,
     )
+
+
+def _parse_create_file_provider_response(text: str) -> tuple[bool, str | None, str | None]:
+    return _create_file_operation._parse_create_file_provider_response(text)
+
+
+def _build_create_file_diff(*, target_path: str, new_content: str) -> str:
+    return _create_file_operation._build_create_file_diff(target_path=target_path, new_content=new_content)
+
+
+def _create_file_target_exists(*, cwd: Path, target_path: str) -> bool:
+    return _create_file_operation._target_exists(cwd=cwd, target_path=target_path)
+
+
+def _validate_create_file_diff(*, diff_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
+    return _create_file_operation._validate_create_file_diff(diff_text=diff_text, target_path=target_path, cwd=cwd)
 
 
 def _prioritize_patch_error(
@@ -1801,6 +1823,55 @@ def build_run_payload(
             )
             should_attempt_provider_diff = False
             should_patch_flow = False
+    if requested_operation == "create-file":
+        explicit_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+        patch_plan["proposed_changes"] = [
+            {
+                "file": target,
+                "change_type": "create",
+                "description": "Create new file with requested content.",
+                "reason": "create_file_operation",
+            }
+            for target in explicit_targets
+        ]
+        allow_new = bool(explicit_scope.get("allow_new_files", False)) if isinstance(explicit_scope, dict) else False
+        create_contract_ok = len(explicit_targets) == 1 and allow_new
+        if not create_contract_ok:
+            patch_quality = None
+            remove_latest_diff(cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
+            patch_diff.update(
+                {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "invalid_diff_path": None,
+                    "error": OPERATION_CONTRACT_INVALID,
+                    "preview": "",
+                }
+            )
+            should_attempt_provider_diff = False
+            should_patch_flow = False
+        else:
+            target = explicit_targets[0]
+            if _create_file_target_exists(cwd=(cwd or Path.cwd()), target_path=target):
+                patch_quality = None
+                remove_latest_diff(cwd=cwd)
+                remove_latest_invalid_diff(cwd=cwd)
+                patch_diff.update(
+                    {
+                        "attempted": True,
+                        "available": False,
+                        "status": "blocked",
+                        "path": None,
+                        "invalid_diff_path": None,
+                        "error": OPERATION_TARGET_EXISTS,
+                        "preview": "",
+                    }
+                )
+                should_attempt_provider_diff = False
+                should_patch_flow = False
     baseline_healthy = bool(int(final_failures.get("failure_count", 0) or 0) == 0)
     feature_plan = _build_feature_plan(
         command=str(options.command or ""),
@@ -1963,7 +2034,7 @@ def build_run_payload(
         use_unified_fallback = True
         structured_blocked = False
         structured_primary_accepted = False
-        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation != "append":
+        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation not in {"append", "create-file"}:
             contract = build_proposal_contract(
                 task=options.task,
                 patch_plan=patch_plan,
@@ -2353,6 +2424,73 @@ def build_run_payload(
                                     "error": append_error if not ok_append else None,
                                 }
             use_unified_fallback = False
+        if requested_operation == "create-file":
+            create_target = ""
+            if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
+                create_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
+            create_result, create_timed_out = _run_with_provider_heartbeat(
+                options,
+                "create-file content generation",
+                lambda: generate_structured_edits(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    task=options.task,
+                    failures=final_failures,
+                    context=failure_context,
+                    patch_plan=patch_plan,
+                    aegis_execution=aegis_guidance,
+                    api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                    max_context_chars=int(config.patches.max_context_chars),
+                    operation="create-file",
+                ),
+                timeout_seconds=provider_timeout_seconds,
+            )
+            if create_timed_out:
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": "provider_timeout",
+                }
+            elif not isinstance(create_result, dict) or not bool(create_result.get("available", False)):
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": str((create_result or {}).get("error", "provider_error")) if isinstance(create_result, dict) else "provider_error",
+                }
+            else:
+                create_text = str(create_result.get("text", "") or "")
+                create_ok, create_content, create_parse_error = _parse_create_file_provider_response(create_text)
+                if not create_ok or create_content is None:
+                    structured_blocked = True
+                    structured_patch["status"] = "failed"
+                    structured_patch["failure_reason"] = create_parse_error or CREATE_FILE_OUTPUT_INVALID
+                    provider_result = {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": "",
+                        "error": create_parse_error or CREATE_FILE_OUTPUT_INVALID,
+                    }
+                else:
+                    create_diff = _build_create_file_diff(target_path=create_target, new_content=create_content)
+                    ok_create, create_error = _validate_create_file_diff(
+                        diff_text=create_diff,
+                        target_path=create_target,
+                        cwd=(cwd or Path.cwd()),
+                    )
+                    provider_result = {
+                        "available": bool(ok_create and create_diff),
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": create_diff if ok_create else "",
+                        "error": create_error if not ok_create else None,
+                    }
+            use_unified_fallback = False
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(
                 options,
@@ -2509,7 +2647,7 @@ def build_run_payload(
         initial_issues = [str(item) for item in initial_quality.get("issues", [])]
         regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
         reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
-        if requested_operation == "append":
+        if requested_operation in {"append", "create-file"}:
             regenerate = False
             reasons = []
         if docs_wrapped_applied:
@@ -2729,14 +2867,17 @@ def build_run_payload(
                 missing_step_targets = sorted(path for path in planned_step_targets if path not in diff_targets)
                 plan_consistent = not missing_step_targets
                 plan_missing_targets = missing_step_targets
-        if requested_operation == "append" and bool(validation_used.get("valid", False)):
+        if requested_operation in {"append", "create-file"} and bool(validation_used.get("valid", False)):
             allowed = {
                 _normalize_rel_path(str(item))
                 for item in patch_plan.get("allowed_targets", [])
                 if str(item).strip()
             } if isinstance(patch_plan.get("allowed_targets", []), list) else set()
             diff_targets = _collect_diff_targets(validation_used if isinstance(validation_used, dict) else {})
-            if allowed and diff_targets and diff_targets.issubset(allowed):
+            if requested_operation == "create-file" and allowed:
+                plan_consistent = True
+                plan_missing_targets = []
+            elif allowed and diff_targets and diff_targets.issubset(allowed):
                 plan_consistent = True
                 plan_missing_targets = []
         if provider_used.get("available", False) and diff_text and bool(validation_used.get("valid", False)):
@@ -2895,7 +3036,7 @@ def build_run_payload(
         if (
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
-            and requested_operation != "append"
+            and requested_operation not in {"append", "create-file"}
             and not bool(regeneration.get("attempted", False))
             and not structured_blocked
             and not structured_primary_accepted
@@ -3147,9 +3288,13 @@ def build_run_payload(
                 str(structured_patch.get("failure_reason", "") or "append_output_invalid")
                 if requested_operation == "append"
                 else (
-                    str(structured_patch.get("failure_reason", "") or "structured_output_invalid")
-                    if feature_plan_active
-                    else "structured_output_invalid"
+                    str(structured_patch.get("failure_reason", "") or CREATE_FILE_OUTPUT_INVALID)
+                    if requested_operation == "create-file"
+                    else (
+                        str(structured_patch.get("failure_reason", "") or "structured_output_invalid")
+                        if feature_plan_active
+                        else "structured_output_invalid"
+                    )
                 )
             )
             patch_diff.update(
@@ -3167,7 +3312,7 @@ def build_run_payload(
                 diagnostics = structured_patch.get("target_diagnostics")
                 if isinstance(diagnostics, dict):
                     patch_diff["target_diagnostics"] = diagnostics
-            if requested_operation == "append":
+            if requested_operation in {"append", "create-file"}:
                 patch_diff["plan_consistent"] = None
                 patch_diff["plan_missing_targets"] = []
         if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):

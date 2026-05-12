@@ -3733,6 +3733,116 @@ def test_append_invalid_diff_validation_surfaces_invalid_append_operation(monkey
     assert payload["patch_diff"]["status"] in {"blocked", "unavailable"}
     assert payload["patch_diff"]["error"] == "invalid_append_operation"
     assert payload["patch_diff"]["error"] not in {"repeated_failure", "skipped_provider"}
+
+
+def test_create_file_operation_generates_local_new_file_diff(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function hasNotes(notes) { return notes.length > 0; }\\n"}',
+            "error": None,
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="create helper functions for notes",
+            propose_patch=True,
+            command="patch",
+            patch_operation="create-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": True,
+                "allowed_operations": ["create-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["available"] is True
+    assert payload["patch_operation"]["operation"] == "create-file"
+    diff_path = Path(str(payload["patch_diff"]["path"]))
+    diff_text = diff_path.read_text(encoding="utf-8")
+    assert "diff --git a/src/helpers.js b/src/helpers.js" in diff_text
+    assert "+export function hasNotes(notes) { return notes.length > 0; }" in diff_text
+
+
+def test_create_file_operation_missing_allow_create_blocks_contract(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="create helper functions for notes",
+            propose_patch=True,
+            command="patch",
+            patch_operation="create-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["create-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "operation_contract_invalid"
+
+
+def test_create_file_operation_existing_target_blocks(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export const existing = true;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="create helper functions for notes",
+            propose_patch=True,
+            command="patch",
+            patch_operation="create-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": True,
+                "allowed_operations": ["create-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_Client(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "operation_target_exists"
     assert payload["patch_diff"]["path"] is None
 
 

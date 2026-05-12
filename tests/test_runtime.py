@@ -158,6 +158,59 @@ def test_runtime_explicit_append_not_skipped_by_repeated_failure(monkeypatch, tm
     assert payload["patch_diff"]["error"] == "append_output_invalid"
 
 
+def test_runtime_create_file_bypasses_structured_controller_and_preserves_operation_metadata(
+    monkeypatch, tmp_path: Path
+) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for create-file")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function hasNotes(notes) { return notes.length > 0; }\\n"}',
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run for create-file")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="create helper functions for notes",
+            propose_patch=True,
+            command="patch",
+            patch_operation="create-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": True,
+                "allowed_operations": ["create-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"].get("error") not in {"structured_output_invalid", "unsupported_mode"}
+    assert payload["patch_operation"]["operation"] == "create-file"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
 def test_runtime_sll_active_failure_path_maps_expected_symptoms_and_metadata(
     monkeypatch, tmp_path: Path
 ) -> None:
