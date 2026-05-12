@@ -1760,11 +1760,14 @@ def build_run_payload(
         explicit_scope=explicit_scope,
         command=str(options.command or ""),
     )
-    requested_operation = str(options.patch_operation or "").strip().lower()
-    if not requested_operation:
+    requested_operation_value = str(options.patch_operation or "").strip().lower()
+    if not requested_operation_value:
+        requested_operation_value = str(explicit_scope.get("operation", "") or "").strip().lower()
+    if not requested_operation_value:
         scope_ops_probe = [str(item).strip().lower() for item in explicit_scope.get("allowed_operations", [])] if isinstance(explicit_scope.get("allowed_operations", []), list) else []
-        if scope_ops_probe == ["append"]:
-            requested_operation = "append"
+        if len(scope_ops_probe) == 1:
+            requested_operation_value = scope_ops_probe[0]
+    requested_operation = requested_operation_value
     if explicit_scope_active:
         scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
         scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))

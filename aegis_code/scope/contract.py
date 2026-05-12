@@ -11,6 +11,7 @@ class ScopeContract:
     max_files: int
     allow_new_files: bool
     allowed_operations: list[str]
+    operation: str | None
     missing_targets: list[str]
     block_reason: str | None
 
@@ -60,6 +61,7 @@ def build_scope_contract_from_cli(
         max_files=max(0, resolved_max),
         allow_new_files=allow_new_files,
         allowed_operations=allowed_operations,
+        operation=normalized_operation or None,
         missing_targets=missing_targets,
         block_reason=block_reason,
     )
