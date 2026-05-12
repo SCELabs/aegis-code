@@ -306,7 +306,7 @@ def test_runtime_insert_after_uses_generate_text_and_preserves_metadata(monkeypa
             propose_patch=True,
             command="patch",
             patch_operation="insert-after",
-            anchor="ANCHOR",
+            anchor="// ANCHOR",
             scope_contract={
                 "source": "cli_explicit",
                 "operation": "insert-after",

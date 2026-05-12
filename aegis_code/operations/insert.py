@@ -41,8 +41,8 @@ def _parse_insert_provider_response(text: str) -> tuple[bool, str | None, str | 
 
 def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str) -> tuple[bool, str | None, str | None]:
     lines = str(original_text or "").splitlines(keepends=True)
-    needle = str(anchor or "")
-    matches = [idx for idx, line in enumerate(lines) if needle in line]
+    needle = str(anchor or "").strip()
+    matches = [idx for idx, line in enumerate(lines) if str(line).rstrip("\n\r").strip() == needle]
     if not matches:
         return False, None, OPERATION_ANCHOR_NOT_FOUND
     if len(matches) != 1:
@@ -79,4 +79,3 @@ def _validate_insert_diff(*, diff_text: str, target_path: str, cwd: Path) -> tup
     if int(summary.get("additions", 0) or 0) <= 0:
         return False, OPERATION_VALIDATION_FAILED
     return True, None
-

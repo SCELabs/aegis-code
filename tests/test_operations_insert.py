@@ -23,6 +23,29 @@ def test_insert_anchor_not_found_returns_operation_anchor_not_found() -> None:
     assert err == "operation_anchor_not_found"
 
 
+def test_insert_anchor_without_full_line_does_not_match_function_signature() -> None:
+    ok, new_text, err = insert_ops._insert_after_anchor(
+        original_text="export function completeNote(notes, index) {\n  return notes;\n}\n",
+        anchor="export function completeNote",
+        insert_content="inserted\n",
+    )
+    assert ok is False
+    assert new_text is None
+    assert err == "operation_anchor_not_found"
+
+
+def test_insert_exact_full_line_anchor_matches_once_and_succeeds() -> None:
+    ok, new_text, err = insert_ops._insert_after_anchor(
+        original_text="export function completeNote(notes, index) {\n  return notes;\n}\n",
+        anchor="export function completeNote(notes, index) {",
+        insert_content="inserted\n",
+    )
+    assert ok is True
+    assert isinstance(new_text, str)
+    assert err is None
+    assert "inserted\n  return notes;" in str(new_text)
+
+
 def test_insert_anchor_duplicate_returns_operation_anchor_ambiguous() -> None:
     ok, new_text, err = insert_ops._insert_after_anchor(
         original_text="same\nx\nsame\n",
@@ -56,4 +79,3 @@ def test_insert_success_builds_zero_deletion_diff(tmp_path: Path) -> None:
     )
     assert valid is True
     assert validate_err is None
-
