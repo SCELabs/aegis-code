@@ -139,3 +139,37 @@ def generate_structured_edits_openai(
         return {"available": True, "provider": "openai", "model": trimmed_model, "text": content.strip(), "error": None}
     except Exception as exc:
         return {"available": False, "provider": "openai", "model": trimmed_model, "text": "", "error": str(exc)}
+
+
+def generate_text_openai(
+    *,
+    model: str,
+    prompt: str,
+    api_key_env: str,
+) -> dict[str, Any]:
+    trimmed_model = _strip_provider_prefix(model)
+    api_key = os.getenv(api_key_env, "")
+    if not api_key:
+        return {"available": False, "provider": "openai", "model": trimmed_model, "text": "", "error": f"Missing API key env: {api_key_env}"}
+    try:
+        from openai import OpenAI
+    except Exception:
+        return {"available": False, "provider": "openai", "model": trimmed_model, "text": "", "error": "openai package is not installed."}
+    try:
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=trimmed_model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": "Return only JSON."},
+                {"role": "user", "content": str(prompt or "")},
+            ],
+        )
+        content = ""
+        choices = getattr(response, "choices", [])
+        if choices:
+            message = getattr(choices[0], "message", None)
+            content = str(getattr(message, "content", "") or "")
+        return {"available": True, "provider": "openai", "model": trimmed_model, "text": content.strip(), "error": None}
+    except Exception as exc:
+        return {"available": False, "provider": "openai", "model": trimmed_model, "text": "", "error": str(exc)}

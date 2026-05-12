@@ -173,7 +173,7 @@ def test_runtime_create_file_bypasses_structured_controller_and_preserves_operat
         lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for create-file")),
     )
     monkeypatch.setattr(
-        "aegis_code.runtime.generate_structured_edits",
+        "aegis_code.runtime.generate_text",
         lambda **_: {
             "available": True,
             "provider": "openai",
@@ -181,6 +181,10 @@ def test_runtime_create_file_bypasses_structured_controller_and_preserves_operat
             "text": '{"content":"export function hasNotes(notes) { return notes.length > 0; }\\n"}',
             "error": None,
         },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for create-file")),
     )
     monkeypatch.setattr(
         "aegis_code.runtime.generate_patch_diff",

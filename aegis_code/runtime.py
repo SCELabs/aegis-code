@@ -43,6 +43,7 @@ from aegis_code.parsers.pytest_parser import parse_pytest_output
 from aegis_code.planning.patch_generator import generate_patch_plan
 from aegis_code.providers import generate_patch_diff
 from aegis_code.providers import generate_structured_edits
+from aegis_code.providers import generate_text
 from aegis_code.patches.proposal_controller import build_proposal_contract, run_structured_proposal_controller
 from aegis_code.report import write_reports
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
@@ -388,6 +389,25 @@ def _create_file_target_exists(*, cwd: Path, target_path: str) -> bool:
 
 def _validate_create_file_diff(*, diff_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
     return _create_file_operation._validate_create_file_diff(diff_text=diff_text, target_path=target_path, cwd=cwd)
+
+
+def _build_create_file_prompt(*, task: str, target_path: str, failure_context: dict[str, Any], patch_plan: dict[str, Any]) -> str:
+    return (
+        "Return strict JSON only. No markdown. No prose.\n"
+        "Schema:\n"
+        "{\n"
+        '  "content": "full file content"\n'
+        "}\n"
+        "Rules:\n"
+        f"- target path: {target_path}\n"
+        "- return full file content for the new file only\n"
+        "- do not return unified diff\n"
+        "- do not include any fields other than content\n"
+        "- do not include explanation text\n"
+        f"Task: {task}\n"
+        f"Context: {failure_context}\n"
+        f"Patch plan: {patch_plan}\n"
+    )
 
 
 def _prioritize_patch_error(
@@ -2428,21 +2448,21 @@ def build_run_payload(
             create_target = ""
             if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
                 create_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
+            create_prompt = _build_create_file_prompt(
+                task=options.task,
+                target_path=create_target,
+                failure_context=failure_context if isinstance(failure_context, dict) else {"files": []},
+                patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+            )
             create_result, create_timed_out = _run_with_provider_heartbeat(
                 options,
                 "create-file content generation",
-                lambda: generate_structured_edits(
+                lambda: generate_text(
                     provider=config.providers.provider,
                     model=selected_model,
-                    task=options.task,
-                    failures=final_failures,
-                    context=failure_context,
-                    patch_plan=patch_plan,
-                    aegis_execution=aegis_guidance,
+                    prompt=create_prompt,
                     api_key_env=config.providers.api_key_env,
                     base_url=str(config.providers.base_url or ""),
-                    max_context_chars=int(config.patches.max_context_chars),
-                    operation="create-file",
                 ),
                 timeout_seconds=provider_timeout_seconds,
             )

@@ -3744,7 +3744,7 @@ def test_create_file_operation_generates_local_new_file_diff(monkeypatch, tmp_pa
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
     monkeypatch.setattr(
-        "aegis_code.runtime.generate_structured_edits",
+        "aegis_code.runtime.generate_text",
         lambda **_: {
             "available": True,
             "provider": "openai",
@@ -3752,6 +3752,10 @@ def test_create_file_operation_generates_local_new_file_diff(monkeypatch, tmp_pa
             "text": '{"content":"export function hasNotes(notes) { return notes.length > 0; }\\n"}',
             "error": None,
         },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for create-file")),
     )
     monkeypatch.setattr("aegis_code.runtime.generate_patch_diff", lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run")))
     payload = build_run_payload(
@@ -3788,7 +3792,8 @@ def test_create_file_operation_missing_allow_create_blocks_contract(monkeypatch,
         lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
-    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    monkeypatch.setattr("aegis_code.runtime.generate_text", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run")))
     payload = build_run_payload(
         options=TaskOptions(
             task="create helper functions for notes",
@@ -3821,7 +3826,8 @@ def test_create_file_operation_existing_target_blocks(monkeypatch, tmp_path: Pat
         lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
-    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    monkeypatch.setattr("aegis_code.runtime.generate_text", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run")))
     payload = build_run_payload(
         options=TaskOptions(
             task="create helper functions for notes",
