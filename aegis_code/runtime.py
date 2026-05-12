@@ -1959,6 +1959,8 @@ def build_run_payload(
             for target in explicit_targets
         ]
         anchor_text = str(options.anchor or "").strip()
+        if not anchor_text:
+            anchor_text = str(explicit_scope.get("anchor", "") or "").strip()
         insert_contract_ok = len(explicit_targets) == 1 and bool(anchor_text)
         if not insert_contract_ok:
             patch_quality = None

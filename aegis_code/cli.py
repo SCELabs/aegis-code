@@ -2237,6 +2237,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         max_files=args.max_files,
         cwd=cwd.resolve(),
         operation=effective_operation,
+        anchor=args.anchor,
     )
     options = TaskOptions(
         task=args.task,
