@@ -273,6 +273,141 @@ def test_runtime_create_file_dispatch_uses_scope_contract_operation_when_patch_o
     assert payload["patch_operation"]["source"] == "cli"
 
 
+def test_runtime_insert_after_uses_generate_text_and_preserves_metadata(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("const a = 1;\n// ANCHOR\nconst b = 2;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for insert-after")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for insert-after")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function hasNotes(notes) { return notes.length > 0; }\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="insert helper",
+            propose_patch=True,
+            command="patch",
+            patch_operation="insert-after",
+            anchor="ANCHOR",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "insert-after",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["insert-after"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["error"] not in {"structured_output_invalid", "unsupported_mode"}
+    assert payload["patch_operation"]["operation"] == "insert-after"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
+def test_runtime_insert_after_missing_anchor_blocks_contract(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("const a = 1;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr("aegis_code.runtime.generate_text", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="insert helper",
+            propose_patch=True,
+            command="patch",
+            patch_operation="insert-after",
+            anchor=None,
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "insert-after",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["insert-after"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "operation_contract_invalid"
+
+
+def test_runtime_insert_after_anchor_not_found_blocks(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("const a = 1;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"inserted line\\n"}',
+            "error": None,
+        },
+    )
+    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run")))
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="insert helper",
+            propose_patch=True,
+            command="patch",
+            patch_operation="insert-after",
+            anchor="MISSING",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "insert-after",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["insert-after"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "operation_anchor_not_found"
+    assert payload["patch_diff"]["error"] not in {"structured_output_invalid", "unsupported_mode"}
+
+
 def test_runtime_sll_active_failure_path_maps_expected_symptoms_and_metadata(
     monkeypatch, tmp_path: Path
 ) -> None:

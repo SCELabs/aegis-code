@@ -7,8 +7,10 @@ from aegis_code.operations.errors import (
     APPEND_SOURCE_CONFLICT,
     APPEND_SYNTAX_INVALID,
     CREATE_FILE_OUTPUT_INVALID,
+    INSERT_OUTPUT_INVALID,
     INVALID_APPEND_OPERATION,
     NO_APPEND_NEEDED,
+    OPERATION_ANCHOR_AMBIGUOUS,
     OPERATION_ANCHOR_NOT_FOUND,
     OPERATION_BUDGET_EXCEEDED,
     OPERATION_CONTRACT_INVALID,
@@ -47,12 +49,14 @@ def test_operation_error_constants_match_stable_string_values() -> None:
     assert OPERATION_CONTRACT_INVALID == "operation_contract_invalid"
     assert OPERATION_TARGET_MISSING == "operation_target_missing"
     assert OPERATION_ANCHOR_NOT_FOUND == "operation_anchor_not_found"
+    assert OPERATION_ANCHOR_AMBIGUOUS == "operation_anchor_ambiguous"
     assert OPERATION_SYMBOL_NOT_FOUND == "operation_symbol_not_found"
     assert OPERATION_BUDGET_EXCEEDED == "operation_budget_exceeded"
     assert OPERATION_VALIDATION_FAILED == "operation_validation_failed"
     assert OPERATION_POLICY_BLOCKED == "operation_policy_blocked"
     assert OPERATION_TARGET_EXISTS == "operation_target_exists"
     assert CREATE_FILE_OUTPUT_INVALID == "create_file_output_invalid"
+    assert INSERT_OUTPUT_INVALID == "insert_output_invalid"
     assert APPEND_OUTPUT_INVALID == "append_output_invalid"
     assert APPEND_SYNTAX_INVALID == "append_syntax_invalid"
     assert APPEND_SEMANTIC_SUSPICIOUS == "append_semantic_suspicious"

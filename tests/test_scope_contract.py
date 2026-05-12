@@ -67,3 +67,18 @@ def test_scope_contract_create_file_operation_requires_create_file_mode(tmp_path
     assert contract.allow_new_files is True
     assert contract.allowed_operations == ["create-file"]
     assert contract.block_reason is None
+
+
+def test_scope_contract_insert_after_operation_requires_insert_after_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="insert-after",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["insert-after"]
+    assert contract.block_reason is None

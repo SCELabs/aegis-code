@@ -7,6 +7,12 @@ from aegis_code.operations.create_file import (
     _target_exists,
     _validate_create_file_diff,
 )
+from aegis_code.operations.insert import (
+    _build_insert_after_diff,
+    _insert_after_anchor,
+    _parse_insert_provider_response,
+    _validate_insert_diff,
+)
 from aegis_code.operations.errors import (
     APPEND_OUTPUT_INVALID,
     APPEND_SEMANTIC_SUSPICIOUS,
@@ -14,7 +20,9 @@ from aegis_code.operations.errors import (
     APPEND_SYNTAX_INVALID,
     INVALID_APPEND_OPERATION,
     NO_APPEND_NEEDED,
+    INSERT_OUTPUT_INVALID,
     OPERATION_ANCHOR_NOT_FOUND,
+    OPERATION_ANCHOR_AMBIGUOUS,
     OPERATION_BUDGET_EXCEEDED,
     OPERATION_CONTRACT_INVALID,
     OPERATION_POLICY_BLOCKED,
@@ -31,12 +39,14 @@ __all__ = [
     "OPERATION_CONTRACT_INVALID",
     "OPERATION_TARGET_MISSING",
     "OPERATION_ANCHOR_NOT_FOUND",
+    "OPERATION_ANCHOR_AMBIGUOUS",
     "OPERATION_SYMBOL_NOT_FOUND",
     "OPERATION_BUDGET_EXCEEDED",
     "OPERATION_VALIDATION_FAILED",
     "OPERATION_POLICY_BLOCKED",
     "OPERATION_TARGET_EXISTS",
     "CREATE_FILE_OUTPUT_INVALID",
+    "INSERT_OUTPUT_INVALID",
     "APPEND_OUTPUT_INVALID",
     "APPEND_SYNTAX_INVALID",
     "APPEND_SEMANTIC_SUSPICIOUS",
@@ -47,4 +57,8 @@ __all__ = [
     "_build_create_file_diff",
     "_target_exists",
     "_validate_create_file_diff",
+    "_parse_insert_provider_response",
+    "_insert_after_anchor",
+    "_build_insert_after_diff",
+    "_validate_insert_diff",
 ]

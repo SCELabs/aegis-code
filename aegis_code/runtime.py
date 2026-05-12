@@ -60,9 +60,14 @@ from aegis_code.runtime_components import semantic_guards as _semantic_guards
 from aegis_code.runtime_components import append_context as _append_context
 from aegis_code.operations import append as _append_pipeline
 from aegis_code.operations import create_file as _create_file_operation
+from aegis_code.operations import insert as _insert_operation
 from aegis_code.operations.errors import (
     CREATE_FILE_OUTPUT_INVALID,
+    INSERT_OUTPUT_INVALID,
+    OPERATION_ANCHOR_AMBIGUOUS,
+    OPERATION_ANCHOR_NOT_FOUND,
     OPERATION_CONTRACT_INVALID,
+    OPERATION_TARGET_MISSING,
     OPERATION_TARGET_EXISTS,
 )
 from aegis_code.runtime_components import feature_plan as _feature_plan
@@ -90,6 +95,7 @@ class TaskOptions:
     command: str | None = None
     scope_contract: dict[str, Any] | None = None
     patch_operation: str | None = None
+    anchor: str | None = None
 
 
 def _progress(options: TaskOptions, message: str) -> None:
@@ -391,6 +397,26 @@ def _validate_create_file_diff(*, diff_text: str, target_path: str, cwd: Path) -
     return _create_file_operation._validate_create_file_diff(diff_text=diff_text, target_path=target_path, cwd=cwd)
 
 
+def _parse_insert_provider_response(text: str) -> tuple[bool, str | None, str | None]:
+    return _insert_operation._parse_insert_provider_response(text)
+
+
+def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str) -> tuple[bool, str | None, str | None]:
+    return _insert_operation._insert_after_anchor(
+        original_text=original_text,
+        anchor=anchor,
+        insert_content=insert_content,
+    )
+
+
+def _build_insert_after_diff(*, target_path: str, original_text: str, new_text: str) -> str:
+    return _insert_operation._build_insert_after_diff(target_path=target_path, original_text=original_text, new_text=new_text)
+
+
+def _validate_insert_diff(*, diff_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
+    return _insert_operation._validate_insert_diff(diff_text=diff_text, target_path=target_path, cwd=cwd)
+
+
 def _build_create_file_prompt(*, task: str, target_path: str, failure_context: dict[str, Any], patch_plan: dict[str, Any]) -> str:
     return (
         "Return strict JSON only. No markdown. No prose.\n"
@@ -404,6 +430,32 @@ def _build_create_file_prompt(*, task: str, target_path: str, failure_context: d
         "- do not return unified diff\n"
         "- do not include any fields other than content\n"
         "- do not include explanation text\n"
+        f"Task: {task}\n"
+        f"Context: {failure_context}\n"
+        f"Patch plan: {patch_plan}\n"
+    )
+
+
+def _build_insert_after_prompt(
+    *,
+    task: str,
+    target_path: str,
+    anchor: str,
+    failure_context: dict[str, Any],
+    patch_plan: dict[str, Any],
+) -> str:
+    return (
+        "Return strict JSON only. No markdown. No prose.\n"
+        "Schema:\n"
+        "{\n"
+        '  "content": "text to insert"\n'
+        "}\n"
+        "Rules:\n"
+        f"- target path: {target_path}\n"
+        f"- insert after exact anchor text: {anchor}\n"
+        "- return only insertion content, not full file content\n"
+        "- do not return unified diff\n"
+        "- do not include any fields other than content\n"
         f"Task: {task}\n"
         f"Context: {failure_context}\n"
         f"Patch plan: {patch_plan}\n"
@@ -1895,6 +1947,93 @@ def build_run_payload(
                 )
                 should_attempt_provider_diff = False
                 should_patch_flow = False
+    if requested_operation == "insert-after":
+        explicit_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+        patch_plan["proposed_changes"] = [
+            {
+                "file": target,
+                "change_type": "modify",
+                "description": "Insert content after an exact anchor line.",
+                "reason": "insert_after_operation",
+            }
+            for target in explicit_targets
+        ]
+        anchor_text = str(options.anchor or "").strip()
+        insert_contract_ok = len(explicit_targets) == 1 and bool(anchor_text)
+        if not insert_contract_ok:
+            patch_quality = None
+            remove_latest_diff(cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
+            patch_diff.update(
+                {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "invalid_diff_path": None,
+                    "error": OPERATION_CONTRACT_INVALID,
+                    "preview": "",
+                }
+            )
+            should_attempt_provider_diff = False
+            should_patch_flow = False
+        else:
+            target = explicit_targets[0]
+            target_file = ((cwd or Path.cwd()).resolve() / target).resolve()
+            if not target_file.exists() or not target_file.is_file():
+                patch_quality = None
+                remove_latest_diff(cwd=cwd)
+                remove_latest_invalid_diff(cwd=cwd)
+                patch_diff.update(
+                    {
+                        "attempted": True,
+                        "available": False,
+                        "status": "blocked",
+                        "path": None,
+                        "invalid_diff_path": None,
+                        "error": OPERATION_TARGET_MISSING,
+                        "preview": "",
+                    }
+                )
+                should_attempt_provider_diff = False
+                should_patch_flow = False
+            else:
+                original_text = target_file.read_text(encoding="utf-8", errors="replace")
+                anchor_matches = sum(1 for line in str(original_text).splitlines() if str(anchor_text) in line)
+                if anchor_matches == 0:
+                    patch_quality = None
+                    remove_latest_diff(cwd=cwd)
+                    remove_latest_invalid_diff(cwd=cwd)
+                    patch_diff.update(
+                        {
+                            "attempted": True,
+                            "available": False,
+                            "status": "blocked",
+                            "path": None,
+                            "invalid_diff_path": None,
+                            "error": OPERATION_ANCHOR_NOT_FOUND,
+                            "preview": "",
+                        }
+                    )
+                    should_attempt_provider_diff = False
+                    should_patch_flow = False
+                elif anchor_matches > 1:
+                    patch_quality = None
+                    remove_latest_diff(cwd=cwd)
+                    remove_latest_invalid_diff(cwd=cwd)
+                    patch_diff.update(
+                        {
+                            "attempted": True,
+                            "available": False,
+                            "status": "blocked",
+                            "path": None,
+                            "invalid_diff_path": None,
+                            "error": OPERATION_ANCHOR_AMBIGUOUS,
+                            "preview": "",
+                        }
+                    )
+                    should_attempt_provider_diff = False
+                    should_patch_flow = False
     baseline_healthy = bool(int(final_failures.get("failure_count", 0) or 0) == 0)
     feature_plan = _build_feature_plan(
         command=str(options.command or ""),
@@ -2057,7 +2196,7 @@ def build_run_payload(
         use_unified_fallback = True
         structured_blocked = False
         structured_primary_accepted = False
-        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation not in {"append", "create-file"}:
+        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation not in {"append", "create-file", "insert-after"}:
             contract = build_proposal_contract(
                 task=options.task,
                 patch_plan=patch_plan,
@@ -2514,6 +2653,107 @@ def build_run_payload(
                         "error": create_error if not ok_create else None,
                     }
             use_unified_fallback = False
+        if requested_operation == "insert-after":
+            insert_target = ""
+            if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
+                insert_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
+            insert_anchor = str(options.anchor or "").strip()
+            insert_prompt = _build_insert_after_prompt(
+                task=options.task,
+                target_path=insert_target,
+                anchor=insert_anchor,
+                failure_context=failure_context if isinstance(failure_context, dict) else {"files": []},
+                patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+            )
+            insert_result, insert_timed_out = _run_with_provider_heartbeat(
+                options,
+                "insert-after content generation",
+                lambda: generate_text(
+                    provider=config.providers.provider,
+                    model=selected_model,
+                    prompt=insert_prompt,
+                    api_key_env=config.providers.api_key_env,
+                    base_url=str(config.providers.base_url or ""),
+                ),
+                timeout_seconds=provider_timeout_seconds,
+            )
+            if insert_timed_out:
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": "provider_timeout",
+                }
+            elif not isinstance(insert_result, dict) or not bool(insert_result.get("available", False)):
+                provider_result = {
+                    "available": False,
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "diff": "",
+                    "error": str((insert_result or {}).get("error", "provider_error")) if isinstance(insert_result, dict) else "provider_error",
+                }
+            else:
+                insert_text = str(insert_result.get("text", "") or "")
+                insert_ok, insert_content, insert_parse_error = _parse_insert_provider_response(insert_text)
+                if not insert_ok or insert_content is None:
+                    structured_blocked = True
+                    structured_patch["status"] = "failed"
+                    structured_patch["failure_reason"] = insert_parse_error or INSERT_OUTPUT_INVALID
+                    provider_result = {
+                        "available": False,
+                        "provider": config.providers.provider,
+                        "model": selected_model,
+                        "diff": "",
+                        "error": insert_parse_error or INSERT_OUTPUT_INVALID,
+                    }
+                else:
+                    target_file = ((cwd or Path.cwd()).resolve() / insert_target).resolve()
+                    if not target_file.exists() or not target_file.is_file():
+                        provider_result = {
+                            "available": False,
+                            "provider": config.providers.provider,
+                            "model": selected_model,
+                            "diff": "",
+                            "error": OPERATION_TARGET_MISSING,
+                        }
+                    else:
+                        original_text = target_file.read_text(encoding="utf-8", errors="replace")
+                        inserted_ok, inserted_text, insert_error = _insert_after_anchor(
+                            original_text=original_text,
+                            anchor=insert_anchor,
+                            insert_content=insert_content,
+                        )
+                        if not inserted_ok or inserted_text is None:
+                            structured_blocked = True
+                            structured_patch["status"] = "failed"
+                            structured_patch["failure_reason"] = insert_error or OPERATION_ANCHOR_NOT_FOUND
+                            provider_result = {
+                                "available": False,
+                                "provider": config.providers.provider,
+                                "model": selected_model,
+                                "diff": "",
+                                "error": insert_error or OPERATION_ANCHOR_NOT_FOUND,
+                            }
+                        else:
+                            insert_diff = _build_insert_after_diff(
+                                target_path=insert_target,
+                                original_text=original_text,
+                                new_text=inserted_text,
+                            )
+                            ok_insert, validate_error = _validate_insert_diff(
+                                diff_text=insert_diff,
+                                target_path=insert_target,
+                                cwd=(cwd or Path.cwd()),
+                            )
+                            provider_result = {
+                                "available": bool(ok_insert and insert_diff),
+                                "provider": config.providers.provider,
+                                "model": selected_model,
+                                "diff": insert_diff if ok_insert else "",
+                                "error": validate_error if not ok_insert else None,
+                            }
+            use_unified_fallback = False
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(
                 options,
@@ -2670,7 +2910,7 @@ def build_run_payload(
         initial_issues = [str(item) for item in initial_quality.get("issues", [])]
         regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
         reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
-        if requested_operation in {"append", "create-file"}:
+        if requested_operation in {"append", "create-file", "insert-after"}:
             regenerate = False
             reasons = []
         if docs_wrapped_applied:
@@ -2890,14 +3130,14 @@ def build_run_payload(
                 missing_step_targets = sorted(path for path in planned_step_targets if path not in diff_targets)
                 plan_consistent = not missing_step_targets
                 plan_missing_targets = missing_step_targets
-        if requested_operation in {"append", "create-file"} and bool(validation_used.get("valid", False)):
+        if requested_operation in {"append", "create-file", "insert-after"} and bool(validation_used.get("valid", False)):
             allowed = {
                 _normalize_rel_path(str(item))
                 for item in patch_plan.get("allowed_targets", [])
                 if str(item).strip()
             } if isinstance(patch_plan.get("allowed_targets", []), list) else set()
             diff_targets = _collect_diff_targets(validation_used if isinstance(validation_used, dict) else {})
-            if requested_operation == "create-file" and allowed:
+            if requested_operation in {"create-file", "insert-after"} and allowed:
                 plan_consistent = True
                 plan_missing_targets = []
             elif allowed and diff_targets and diff_targets.issubset(allowed):
@@ -3059,7 +3299,7 @@ def build_run_payload(
         if (
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
-            and requested_operation not in {"append", "create-file"}
+            and requested_operation not in {"append", "create-file", "insert-after"}
             and not bool(regeneration.get("attempted", False))
             and not structured_blocked
             and not structured_primary_accepted
@@ -3314,9 +3554,13 @@ def build_run_payload(
                     str(structured_patch.get("failure_reason", "") or CREATE_FILE_OUTPUT_INVALID)
                     if requested_operation == "create-file"
                     else (
-                        str(structured_patch.get("failure_reason", "") or "structured_output_invalid")
-                        if feature_plan_active
-                        else "structured_output_invalid"
+                        str(structured_patch.get("failure_reason", "") or INSERT_OUTPUT_INVALID)
+                        if requested_operation == "insert-after"
+                        else (
+                            str(structured_patch.get("failure_reason", "") or "structured_output_invalid")
+                            if feature_plan_active
+                            else "structured_output_invalid"
+                        )
                     )
                 )
             )
@@ -3335,7 +3579,7 @@ def build_run_payload(
                 diagnostics = structured_patch.get("target_diagnostics")
                 if isinstance(diagnostics, dict):
                     patch_diff["target_diagnostics"] = diagnostics
-            if requested_operation in {"append", "create-file"}:
+            if requested_operation in {"append", "create-file", "insert-after"}:
                 patch_diff["plan_consistent"] = None
                 patch_diff["plan_missing_targets"] = []
         if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):
