@@ -40,6 +40,14 @@ def _parse_insert_provider_response(text: str) -> tuple[bool, str | None, str | 
 
 
 def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str) -> tuple[bool, str | None, str | None]:
+    ok, index, error = resolve_insert_after_index(original_text=original_text, anchor=anchor)
+    if not ok or index is None:
+        return False, None, error
+    new_text = insert_after_index(original_text=original_text, index=index, insert_content=insert_content)
+    return True, new_text, None
+
+
+def resolve_insert_after_index(*, original_text: str, anchor: str) -> tuple[bool, int | None, str | None]:
     lines = str(original_text or "").splitlines(keepends=True)
     needle = str(anchor or "").strip()
     matches = [idx for idx, line in enumerate(lines) if str(line).rstrip("\n\r").strip() == needle]
@@ -47,10 +55,15 @@ def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str
         return False, None, OPERATION_ANCHOR_NOT_FOUND
     if len(matches) != 1:
         return False, None, OPERATION_ANCHOR_AMBIGUOUS
-    idx = matches[0]
+    return True, int(matches[0]), None
+
+
+def insert_after_index(*, original_text: str, index: int, insert_content: str) -> str:
+    lines = str(original_text or "").splitlines(keepends=True)
+    idx = int(index)
     insertion = str(insert_content or "")
     new_lines = lines[: idx + 1] + [insertion] + lines[idx + 1 :]
-    return True, "".join(new_lines), None
+    return "".join(new_lines)
 
 
 def _build_insert_after_diff(*, target_path: str, original_text: str, new_text: str) -> str:

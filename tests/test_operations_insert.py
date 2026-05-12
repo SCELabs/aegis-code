@@ -79,3 +79,13 @@ def test_insert_success_builds_zero_deletion_diff(tmp_path: Path) -> None:
     )
     assert valid is True
     assert validate_err is None
+
+
+def test_resolve_insert_after_index_and_insert_after_index_helpers() -> None:
+    original = "a\nanchor line\nb\n"
+    ok, index, err = insert_ops.resolve_insert_after_index(original_text=original, anchor="anchor line")
+    assert ok is True
+    assert index == 1
+    assert err is None
+    new_text = insert_ops.insert_after_index(original_text=original, index=int(index), insert_content="inserted\n")
+    assert new_text == "a\nanchor line\ninserted\nb\n"

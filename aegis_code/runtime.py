@@ -409,6 +409,14 @@ def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str
     )
 
 
+def _resolve_insert_after_index(*, original_text: str, anchor: str) -> tuple[bool, int | None, str | None]:
+    return _insert_operation.resolve_insert_after_index(original_text=original_text, anchor=anchor)
+
+
+def _insert_after_index(*, original_text: str, index: int, insert_content: str) -> str:
+    return _insert_operation.insert_after_index(original_text=original_text, index=index, insert_content=insert_content)
+
+
 def _build_insert_after_diff(*, target_path: str, original_text: str, new_text: str) -> str:
     return _insert_operation._build_insert_after_diff(target_path=target_path, original_text=original_text, new_text=new_text)
 
@@ -1820,6 +1828,8 @@ def build_run_payload(
         if len(scope_ops_probe) == 1:
             requested_operation_value = scope_ops_probe[0]
     requested_operation = requested_operation_value
+    insert_anchor_index: int | None = None
+    insert_original_text: str | None = None
     if explicit_scope_active:
         scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
         scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))
@@ -2001,8 +2011,14 @@ def build_run_payload(
                 should_patch_flow = False
             else:
                 original_text = target_file.read_text(encoding="utf-8", errors="replace")
-                anchor_matches = sum(1 for line in str(original_text).splitlines() if str(anchor_text) in line)
-                if anchor_matches == 0:
+                anchor_ok, anchor_index, anchor_error = _resolve_insert_after_index(
+                    original_text=original_text,
+                    anchor=anchor_text,
+                )
+                if anchor_ok and anchor_index is not None:
+                    insert_anchor_index = int(anchor_index)
+                    insert_original_text = str(original_text)
+                if (not anchor_ok) and anchor_error == OPERATION_ANCHOR_NOT_FOUND:
                     patch_quality = None
                     remove_latest_diff(cwd=cwd)
                     remove_latest_invalid_diff(cwd=cwd)
@@ -2019,7 +2035,7 @@ def build_run_payload(
                     )
                     should_attempt_provider_diff = False
                     should_patch_flow = False
-                elif anchor_matches > 1:
+                elif (not anchor_ok) and anchor_error == OPERATION_ANCHOR_AMBIGUOUS:
                     patch_quality = None
                     remove_latest_diff(cwd=cwd)
                     remove_latest_invalid_diff(cwd=cwd)
@@ -2720,24 +2736,25 @@ def build_run_payload(
                             "error": OPERATION_TARGET_MISSING,
                         }
                     else:
-                        original_text = target_file.read_text(encoding="utf-8", errors="replace")
-                        inserted_ok, inserted_text, insert_error = _insert_after_anchor(
-                            original_text=original_text,
-                            anchor=insert_anchor,
-                            insert_content=insert_content,
-                        )
-                        if not inserted_ok or inserted_text is None:
+                        original_text = insert_original_text
+                        anchor_index = insert_anchor_index
+                        if original_text is None or anchor_index is None:
                             structured_blocked = True
                             structured_patch["status"] = "failed"
-                            structured_patch["failure_reason"] = insert_error or OPERATION_ANCHOR_NOT_FOUND
+                            structured_patch["failure_reason"] = OPERATION_CONTRACT_INVALID
                             provider_result = {
                                 "available": False,
                                 "provider": config.providers.provider,
                                 "model": selected_model,
                                 "diff": "",
-                                "error": insert_error or OPERATION_ANCHOR_NOT_FOUND,
+                                "error": OPERATION_CONTRACT_INVALID,
                             }
                         else:
+                            inserted_text = _insert_after_index(
+                                original_text=original_text,
+                                index=anchor_index,
+                                insert_content=insert_content,
+                            )
                             insert_diff = _build_insert_after_diff(
                                 target_path=insert_target,
                                 original_text=original_text,

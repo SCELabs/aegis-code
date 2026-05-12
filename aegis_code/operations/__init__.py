@@ -10,7 +10,9 @@ from aegis_code.operations.create_file import (
 from aegis_code.operations.insert import (
     _build_insert_after_diff,
     _insert_after_anchor,
+    insert_after_index,
     _parse_insert_provider_response,
+    resolve_insert_after_index,
     _validate_insert_diff,
 )
 from aegis_code.operations.errors import (
@@ -59,6 +61,8 @@ __all__ = [
     "_validate_create_file_diff",
     "_parse_insert_provider_response",
     "_insert_after_anchor",
+    "resolve_insert_after_index",
+    "insert_after_index",
     "_build_insert_after_diff",
     "_validate_insert_diff",
 ]
