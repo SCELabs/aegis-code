@@ -38,6 +38,8 @@ Current validated operations:
 - `append`
 - `create-file`
 - `insert-after`
+- `insert-before`
+- `replace-block`
 
 Architecture overview:
 
@@ -148,14 +150,16 @@ aegis-code patch --file src/example.py "fix bug in parser"
 aegis-code patch --file README.md --operation append "add usage examples"
 aegis-code patch --file src/helpers.js --operation create-file "create helper module"
 aegis-code patch --file src/helpers.js --operation insert-after --anchor "// ANCHOR" "insert helper after anchor"
+aegis-code patch --file src/helpers.js --operation insert-before --anchor "// ANCHOR" "insert helper before anchor"
+aegis-code patch --file src/helpers.js --operation replace-block --anchor "OLD BLOCK" "replace block with safer implementation"
 ```
 
 Behavior:
 
 - Requires explicit scope: at least one `--file`.
 - Uses proposal-only generation and validation; no mutation without `apply --confirm`.
-- Supported explicit operations: `append`, `create-file`, `insert-after`.
-- `--anchor` is required for `--operation insert-after` and must match an exact line.
+- Supported explicit operations: `append`, `create-file`, `insert-after`, `insert-before`, `replace-block`.
+- `--anchor` is required for `--operation insert-after` and `--operation insert-before` (exact line), and for `--operation replace-block` (exact block text).
 - For additive docs tasks without explicit append mode, CLI prints guidance to rerun with `--operation append` (no automatic operation inference).
 - Runtime reports preserve operation metadata (`patch_operation.operation`, `patch_operation.source`) for diagnostics and auditing.
 

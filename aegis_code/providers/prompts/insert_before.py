@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def build_insert_after_prompt(
+def build_insert_before_prompt(
     *,
     task: str,
     target_path: str,
@@ -19,7 +19,7 @@ def build_insert_after_prompt(
         "}\n"
         "Rules:\n"
         f"- target path: {target_path}\n"
-        f"- insert after exact anchor text: {anchor}\n"
+        f"- insert before exact anchor text: {anchor}\n"
         "- return only insertion content, not full file content\n"
         "- do not include the anchor line itself in returned content\n"
         "- do not repeat surrounding existing file blocks; return only new insertion text\n"

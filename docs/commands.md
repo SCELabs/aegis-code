@@ -33,18 +33,20 @@ aegis-code patch --file README.md --operation append "add usage examples"
 aegis-code patch --file tests/test_example.py --operation append "add tests"
 aegis-code patch --file src/helpers.js --operation create-file "create helper module"
 aegis-code patch --file src/helpers.js --operation insert-after --anchor "// ANCHOR" "insert helper after anchor"
+aegis-code patch --file src/helpers.js --operation insert-before --anchor "// ANCHOR" "insert helper before anchor"
+aegis-code patch --file src/helpers.js --operation replace-block --anchor "OLD BLOCK" "replace block with safer implementation"
 ```
 
 Options:
 
-- `--operation {append,create-file,insert-after}`: explicit controlled mutation mode.
-- `--anchor "<exact line text>"`: required for `--operation insert-after`; must match one exact line in target file.
+- `--operation {append,create-file,insert-after,insert-before,replace-block}`: explicit controlled mutation mode.
+- `--anchor "<text>"`: required for `--operation insert-after` and `--operation insert-before` (exact line text), and `--operation replace-block` (exact block text).
 
 Behavior:
 
 - `patch` requires explicit scope (`--file` at least once).
 - Generation is proposal-only; no file mutation without `apply --confirm`.
-- Supported operation modes are explicit (`append`, `create-file`, `insert-after`).
+- Supported operation modes are explicit (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`).
 - No operation inference: additive docs/test tasks without `--operation append` stay in normal flow, but CLI prints stronger rerun guidance.
 - Append mode supports no-op signal (`{"content": ""}`) and can block with `no_append_needed`.
 - Docs/test destructive rewrite protections can block proposals (`destructive_docs_rewrite`, `destructive_test_rewrite`).

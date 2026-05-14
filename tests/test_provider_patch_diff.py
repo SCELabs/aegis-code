@@ -3786,14 +3786,26 @@ def test_create_file_operation_generates_local_new_file_diff(monkeypatch, tmp_pa
     assert "+export function hasNotes(notes) { return notes.length > 0; }" in diff_text
 
 
-def test_create_file_operation_missing_allow_create_blocks_contract(monkeypatch, tmp_path: Path) -> None:
+def test_create_file_operation_missing_allow_create_still_generates(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         "aegis_code.runtime.run_configured_tests",
         lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
     )
     monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
-    monkeypatch.setattr("aegis_code.runtime.generate_text", lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run")))
-    monkeypatch.setattr("aegis_code.runtime.generate_structured_edits", lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run")))
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function hasNotes(notes) { return notes.length > 0; }\\n"}',
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for create-file")),
+    )
     payload = build_run_payload(
         options=TaskOptions(
             task="create helper functions for notes",
@@ -3813,8 +3825,8 @@ def test_create_file_operation_missing_allow_create_blocks_contract(monkeypatch,
         cwd=tmp_path,
         client=_Client(),
     )
-    assert payload["patch_diff"]["status"] == "blocked"
-    assert payload["patch_diff"]["error"] == "operation_contract_invalid"
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["available"] is True
 
 
 def test_create_file_operation_existing_target_blocks(monkeypatch, tmp_path: Path) -> None:

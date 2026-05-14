@@ -469,6 +469,102 @@ def test_apply_check_allows_bounded_fix_low_safety_override(tmp_path: Path, monk
     assert "low_safety" not in out
 
 
+def test_apply_check_allows_controlled_replace_block_low_safety_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text(
+        "def add_note(notes, text):\n    return notes + [text]\n",
+        encoding="utf-8",
+    )
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1,2 +1,5 @@\n"
+        " def add_note(notes, text):\n"
+        "-    return notes + [text]\n"
+        "+    cleaned = text.strip()\n"
+        "+    if not cleaned:\n"
+        "+        return notes\n"
+        "+    return notes + [cleaned]\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "replace block in add_note",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "replace-block", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 4, "deletions": 1},
+                        "files": [{"old_path": "src/main.py", "new_path": "src/main.py"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_keeps_low_safety_block_for_unsafe_replace_block(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.py").write_text("def fn():\n    return 1\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/main.py b/src/main.py\n"
+        "--- a/src/main.py\n"
+        "+++ b/src/main.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " def fn():\n"
+        "+    import subprocess\n"
+        "     return 1\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "replace block in fn",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "replace-block", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "src/main.py", "new_path": "src/main.py"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
 def test_apply_check_keeps_low_safety_block_for_shell_additions(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)

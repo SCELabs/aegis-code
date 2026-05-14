@@ -11,6 +11,7 @@ from aegis_code.operations import (
 from aegis_code.operations.append import run_append_operation
 from aegis_code.operations.create_file import run_create_file_operation
 from aegis_code.operations.insert import run_insert_after_operation
+from aegis_code.operations.replace_block import run_replace_block_operation
 from aegis_code.runtime_components.operation_stage import run_operation_stage
 
 
@@ -42,6 +43,8 @@ def test_operation_stage_builds_and_passes_dependencies(monkeypatch, tmp_path: P
         "generate_structured_edits": lambda **kwargs: {},
         "build_create_file_prompt": lambda **kwargs: "prompt",
         "build_insert_after_prompt": lambda **kwargs: "prompt",
+        "build_insert_before_prompt": lambda **kwargs: "prompt",
+        "build_replace_block_prompt": lambda **kwargs: "prompt",
         "task_options": {"opt": True},
         "api_key_env": "OPENAI_API_KEY",
         "base_url": "https://example.com",
@@ -75,6 +78,8 @@ def test_operation_stage_builds_and_passes_dependencies(monkeypatch, tmp_path: P
     assert callable(deps.generate_structured_edits)
     assert callable(deps.build_create_file_prompt)
     assert callable(deps.build_insert_after_prompt)
+    assert callable(deps.build_insert_before_prompt)
+    assert callable(deps.build_replace_block_prompt)
     assert callable(deps.append_python_sanity_error)
     assert callable(deps.validate_append_diff)
 
@@ -234,3 +239,60 @@ def test_insert_operation_prefers_dependencies_over_context(tmp_path: Path) -> N
     result = run_insert_after_operation(request)
     assert result.status == "generated"
     assert bool(result.diff_text)
+
+
+def test_replace_block_operation_falls_back_to_context_when_dependencies_missing(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line 1\nOLD BLOCK\nline 3\n", encoding="utf-8")
+    called: dict[str, int] = {"heartbeat": 0, "text": 0, "prompt": 0}
+
+    def _context_heartbeat(_options, _label, fn, timeout_seconds=60):
+        _ = timeout_seconds
+        called["heartbeat"] += 1
+        return fn(), False
+
+    def _context_generate_text(**_kwargs):
+        called["text"] += 1
+        return {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"NEW BLOCK"}',
+            "error": None,
+        }
+
+    def _context_prompt_builder(**_kwargs):
+        called["prompt"] += 1
+        return "prompt"
+
+    request = OperationRequest(
+        contract=normalize_operation_contract(
+            operation="replace-block",
+            target_file="src/helpers.js",
+            anchor="OLD BLOCK",
+            allow_deletions=True,
+            source="cli",
+        ),
+        task="replace block",
+        cwd=tmp_path,
+        context={
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "failure_context": {"files": []},
+            "run_with_provider_heartbeat": _context_heartbeat,
+            "generate_text": _context_generate_text,
+            "build_replace_block_prompt": _context_prompt_builder,
+            "task_options": {"k": "v"},
+            "api_key_env": "OPENAI_API_KEY",
+            "base_url": "https://example.com",
+        },
+        failures={},
+        patch_plan={"allowed_targets": ["src/helpers.js"]},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+        dependencies=None,
+    )
+    result = run_replace_block_operation(request)
+    assert result.status == "generated"
+    assert called == {"heartbeat": 1, "text": 1, "prompt": 1}

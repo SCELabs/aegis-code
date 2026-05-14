@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from aegis_code.operations import OperationDependencies, OperationRequest, normalize_operation_contract
 from aegis_code.operations import insert as insert_ops
 
 
@@ -89,3 +90,198 @@ def test_resolve_insert_after_index_and_insert_after_index_helpers() -> None:
     assert err is None
     new_text = insert_ops.insert_after_index(original_text=original, index=int(index), insert_content="inserted\n")
     assert new_text == "a\nanchor line\ninserted\nb\n"
+
+
+def test_insert_before_index_helper() -> None:
+    original = "a\nanchor line\nb\n"
+    new_text = insert_ops.insert_before_index(original_text=original, index=1, insert_content="inserted\n")
+    assert new_text == "a\ninserted\nanchor line\nb\n"
+
+
+def test_insert_before_operation_anchor_not_found_returns_operation_anchor_not_found(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("const a = 1;\n", encoding="utf-8")
+
+    deps = OperationDependencies(
+        run_with_provider_heartbeat=lambda _options, _label, fn, timeout_seconds=60: (fn(), False),
+        generate_text=lambda **_kwargs: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"inserted line\\n"}',
+            "error": None,
+        },
+        build_insert_before_prompt=lambda **_kwargs: "prompt",
+        task_options={},
+    )
+    request = OperationRequest(
+        contract=normalize_operation_contract(
+            operation="insert-before",
+            target_file="src/helpers.js",
+            anchor="MISSING",
+            source="cli",
+        ),
+        task="insert helper",
+        cwd=tmp_path,
+        context={"provider": "openai", "model": "gpt-4.1-mini", "failure_context": {"files": []}},
+        failures={},
+        patch_plan={"allowed_targets": ["src/helpers.js"]},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+        dependencies=deps,
+    )
+    result = insert_ops.run_insert_before_operation(request)
+    assert result.status == "blocked"
+    assert result.error == "operation_anchor_not_found"
+
+
+def test_insert_before_operation_anchor_ambiguous_returns_operation_anchor_ambiguous(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("same\nx\nsame\n", encoding="utf-8")
+
+    deps = OperationDependencies(
+        run_with_provider_heartbeat=lambda _options, _label, fn, timeout_seconds=60: (fn(), False),
+        generate_text=lambda **_kwargs: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"inserted line\\n"}',
+            "error": None,
+        },
+        build_insert_before_prompt=lambda **_kwargs: "prompt",
+        task_options={},
+    )
+    request = OperationRequest(
+        contract=normalize_operation_contract(
+            operation="insert-before",
+            target_file="src/helpers.js",
+            anchor="same",
+            source="cli",
+        ),
+        task="insert helper",
+        cwd=tmp_path,
+        context={"provider": "openai", "model": "gpt-4.1-mini", "failure_context": {"files": []}},
+        failures={},
+        patch_plan={"allowed_targets": ["src/helpers.js"]},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+        dependencies=deps,
+    )
+    result = insert_ops.run_insert_before_operation(request)
+    assert result.status == "blocked"
+    assert result.error == "operation_anchor_ambiguous"
+
+
+def test_insert_before_operation_generates_diff_inserting_before_anchor(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line 1\nTARGET\nline 3\n", encoding="utf-8")
+
+    deps = OperationDependencies(
+        run_with_provider_heartbeat=lambda _options, _label, fn, timeout_seconds=60: (fn(), False),
+        generate_text=lambda **_kwargs: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"NEW LINE\\n"}',
+            "error": None,
+        },
+        build_insert_before_prompt=lambda **_kwargs: "prompt",
+        task_options={},
+    )
+    request = OperationRequest(
+        contract=normalize_operation_contract(
+            operation="insert-before",
+            target_file="src/helpers.js",
+            anchor="TARGET",
+            source="cli",
+        ),
+        task="insert helper",
+        cwd=tmp_path,
+        context={"provider": "openai", "model": "gpt-4.1-mini", "failure_context": {"files": []}},
+        failures={},
+        patch_plan={"allowed_targets": ["src/helpers.js"]},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+        dependencies=deps,
+    )
+    result = insert_ops.run_insert_before_operation(request)
+    assert result.status == "generated"
+    assert "+NEW LINE" in result.diff_text
+    assert "line 1\n+NEW LINE\n TARGET" in result.diff_text
+
+
+def test_insert_after_operation_blocks_when_provider_content_repeats_anchor(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line 1\nTARGET\nline 3\n", encoding="utf-8")
+    deps = OperationDependencies(
+        run_with_provider_heartbeat=lambda _options, _label, fn, timeout_seconds=60: (fn(), False),
+        generate_text=lambda **_kwargs: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"TARGET\\nNEW LINE\\n"}',
+            "error": None,
+        },
+        build_insert_after_prompt=lambda **_kwargs: "prompt",
+        task_options={},
+    )
+    request = OperationRequest(
+        contract=normalize_operation_contract(
+            operation="insert-after",
+            target_file="src/helpers.js",
+            anchor="TARGET",
+            source="cli",
+        ),
+        task="insert helper",
+        cwd=tmp_path,
+        context={"provider": "openai", "model": "gpt-4.1-mini", "failure_context": {"files": []}},
+        failures={},
+        patch_plan={"allowed_targets": ["src/helpers.js"]},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+        dependencies=deps,
+    )
+    result = insert_ops.run_insert_after_operation(request)
+    assert result.status == "blocked"
+    assert result.error == "insert_output_invalid"
+
+
+def test_insert_before_operation_blocks_when_provider_content_repeats_anchor(tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line 1\nTARGET\nline 3\n", encoding="utf-8")
+    deps = OperationDependencies(
+        run_with_provider_heartbeat=lambda _options, _label, fn, timeout_seconds=60: (fn(), False),
+        generate_text=lambda **_kwargs: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"TARGET\\nNEW LINE\\n"}',
+            "error": None,
+        },
+        build_insert_before_prompt=lambda **_kwargs: "prompt",
+        task_options={},
+    )
+    request = OperationRequest(
+        contract=normalize_operation_contract(
+            operation="insert-before",
+            target_file="src/helpers.js",
+            anchor="TARGET",
+            source="cli",
+        ),
+        task="insert helper",
+        cwd=tmp_path,
+        context={"provider": "openai", "model": "gpt-4.1-mini", "failure_context": {"files": []}},
+        failures={},
+        patch_plan={"allowed_targets": ["src/helpers.js"]},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+        dependencies=deps,
+    )
+    result = insert_ops.run_insert_before_operation(request)
+    assert result.status == "blocked"
+    assert result.error == "insert_output_invalid"

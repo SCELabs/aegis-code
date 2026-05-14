@@ -71,6 +71,8 @@ Operation-specific prompts are owned by dedicated prompt modules:
 - `aegis_code/providers/prompts/append.py`
 - `aegis_code/providers/prompts/create_file.py`
 - `aegis_code/providers/prompts/insert_after.py`
+- `aegis_code/providers/prompts/insert_before.py`
+- `aegis_code/providers/prompts/replace_block.py`
 
 Runtime/provider orchestration routes request context and contracts to these builders; prompt specialization is intentionally decoupled from core runtime flow.
 

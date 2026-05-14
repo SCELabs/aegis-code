@@ -52,11 +52,18 @@ def build_scope_contract_from_cli(
         allow_new_files = False
         allowed_operations = ["append"]
     elif normalized_operation == "create-file":
-        allow_new_files = bool(allow_create)
+        _ = allow_create
+        allow_new_files = True
         allowed_operations = ["create-file"]
     elif normalized_operation == "insert-after":
         allow_new_files = False
         allowed_operations = ["insert-after"]
+    elif normalized_operation == "insert-before":
+        allow_new_files = False
+        allowed_operations = ["insert-before"]
+    elif normalized_operation == "replace-block":
+        allow_new_files = False
+        allowed_operations = ["replace-block"]
     else:
         allow_new_files = bool(allow_create)
         allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]

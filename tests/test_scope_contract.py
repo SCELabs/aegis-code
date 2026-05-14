@@ -69,6 +69,19 @@ def test_scope_contract_create_file_operation_requires_create_file_mode(tmp_path
     assert contract.block_reason is None
 
 
+def test_scope_contract_create_file_operation_allows_new_file_without_allow_create_flag(tmp_path: Path) -> None:
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="create-file",
+    )
+    assert contract.allow_new_files is True
+    assert contract.allowed_operations == ["create-file"]
+    assert contract.block_reason is None
+
+
 def test_scope_contract_insert_after_operation_requires_insert_after_mode(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)
     (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
@@ -81,4 +94,34 @@ def test_scope_contract_insert_after_operation_requires_insert_after_mode(tmp_pa
     )
     assert contract.allow_new_files is False
     assert contract.allowed_operations == ["insert-after"]
+    assert contract.block_reason is None
+
+
+def test_scope_contract_insert_before_operation_requires_insert_before_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="insert-before",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["insert-before"]
+    assert contract.block_reason is None
+
+
+def test_scope_contract_replace_block_operation_requires_replace_block_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="replace-block",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["replace-block"]
     assert contract.block_reason is None

@@ -4,7 +4,7 @@
 
 - It generates a deterministic local project plan preview.
 - It does not write project files unless both `--target` and `--confirm` are provided.
-- It is separate from controlled patch mutation operations (`append`, `create-file`, `insert-after`) used by `aegis-code patch`.
+- It is separate from controlled patch mutation operations (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`) used by `aegis-code patch`.
 
 Discover stack profiles without planning or scaffolding:
 

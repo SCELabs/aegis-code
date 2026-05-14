@@ -11,6 +11,7 @@ OPERATION_POLICY_BLOCKED = "operation_policy_blocked"
 OPERATION_TARGET_EXISTS = "operation_target_exists"
 CREATE_FILE_OUTPUT_INVALID = "create_file_output_invalid"
 INSERT_OUTPUT_INVALID = "insert_output_invalid"
+REPLACE_BLOCK_OUTPUT_INVALID = "replace_block_output_invalid"
 
 APPEND_OUTPUT_INVALID = "append_output_invalid"
 APPEND_SYNTAX_INVALID = "append_syntax_invalid"

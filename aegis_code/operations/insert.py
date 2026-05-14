@@ -53,6 +53,13 @@ def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str
     return True, new_text, None
 
 
+def _insert_content_includes_anchor(*, insert_content: str, anchor: str) -> bool:
+    needle = str(anchor or "").strip()
+    if not needle:
+        return False
+    return any(str(line).strip() == needle for line in str(insert_content or "").splitlines())
+
+
 def resolve_insert_after_index(*, original_text: str, anchor: str) -> tuple[bool, int | None, str | None]:
     lines = str(original_text or "").splitlines(keepends=True)
     needle = str(anchor or "").strip()
@@ -69,6 +76,14 @@ def insert_after_index(*, original_text: str, index: int, insert_content: str) -
     idx = int(index)
     insertion = str(insert_content or "")
     new_lines = lines[: idx + 1] + [insertion] + lines[idx + 1 :]
+    return "".join(new_lines)
+
+
+def insert_before_index(*, original_text: str, index: int, insert_content: str) -> str:
+    lines = str(original_text or "").splitlines(keepends=True)
+    idx = int(index)
+    insertion = str(insert_content or "")
+    new_lines = lines[:idx] + [insertion] + lines[idx:]
     return "".join(new_lines)
 
 
@@ -100,7 +115,7 @@ def _validate_insert_diff(*, diff_text: str, target_path: str, cwd: Path) -> tup
     return True, None
 
 
-def run_insert_after_operation(request: OperationRequest) -> OperationResult:
+def _run_insert_operation(request: OperationRequest, *, mode: str) -> OperationResult:
     from aegis_code.operations.runner import OperationResult
 
     context = request.context if isinstance(request.context, dict) else {}
@@ -113,11 +128,20 @@ def run_insert_after_operation(request: OperationRequest) -> OperationResult:
         else context.get("run_with_provider_heartbeat")
     )
     generate_text_fn = deps.generate_text if deps and deps.generate_text else context.get("generate_text")
-    build_prompt_fn = (
-        deps.build_insert_after_prompt
-        if deps and deps.build_insert_after_prompt
-        else context.get("build_insert_after_prompt")
-    )
+    if mode == "before":
+        build_prompt_fn = (
+            deps.build_insert_before_prompt
+            if deps and deps.build_insert_before_prompt
+            else context.get("build_insert_before_prompt")
+        )
+        heartbeat_label = "insert-before content generation"
+    else:
+        build_prompt_fn = (
+            deps.build_insert_after_prompt
+            if deps and deps.build_insert_after_prompt
+            else context.get("build_insert_after_prompt")
+        )
+        heartbeat_label = "insert-after content generation"
     task_options = deps.task_options if deps and deps.task_options is not None else context.get("task_options")
     timeout_seconds = int(request.provider_timeout or 60)
     if not callable(run_with_provider_heartbeat) or not callable(generate_text_fn) or not callable(build_prompt_fn):
@@ -152,7 +176,7 @@ def run_insert_after_operation(request: OperationRequest) -> OperationResult:
     )
     insert_result, insert_timed_out = run_with_provider_heartbeat(
         task_options,
-        "insert-after content generation",
+        heartbeat_label,
         lambda: generate_text_fn(
             provider=provider,
             model=model,
@@ -197,6 +221,16 @@ def run_insert_after_operation(request: OperationRequest) -> OperationResult:
             operation=request.contract.operation,
             source=request.contract.source,
         )
+    if _insert_content_includes_anchor(insert_content=insert_content, anchor=anchor):
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error=INSERT_OUTPUT_INVALID,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
 
     target_file = (request.cwd.resolve() / target_path).resolve()
     if not target_file.exists() or not target_file.is_file():
@@ -229,11 +263,18 @@ def run_insert_after_operation(request: OperationRequest) -> OperationResult:
             )
         anchor_index_value = int(anchor_index)
 
-    inserted_text = insert_after_index(
-        original_text=original_text,
-        index=int(anchor_index_value),
-        insert_content=insert_content,
-    )
+    if mode == "before":
+        inserted_text = insert_before_index(
+            original_text=original_text,
+            index=int(anchor_index_value),
+            insert_content=insert_content,
+        )
+    else:
+        inserted_text = insert_after_index(
+            original_text=original_text,
+            index=int(anchor_index_value),
+            insert_content=insert_content,
+        )
     insert_diff = _build_insert_after_diff(
         target_path=target_path,
         original_text=original_text,
@@ -264,3 +305,11 @@ def run_insert_after_operation(request: OperationRequest) -> OperationResult:
         operation=request.contract.operation,
         source=request.contract.source,
     )
+
+
+def run_insert_after_operation(request: OperationRequest) -> OperationResult:
+    return _run_insert_operation(request, mode="after")
+
+
+def run_insert_before_operation(request: OperationRequest) -> OperationResult:
+    return _run_insert_operation(request, mode="before")

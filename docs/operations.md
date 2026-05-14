@@ -23,10 +23,14 @@ Validated:
 - `append`
 - `create-file`
 - `insert-after`
-
-Planned:
 - `insert-before`
 - `replace-block`
+
+`replace-block` notes:
+- anchor semantics are exact block text matching (line-ending normalized, no fuzzy/symbol-aware matching yet)
+- deletions are allowed only inside the uniquely matched block span being replaced
+
+Planned:
 - `replace-symbol`
 - `delete-block`
 - `replace-file`
@@ -36,7 +40,7 @@ Planned:
 - `aegis_code/runtime_components/operation_stage.py`: operation-stage bridge (`run_operation_stage`), request/dependency assembly.
 - `aegis_code/operations/runner.py`: typed request/result/dependencies + dispatch (`run_operation`).
 - `aegis_code/operations/<operation>.py`: operation-specific execution semantics and local operation validation.
-- `aegis_code/providers/prompts/`: operation prompt ownership (`append`, `create_file`, `insert_after` prompt builders).
+- `aegis_code/providers/prompts/`: operation prompt ownership (`append`, `create_file`, `insert_after`, `insert_before`, `replace_block` prompt builders).
 
 Boundary rule:
 - Runtime consumes operation results; operation modules own operation-specific provider orchestration and local mutation semantics.
@@ -76,7 +80,7 @@ Source: `aegis_code/operations/runner.py`
 
 Typed dependency bundle for operation modules:
 - provider hooks (`run_with_provider_heartbeat`, `generate_text`, `generate_structured_edits`)
-- prompt builders (`build_create_file_prompt`, `build_insert_after_prompt`)
+- prompt builders (`build_create_file_prompt`, `build_insert_after_prompt`, `build_insert_before_prompt`, `build_replace_block_prompt`)
 - runtime/provider metadata (`task_options`, `api_key_env`, `base_url`, `max_context_chars`)
 - append validators (`append_python_sanity_error`, `validate_append_diff`)
 
@@ -103,6 +107,8 @@ Dispatches to:
 - `run_append_operation`
 - `run_create_file_operation`
 - `run_insert_after_operation`
+- `run_insert_before_operation`
+- `run_replace_block_operation`
 
 Unsupported operation behavior is stable:
 - `attempted=False`
@@ -123,6 +129,8 @@ Operation prompt builders now live in:
 - `aegis_code/providers/prompts/append.py`
 - `aegis_code/providers/prompts/create_file.py`
 - `aegis_code/providers/prompts/insert_after.py`
+- `aegis_code/providers/prompts/insert_before.py`
+- `aegis_code/providers/prompts/replace_block.py`
 
 This keeps prompt policy modular and prevents runtime/provider base from accumulating operation-specific prompt logic.
 
@@ -146,6 +154,7 @@ Current operation-specific examples:
 - `no_append_needed`
 - `create_file_output_invalid`
 - `insert_output_invalid`
+- `replace_block_output_invalid`
 
 ## Reporting and Metadata
 Runtime preserves operation metadata in payload/report:

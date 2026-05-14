@@ -41,7 +41,15 @@ def _task_implies_test_fix_or_validation(options: TaskOptions) -> bool:
 def _is_explicit_patch_operation(options: TaskOptions) -> bool:
     command = str(getattr(options, "command", "") or "").strip().lower()
     operation = str(getattr(options, "patch_operation", "") or "").strip().lower()
-    return command == "patch" and bool(operation)
+    if command != "patch":
+        return False
+    if operation:
+        return True
+    scope_contract = getattr(options, "scope_contract", None)
+    if isinstance(scope_contract, dict):
+        scope_operation = str(scope_contract.get("operation", "") or "").strip().lower()
+        return bool(scope_operation)
+    return False
 
 
 def _latest_payload(cwd: Path) -> dict[str, Any] | None:

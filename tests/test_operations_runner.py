@@ -61,6 +61,32 @@ def test_run_operation_dispatches_insert_after(monkeypatch) -> None:
     assert result.status == "generated"
 
 
+def test_run_operation_dispatches_insert_before(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.insert.run_insert_before_operation", _fake)
+    result = run_operation(_request("insert-before"))
+    assert seen == ["insert-before"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_replace_block(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.replace_block.run_replace_block_operation", _fake)
+    result = run_operation(_request("replace-block"))
+    assert seen == ["replace-block"]
+    assert result.status == "generated"
+
+
 def test_run_operation_unsupported_operation_is_blocked() -> None:
     result = run_operation(_request("replace"))
     assert result.attempted is False

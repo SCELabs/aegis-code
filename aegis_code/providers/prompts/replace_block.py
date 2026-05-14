@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def build_insert_after_prompt(
+def build_replace_block_prompt(
     *,
     task: str,
     target_path: str,
@@ -15,16 +15,16 @@ def build_insert_after_prompt(
         "Return strict JSON only. No markdown. No prose.\n"
         "Schema:\n"
         "{\n"
-        '  "content": "text to insert"\n'
+        '  "content": "replacement block content"\n'
         "}\n"
         "Rules:\n"
         f"- target path: {target_path}\n"
-        f"- insert after exact anchor text: {anchor}\n"
-        "- return only insertion content, not full file content\n"
-        "- do not include the anchor line itself in returned content\n"
-        "- do not repeat surrounding existing file blocks; return only new insertion text\n"
+        f"- replace exact anchor block text: {anchor}\n"
+        "- return replacement block content only, not full file content\n"
         "- do not return unified diff\n"
         "- do not include any fields other than content\n"
+        "- do not include explanation text\n"
+        "- preserve behavior outside the requested block\n"
         f"Task: {task}\n"
         f"Context: {failure_context}\n"
         f"Patch plan: {patch_plan}\n"

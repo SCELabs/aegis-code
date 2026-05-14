@@ -482,8 +482,8 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
-    parser.add_argument("--operation", choices=["append", "create-file", "insert-after"], default=None, help="Explicit patch operation mode.")
-    parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after.")
+    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block"], default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
     parser.add_argument("--allow-create", action="store_true", help="Allow creating missing target files.")
     parser.add_argument("task", help="Task prompt for patch proposal generation.")
@@ -1927,7 +1927,12 @@ def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
         return False
     if not bool(patch_diff.get("plan_consistent", False)):
         return False
+    patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
+    operation_name = str(patch_operation.get("operation", "") or "").strip().lower()
+    operation_source = str(patch_operation.get("source", "") or "").strip().lower()
     validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result"), dict) else {}
+    if "valid" in validation and not bool(validation.get("valid", False)):
+        return False
     summary = validation.get("summary", {}) if isinstance(validation.get("summary", {}), dict) else {}
     files = validation.get("files", []) if isinstance(validation.get("files", []), list) else []
     if len(files) != 1:
@@ -1937,18 +1942,21 @@ def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
         return False
     additions = int(summary.get("additions", 0) or 0)
     deletions = int(summary.get("deletions", 0) or 0)
-    if (additions + deletions) > 5:
-        return False
     task_text = str(payload.get("task", "") or "").lower()
-    patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
     patch_plan = payload.get("patch_plan", {}) if isinstance(payload.get("patch_plan"), dict) else {}
     explicit_scope = (
-        str(patch_operation.get("source", "") or "").lower() == "cli"
+        operation_source == "cli"
         and bool(patch_plan)
         and not bool(patch_plan.get("allow_new_files", False))
         and int(patch_plan.get("max_files", 0) or 0) <= 1
     )
-    if not ("fix failing tests" in task_text or explicit_scope):
+    replace_block_override = operation_name == "replace-block" and explicit_scope
+    if not replace_block_override:
+        if (additions + deletions) > 5:
+            return False
+        if not ("fix failing tests" in task_text or explicit_scope):
+            return False
+    elif (additions + deletions) > 200:
         return False
     try:
         diff_text = path.read_text(encoding="utf-8", errors="replace").lower()

@@ -4,6 +4,8 @@ from aegis_code.providers.prompts import (
     build_append_prompt,
     build_create_file_prompt,
     build_insert_after_prompt,
+    build_insert_before_prompt,
+    build_replace_block_prompt,
 )
 
 
@@ -70,4 +72,38 @@ def test_build_insert_after_prompt_contains_schema_and_anchor_rules() -> None:
     assert "- target path: src/helpers.js" in prompt
     assert "- insert after exact anchor text: // ANCHOR" in prompt
     assert "return only insertion content, not full file content" in prompt
+    assert "do not include the anchor line itself in returned content" in prompt
+    assert "do not return unified diff" in prompt
+
+
+def test_build_insert_before_prompt_contains_schema_and_anchor_rules() -> None:
+    prompt = build_insert_before_prompt(
+        task="insert helper",
+        target_path="src/helpers.js",
+        anchor="// ANCHOR",
+        failure_context={"files": []},
+        patch_plan={},
+    )
+    assert "Return strict JSON only. No markdown. No prose." in prompt
+    assert '"content": "text to insert"' in prompt
+    assert "- target path: src/helpers.js" in prompt
+    assert "- insert before exact anchor text: // ANCHOR" in prompt
+    assert "return only insertion content, not full file content" in prompt
+    assert "do not include the anchor line itself in returned content" in prompt
+    assert "do not return unified diff" in prompt
+
+
+def test_build_replace_block_prompt_contains_schema_and_anchor_rules() -> None:
+    prompt = build_replace_block_prompt(
+        task="replace block",
+        target_path="src/helpers.js",
+        anchor="OLD BLOCK",
+        failure_context={"files": []},
+        patch_plan={},
+    )
+    assert "Return strict JSON only. No markdown. No prose." in prompt
+    assert '"content": "replacement block content"' in prompt
+    assert "- target path: src/helpers.js" in prompt
+    assert "- replace exact anchor block text: OLD BLOCK" in prompt
+    assert "return replacement block content only, not full file content" in prompt
     assert "do not return unified diff" in prompt
