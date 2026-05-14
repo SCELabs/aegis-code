@@ -4,9 +4,13 @@ import json
 import re
 from difflib import unified_diff
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from aegis_code.operations.errors import CREATE_FILE_OUTPUT_INVALID, OPERATION_VALIDATION_FAILED
 from aegis_code.patches.diff_inspector import inspect_diff
+
+if TYPE_CHECKING:
+    from aegis_code.operations.runner import OperationRequest, OperationResult
 
 
 def _parse_create_file_provider_response(text: str) -> tuple[bool, str | None, str | None]:
@@ -65,3 +69,105 @@ def _validate_create_file_diff(*, diff_text: str, target_path: str, cwd: Path) -
     if int(summary.get("additions", 0) or 0) <= 0:
         return False, OPERATION_VALIDATION_FAILED
     return True, None
+
+
+def run_create_file_operation(request: OperationRequest) -> OperationResult:
+    from aegis_code.operations.runner import OperationResult
+
+    context = request.context if isinstance(request.context, dict) else {}
+    provider = str(context.get("provider", "") or "")
+    model = str(request.model or context.get("model", "") or "")
+    run_with_provider_heartbeat = context.get("run_with_provider_heartbeat")
+    generate_text_fn = context.get("generate_text")
+    build_prompt_fn = context.get("build_create_file_prompt")
+    task_options = context.get("task_options")
+    timeout_seconds = int(request.provider_timeout or 60)
+    if not callable(run_with_provider_heartbeat) or not callable(generate_text_fn) or not callable(build_prompt_fn):
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error="provider_error",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+
+    target_path = str(request.contract.target_file or "").strip()
+    prompt = build_prompt_fn(
+        task=request.task,
+        target_path=target_path,
+        failure_context=context.get("failure_context") if isinstance(context.get("failure_context"), dict) else {"files": []},
+        patch_plan=request.patch_plan if isinstance(request.patch_plan, dict) else {},
+    )
+    create_result, create_timed_out = run_with_provider_heartbeat(
+        task_options,
+        "create-file content generation",
+        lambda: generate_text_fn(
+            provider=provider,
+            model=model,
+            prompt=prompt,
+            api_key_env=context.get("api_key_env"),
+            base_url=str(context.get("base_url", "") or ""),
+        ),
+        timeout_seconds=timeout_seconds,
+    )
+    if create_timed_out:
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error="provider_timeout",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    if not isinstance(create_result, dict) or not bool(create_result.get("available", False)):
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error=str((create_result or {}).get("error", "provider_error")) if isinstance(create_result, dict) else "provider_error",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+
+    create_text = str(create_result.get("text", "") or "")
+    create_ok, create_content, create_parse_error = _parse_create_file_provider_response(create_text)
+    if not create_ok or create_content is None:
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error=create_parse_error or CREATE_FILE_OUTPUT_INVALID,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    create_diff = _build_create_file_diff(target_path=target_path, new_content=create_content)
+    ok_create, create_error = _validate_create_file_diff(
+        diff_text=create_diff,
+        target_path=target_path,
+        cwd=request.cwd,
+    )
+    if not ok_create or not create_diff:
+        return OperationResult(
+            attempted=True,
+            status="invalid",
+            error=create_error,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    return OperationResult(
+        attempted=True,
+        status="generated",
+        diff_text=create_diff,
+        error=None,
+        provider=provider or None,
+        model=model or None,
+        operation=request.contract.operation,
+        source=request.contract.source,
+    )

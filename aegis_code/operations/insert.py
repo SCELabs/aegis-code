@@ -4,14 +4,20 @@ import json
 import re
 from difflib import unified_diff
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from aegis_code.operations.errors import (
     INSERT_OUTPUT_INVALID,
     OPERATION_ANCHOR_AMBIGUOUS,
     OPERATION_ANCHOR_NOT_FOUND,
+    OPERATION_CONTRACT_INVALID,
+    OPERATION_TARGET_MISSING,
     OPERATION_VALIDATION_FAILED,
 )
 from aegis_code.patches.diff_inspector import inspect_diff
+
+if TYPE_CHECKING:
+    from aegis_code.operations.runner import OperationRequest, OperationResult
 
 
 def _parse_insert_provider_response(text: str) -> tuple[bool, str | None, str | None]:
@@ -92,3 +98,153 @@ def _validate_insert_diff(*, diff_text: str, target_path: str, cwd: Path) -> tup
     if int(summary.get("additions", 0) or 0) <= 0:
         return False, OPERATION_VALIDATION_FAILED
     return True, None
+
+
+def run_insert_after_operation(request: OperationRequest) -> OperationResult:
+    from aegis_code.operations.runner import OperationResult
+
+    context = request.context if isinstance(request.context, dict) else {}
+    provider = str(context.get("provider", "") or "")
+    model = str(request.model or context.get("model", "") or "")
+    run_with_provider_heartbeat = context.get("run_with_provider_heartbeat")
+    generate_text_fn = context.get("generate_text")
+    build_prompt_fn = context.get("build_insert_after_prompt")
+    task_options = context.get("task_options")
+    timeout_seconds = int(request.provider_timeout or 60)
+    if not callable(run_with_provider_heartbeat) or not callable(generate_text_fn) or not callable(build_prompt_fn):
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error="provider_error",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+
+    target_path = str(request.contract.target_file or "").strip()
+    anchor = str(request.contract.anchor or "").strip()
+    if not target_path or not anchor:
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error=OPERATION_CONTRACT_INVALID,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    prompt = build_prompt_fn(
+        task=request.task,
+        target_path=target_path,
+        anchor=anchor,
+        failure_context=context.get("failure_context") if isinstance(context.get("failure_context"), dict) else {"files": []},
+        patch_plan=request.patch_plan if isinstance(request.patch_plan, dict) else {},
+    )
+    insert_result, insert_timed_out = run_with_provider_heartbeat(
+        task_options,
+        "insert-after content generation",
+        lambda: generate_text_fn(
+            provider=provider,
+            model=model,
+            prompt=prompt,
+            api_key_env=context.get("api_key_env"),
+            base_url=str(context.get("base_url", "") or ""),
+        ),
+        timeout_seconds=timeout_seconds,
+    )
+    if insert_timed_out:
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error="provider_timeout",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    if not isinstance(insert_result, dict) or not bool(insert_result.get("available", False)):
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error=str((insert_result or {}).get("error", "provider_error")) if isinstance(insert_result, dict) else "provider_error",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    insert_text = str(insert_result.get("text", "") or "")
+    insert_ok, insert_content, insert_parse_error = _parse_insert_provider_response(insert_text)
+    if not insert_ok or insert_content is None:
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error=insert_parse_error or INSERT_OUTPUT_INVALID,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+
+    target_file = (request.cwd.resolve() / target_path).resolve()
+    if not target_file.exists() or not target_file.is_file():
+        return OperationResult(
+            attempted=True,
+            status="unavailable",
+            error=OPERATION_TARGET_MISSING,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    original_text = str(context.get("insert_original_text")) if context.get("insert_original_text") is not None else target_file.read_text(encoding="utf-8", errors="replace")
+    anchor_index_value = context.get("insert_anchor_index")
+    if anchor_index_value is None:
+        anchor_ok, anchor_index, anchor_error = resolve_insert_after_index(original_text=original_text, anchor=anchor)
+        if not anchor_ok or anchor_index is None:
+            return OperationResult(
+                attempted=True,
+                status="blocked",
+                error=anchor_error or OPERATION_CONTRACT_INVALID,
+                provider=provider or None,
+                model=model or None,
+                operation=request.contract.operation,
+                source=request.contract.source,
+            )
+        anchor_index_value = int(anchor_index)
+
+    inserted_text = insert_after_index(
+        original_text=original_text,
+        index=int(anchor_index_value),
+        insert_content=insert_content,
+    )
+    insert_diff = _build_insert_after_diff(
+        target_path=target_path,
+        original_text=original_text,
+        new_text=inserted_text,
+    )
+    ok_insert, validate_error = _validate_insert_diff(
+        diff_text=insert_diff,
+        target_path=target_path,
+        cwd=request.cwd,
+    )
+    if not ok_insert or not insert_diff:
+        return OperationResult(
+            attempted=True,
+            status="invalid",
+            error=validate_error,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    return OperationResult(
+        attempted=True,
+        status="generated",
+        diff_text=insert_diff,
+        error=None,
+        provider=provider or None,
+        model=model or None,
+        operation=request.contract.operation,
+        source=request.contract.source,
+    )

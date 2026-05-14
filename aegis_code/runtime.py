@@ -57,10 +57,12 @@ from aegis_code.verification import resolve_verification_command
 from aegis_code.runtime_components import task_classification as _task_classification
 from aegis_code.runtime_components import plan_consistency as _plan_consistency
 from aegis_code.runtime_components import semantic_guards as _semantic_guards
-from aegis_code.runtime_components import append_context as _append_context
-from aegis_code.operations import append as _append_pipeline
-from aegis_code.operations import create_file as _create_file_operation
-from aegis_code.operations import insert as _insert_operation
+from aegis_code.runtime_components.operation_stage import run_operation_stage
+from aegis_code.operations import normalize_operation_contract
+from aegis_code.providers.prompts import (
+    build_create_file_prompt,
+    build_insert_after_prompt,
+)
 from aegis_code.operations.errors import (
     CREATE_FILE_OUTPUT_INVALID,
     INSERT_OUTPUT_INVALID,
@@ -301,34 +303,6 @@ def _maybe_wrap_docs_non_diff(
     return wrapped, validation, apply_blocked
 
 
-def _build_append_diff(*, target_path: str, original_text: str, appended_content: str) -> str:
-    return _append_pipeline._build_append_diff(
-        target_path=target_path,
-        original_text=original_text,
-        appended_content=appended_content,
-    )
-
-
-def _line_tail_capped(text: str, max_lines: int, max_chars: int) -> str:
-    return _append_context._line_tail_capped(text, max_lines, max_chars)
-
-
-def _build_append_target_context(*, cwd: Path, target_path: str, original_text: str) -> dict[str, Any]:
-    return _append_context._build_append_target_context(cwd=cwd, target_path=target_path, original_text=original_text)
-
-
-def _collect_defined_names(tree: ast.AST) -> set[str]:
-    return _append_pipeline._collect_defined_names(tree)
-
-
-def _append_python_sanity_error(*, target_path: str, original_text: str, appended_content: str) -> str | None:
-    return _append_pipeline._append_python_sanity_error(
-        target_path=target_path,
-        original_text=original_text,
-        appended_content=appended_content,
-    )
-
-
 def _module_exists_for_python_m(cwd: Path, module_name: str) -> bool:
     return _semantic_guards._module_exists_for_python_m(cwd, module_name)
 
@@ -353,94 +327,12 @@ def _detect_simple_slugify_source(*, cwd: Path, source_text: str) -> bool:
     return _semantic_guards._detect_simple_slugify_source(cwd=cwd, source_text=source_text)
 
 
-def _append_source_conflict_error(
-    *,
-    cwd: Path,
-    target_path: str,
-    appended_content: str,
-    relevant_file_snippets: list[dict[str, Any]],
-) -> str | None:
-    return _semantic_guards._append_source_conflict_error(
-        cwd=cwd,
-        target_path=target_path,
-        appended_content=appended_content,
-        relevant_file_snippets=relevant_file_snippets,
-    )
-
-
-def _parse_append_provider_response(text: str) -> tuple[bool, str | None, str | None]:
-    return _append_pipeline._parse_append_provider_response(text)
-
-
-def _validate_append_diff(*, diff_text: str, original_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
-    return _append_pipeline._validate_append_diff(
-        diff_text=diff_text,
-        original_text=original_text,
-        target_path=target_path,
-        cwd=cwd,
-    )
-
-
-def _parse_create_file_provider_response(text: str) -> tuple[bool, str | None, str | None]:
-    return _create_file_operation._parse_create_file_provider_response(text)
-
-
-def _build_create_file_diff(*, target_path: str, new_content: str) -> str:
-    return _create_file_operation._build_create_file_diff(target_path=target_path, new_content=new_content)
-
-
-def _create_file_target_exists(*, cwd: Path, target_path: str) -> bool:
-    return _create_file_operation._target_exists(cwd=cwd, target_path=target_path)
-
-
-def _validate_create_file_diff(*, diff_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
-    return _create_file_operation._validate_create_file_diff(diff_text=diff_text, target_path=target_path, cwd=cwd)
-
-
-def _parse_insert_provider_response(text: str) -> tuple[bool, str | None, str | None]:
-    return _insert_operation._parse_insert_provider_response(text)
-
-
-def _insert_after_anchor(*, original_text: str, anchor: str, insert_content: str) -> tuple[bool, str | None, str | None]:
-    return _insert_operation._insert_after_anchor(
-        original_text=original_text,
-        anchor=anchor,
-        insert_content=insert_content,
-    )
-
-
-def _resolve_insert_after_index(*, original_text: str, anchor: str) -> tuple[bool, int | None, str | None]:
-    return _insert_operation.resolve_insert_after_index(original_text=original_text, anchor=anchor)
-
-
-def _insert_after_index(*, original_text: str, index: int, insert_content: str) -> str:
-    return _insert_operation.insert_after_index(original_text=original_text, index=index, insert_content=insert_content)
-
-
-def _build_insert_after_diff(*, target_path: str, original_text: str, new_text: str) -> str:
-    return _insert_operation._build_insert_after_diff(target_path=target_path, original_text=original_text, new_text=new_text)
-
-
-def _validate_insert_diff(*, diff_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
-    return _insert_operation._validate_insert_diff(diff_text=diff_text, target_path=target_path, cwd=cwd)
-
-
 def _build_create_file_prompt(*, task: str, target_path: str, failure_context: dict[str, Any], patch_plan: dict[str, Any]) -> str:
-    return (
-        "Return strict JSON only. No markdown. No prose.\n"
-        "Schema:\n"
-        "{\n"
-        '  "content": "full file content"\n'
-        "}\n"
-        "Rules:\n"
-        f"- target path: {target_path}\n"
-        "- return full file content for the new file only\n"
-        "- do not return unified diff\n"
-        "- do not include any fields other than content\n"
-        "- do not include explanation text\n"
-        f"Task: {task}\n"
-        f"Context: {failure_context}\n"
-        f"Patch plan: {patch_plan}\n"
+    return build_create_file_prompt(
+        task=task,
+        target_path=target_path,
+        failure_context=failure_context,
+        patch_plan=patch_plan,
     )
 
 
@@ -452,21 +344,44 @@ def _build_insert_after_prompt(
     failure_context: dict[str, Any],
     patch_plan: dict[str, Any],
 ) -> str:
-    return (
-        "Return strict JSON only. No markdown. No prose.\n"
-        "Schema:\n"
-        "{\n"
-        '  "content": "text to insert"\n'
-        "}\n"
-        "Rules:\n"
-        f"- target path: {target_path}\n"
-        f"- insert after exact anchor text: {anchor}\n"
-        "- return only insertion content, not full file content\n"
-        "- do not return unified diff\n"
-        "- do not include any fields other than content\n"
-        f"Task: {task}\n"
-        f"Context: {failure_context}\n"
-        f"Patch plan: {patch_plan}\n"
+    return build_insert_after_prompt(
+        task=task,
+        target_path=target_path,
+        anchor=anchor,
+        failure_context=failure_context,
+        patch_plan=patch_plan,
+    )
+
+
+def _resolve_insert_anchor_index(*, original_text: str, anchor: str) -> tuple[bool, int | None, str | None]:
+    lines = str(original_text or "").splitlines(keepends=True)
+    needle = str(anchor or "").strip()
+    matches = [idx for idx, line in enumerate(lines) if str(line).rstrip("\n\r").strip() == needle]
+    if not matches:
+        return False, None, OPERATION_ANCHOR_NOT_FOUND
+    if len(matches) != 1:
+        return False, None, OPERATION_ANCHOR_AMBIGUOUS
+    return True, int(matches[0]), None
+
+
+def _append_python_sanity_error(*, target_path: str, original_text: str, appended_content: str) -> str | None:
+    from aegis_code.operations import append as _append_pipeline
+
+    return _append_pipeline._append_python_sanity_error(
+        target_path=target_path,
+        original_text=original_text,
+        appended_content=appended_content,
+    )
+
+
+def _validate_append_diff(*, diff_text: str, original_text: str, target_path: str, cwd: Path) -> tuple[bool, str | None]:
+    from aegis_code.operations import append as _append_pipeline
+
+    return _append_pipeline._validate_append_diff(
+        diff_text=diff_text,
+        original_text=original_text,
+        target_path=target_path,
+        cwd=cwd,
     )
 
 
@@ -1830,6 +1745,7 @@ def build_run_payload(
     requested_operation = requested_operation_value
     insert_anchor_index: int | None = None
     insert_original_text: str | None = None
+    insert_anchor_text: str | None = None
     if explicit_scope_active:
         scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
         scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))
@@ -1940,7 +1856,7 @@ def build_run_payload(
             should_patch_flow = False
         else:
             target = explicit_targets[0]
-            if _create_file_target_exists(cwd=(cwd or Path.cwd()), target_path=target):
+            if (((cwd or Path.cwd()).resolve() / target).resolve()).exists():
                 patch_quality = None
                 remove_latest_diff(cwd=cwd)
                 remove_latest_invalid_diff(cwd=cwd)
@@ -1971,6 +1887,7 @@ def build_run_payload(
         anchor_text = str(options.anchor or "").strip()
         if not anchor_text:
             anchor_text = str(explicit_scope.get("anchor", "") or "").strip()
+        insert_anchor_text = anchor_text or None
         insert_contract_ok = len(explicit_targets) == 1 and bool(anchor_text)
         if not insert_contract_ok:
             patch_quality = None
@@ -2011,7 +1928,7 @@ def build_run_payload(
                 should_patch_flow = False
             else:
                 original_text = target_file.read_text(encoding="utf-8", errors="replace")
-                anchor_ok, anchor_index, anchor_error = _resolve_insert_after_index(
+                anchor_ok, anchor_index, anchor_error = _resolve_insert_anchor_index(
                     original_text=original_text,
                     anchor=anchor_text,
                 )
@@ -2469,309 +2386,58 @@ def build_run_payload(
                             "diff": "",
                             "error": "structured_output_invalid",
                         }
-        if requested_operation == "append":
-            append_target = ""
-            if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
-                append_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
-            append_prompt_context = dict(failure_context) if isinstance(failure_context, dict) else {"files": []}
-            append_target_contexts: list[dict[str, Any]] = []
-            if append_target:
-                target_file = ((cwd or Path.cwd()).resolve() / append_target).resolve()
-                if target_file.exists() and target_file.is_file():
-                    original_text_for_context = target_file.read_text(encoding="utf-8", errors="replace")
-                    append_target_contexts.append(
-                        _build_append_target_context(
-                            cwd=(cwd or Path.cwd()).resolve(),
-                            target_path=append_target,
-                            original_text=original_text_for_context,
-                        )
-                    )
-            append_prompt_context["append_target_contexts"] = append_target_contexts
-            append_result, append_timed_out = _run_with_provider_heartbeat(
-                options,
-                "append content generation",
-                lambda: generate_structured_edits(
-                    provider=config.providers.provider,
-                    model=selected_model,
-                    task=options.task,
-                    failures=final_failures,
-                    context=append_prompt_context,
-                    patch_plan=patch_plan,
-                    aegis_execution=aegis_guidance,
-                    api_key_env=config.providers.api_key_env,
-                    base_url=str(config.providers.base_url or ""),
-                    max_context_chars=int(config.patches.max_context_chars),
-                    operation="append",
-                ),
-                timeout_seconds=provider_timeout_seconds,
+        if requested_operation in {"append", "create-file", "insert-after"}:
+            operation_targets = (
+                [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()]
+                if isinstance(patch_plan.get("allowed_targets", []), list)
+                else []
             )
-            if append_timed_out:
-                provider_result = {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": "",
-                    "error": "provider_timeout",
-                }
-            elif not isinstance(append_result, dict) or not bool(append_result.get("available", False)):
-                provider_result = {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": "",
-                    "error": str((append_result or {}).get("error", "provider_error")) if isinstance(append_result, dict) else "provider_error",
-                }
-            else:
-                append_text = str(append_result.get("text", "") or "")
-                append_ok, append_content, append_parse_error = _parse_append_provider_response(append_text)
-                if not append_ok or append_content is None:
-                    structured_blocked = True
-                    structured_patch["status"] = "failed"
-                    structured_patch["failure_reason"] = append_parse_error or "append_output_invalid"
-                    provider_result = {
-                        "available": False,
-                        "provider": config.providers.provider,
-                        "model": selected_model,
-                        "diff": "",
-                        "error": append_parse_error or "append_output_invalid",
-                    }
-                elif append_content == "":
-                    structured_blocked = True
-                    structured_patch["status"] = "failed"
-                    structured_patch["failure_reason"] = "no_append_needed"
-                    provider_result = {
-                        "available": False,
-                        "provider": config.providers.provider,
-                        "model": selected_model,
-                        "diff": "",
-                        "error": "no_append_needed",
-                    }
-                else:
-                    target_file = ((cwd or Path.cwd()).resolve() / append_target).resolve()
-                    if not target_file.exists() or not target_file.is_file():
-                        provider_result = {"available": False, "provider": config.providers.provider, "model": selected_model, "diff": "", "error": "requested_target_missing"}
-                    else:
-                        original_text = target_file.read_text(encoding="utf-8", errors="replace")
-                        append_sanity_error = _append_python_sanity_error(
-                            target_path=append_target,
-                            original_text=original_text,
-                            appended_content=append_content,
-                        )
-                        if append_sanity_error:
-                            structured_blocked = True
-                            structured_patch["status"] = "failed"
-                            structured_patch["failure_reason"] = append_sanity_error
-                            provider_result = {
-                                "available": False,
-                                "provider": config.providers.provider,
-                                "model": selected_model,
-                                "diff": "",
-                                "error": append_sanity_error,
-                            }
-                        else:
-                            append_source_conflict = _append_source_conflict_error(
-                                cwd=(cwd or Path.cwd()).resolve(),
-                                target_path=append_target,
-                                appended_content=append_content,
-                                relevant_file_snippets=append_prompt_context.get("relevant_file_snippets", [])
-                                if isinstance(append_prompt_context.get("relevant_file_snippets", []), list)
-                                else [],
-                            )
-                            if append_source_conflict:
-                                structured_blocked = True
-                                structured_patch["status"] = "failed"
-                                structured_patch["failure_reason"] = append_source_conflict
-                                provider_result = {
-                                    "available": False,
-                                    "provider": config.providers.provider,
-                                    "model": selected_model,
-                                    "diff": "",
-                                    "error": append_source_conflict,
-                                }
-                            else:
-                                append_diff = _build_append_diff(target_path=append_target, original_text=original_text, appended_content=append_content)
-                                ok_append, append_error = _validate_append_diff(
-                                    diff_text=append_diff,
-                                    original_text=original_text,
-                                    target_path=append_target,
-                                    cwd=(cwd or Path.cwd()),
-                                )
-                                provider_result = {
-                                    "available": bool(ok_append and append_diff),
-                                    "provider": config.providers.provider,
-                                    "model": selected_model,
-                                    "diff": append_diff if ok_append else "",
-                                    "error": append_error if not ok_append else None,
-                                }
-            use_unified_fallback = False
-        if requested_operation == "create-file":
-            create_target = ""
-            if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
-                create_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
-            create_prompt = _build_create_file_prompt(
+            target_path = operation_targets[0] if operation_targets else None
+            operation_contract = normalize_operation_contract(
+                operation=requested_operation,
+                target_file=target_path,
+                anchor=insert_anchor_text if requested_operation == "insert-after" else None,
+                source="cli",
+            )
+            operation_result = run_operation_stage(
+                contract=operation_contract,
                 task=options.task,
-                target_path=create_target,
-                failure_context=failure_context if isinstance(failure_context, dict) else {"files": []},
+                cwd=(cwd or Path.cwd()).resolve(),
+                context={
+                    "failure_context": failure_context if isinstance(failure_context, dict) else {"files": []},
+                    "provider": config.providers.provider,
+                    "model": selected_model,
+                    "api_key_env": config.providers.api_key_env,
+                    "base_url": str(config.providers.base_url or ""),
+                    "max_context_chars": int(config.patches.max_context_chars),
+                    "task_options": options,
+                    "run_with_provider_heartbeat": _run_with_provider_heartbeat,
+                    "generate_structured_edits": generate_structured_edits,
+                    "generate_text": generate_text,
+                    "build_create_file_prompt": _build_create_file_prompt,
+                    "build_insert_after_prompt": _build_insert_after_prompt,
+                    "append_python_sanity_error": _append_python_sanity_error,
+                    "validate_append_diff": _validate_append_diff,
+                    "insert_original_text": insert_original_text,
+                    "insert_anchor_index": insert_anchor_index,
+                },
+                failures=final_failures if isinstance(final_failures, dict) else {},
                 patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
+                aegis_execution=aegis_guidance if isinstance(aegis_guidance, dict) else {},
+                model=selected_model,
+                provider_timeout=provider_timeout_seconds,
             )
-            create_result, create_timed_out = _run_with_provider_heartbeat(
-                options,
-                "create-file content generation",
-                lambda: generate_text(
-                    provider=config.providers.provider,
-                    model=selected_model,
-                    prompt=create_prompt,
-                    api_key_env=config.providers.api_key_env,
-                    base_url=str(config.providers.base_url or ""),
-                ),
-                timeout_seconds=provider_timeout_seconds,
-            )
-            if create_timed_out:
-                provider_result = {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": "",
-                    "error": "provider_timeout",
-                }
-            elif not isinstance(create_result, dict) or not bool(create_result.get("available", False)):
-                provider_result = {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": "",
-                    "error": str((create_result or {}).get("error", "provider_error")) if isinstance(create_result, dict) else "provider_error",
-                }
-            else:
-                create_text = str(create_result.get("text", "") or "")
-                create_ok, create_content, create_parse_error = _parse_create_file_provider_response(create_text)
-                if not create_ok or create_content is None:
-                    structured_blocked = True
-                    structured_patch["status"] = "failed"
-                    structured_patch["failure_reason"] = create_parse_error or CREATE_FILE_OUTPUT_INVALID
-                    provider_result = {
-                        "available": False,
-                        "provider": config.providers.provider,
-                        "model": selected_model,
-                        "diff": "",
-                        "error": create_parse_error or CREATE_FILE_OUTPUT_INVALID,
-                    }
-                else:
-                    create_diff = _build_create_file_diff(target_path=create_target, new_content=create_content)
-                    ok_create, create_error = _validate_create_file_diff(
-                        diff_text=create_diff,
-                        target_path=create_target,
-                        cwd=(cwd or Path.cwd()),
-                    )
-                    provider_result = {
-                        "available": bool(ok_create and create_diff),
-                        "provider": config.providers.provider,
-                        "model": selected_model,
-                        "diff": create_diff if ok_create else "",
-                        "error": create_error if not ok_create else None,
-                    }
-            use_unified_fallback = False
-        if requested_operation == "insert-after":
-            insert_target = ""
-            if isinstance(patch_plan.get("allowed_targets", []), list) and patch_plan.get("allowed_targets", []):
-                insert_target = str(patch_plan.get("allowed_targets", [])[0]).strip()
-            insert_anchor = str(options.anchor or "").strip()
-            insert_prompt = _build_insert_after_prompt(
-                task=options.task,
-                target_path=insert_target,
-                anchor=insert_anchor,
-                failure_context=failure_context if isinstance(failure_context, dict) else {"files": []},
-                patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
-            )
-            insert_result, insert_timed_out = _run_with_provider_heartbeat(
-                options,
-                "insert-after content generation",
-                lambda: generate_text(
-                    provider=config.providers.provider,
-                    model=selected_model,
-                    prompt=insert_prompt,
-                    api_key_env=config.providers.api_key_env,
-                    base_url=str(config.providers.base_url or ""),
-                ),
-                timeout_seconds=provider_timeout_seconds,
-            )
-            if insert_timed_out:
-                provider_result = {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": "",
-                    "error": "provider_timeout",
-                }
-            elif not isinstance(insert_result, dict) or not bool(insert_result.get("available", False)):
-                provider_result = {
-                    "available": False,
-                    "provider": config.providers.provider,
-                    "model": selected_model,
-                    "diff": "",
-                    "error": str((insert_result or {}).get("error", "provider_error")) if isinstance(insert_result, dict) else "provider_error",
-                }
-            else:
-                insert_text = str(insert_result.get("text", "") or "")
-                insert_ok, insert_content, insert_parse_error = _parse_insert_provider_response(insert_text)
-                if not insert_ok or insert_content is None:
-                    structured_blocked = True
-                    structured_patch["status"] = "failed"
-                    structured_patch["failure_reason"] = insert_parse_error or INSERT_OUTPUT_INVALID
-                    provider_result = {
-                        "available": False,
-                        "provider": config.providers.provider,
-                        "model": selected_model,
-                        "diff": "",
-                        "error": insert_parse_error or INSERT_OUTPUT_INVALID,
-                    }
-                else:
-                    target_file = ((cwd or Path.cwd()).resolve() / insert_target).resolve()
-                    if not target_file.exists() or not target_file.is_file():
-                        provider_result = {
-                            "available": False,
-                            "provider": config.providers.provider,
-                            "model": selected_model,
-                            "diff": "",
-                            "error": OPERATION_TARGET_MISSING,
-                        }
-                    else:
-                        original_text = insert_original_text
-                        anchor_index = insert_anchor_index
-                        if original_text is None or anchor_index is None:
-                            structured_blocked = True
-                            structured_patch["status"] = "failed"
-                            structured_patch["failure_reason"] = OPERATION_CONTRACT_INVALID
-                            provider_result = {
-                                "available": False,
-                                "provider": config.providers.provider,
-                                "model": selected_model,
-                                "diff": "",
-                                "error": OPERATION_CONTRACT_INVALID,
-                            }
-                        else:
-                            inserted_text = _insert_after_index(
-                                original_text=original_text,
-                                index=anchor_index,
-                                insert_content=insert_content,
-                            )
-                            insert_diff = _build_insert_after_diff(
-                                target_path=insert_target,
-                                original_text=original_text,
-                                new_text=inserted_text,
-                            )
-                            ok_insert, validate_error = _validate_insert_diff(
-                                diff_text=insert_diff,
-                                target_path=insert_target,
-                                cwd=(cwd or Path.cwd()),
-                            )
-                            provider_result = {
-                                "available": bool(ok_insert and insert_diff),
-                                "provider": config.providers.provider,
-                                "model": selected_model,
-                                "diff": insert_diff if ok_insert else "",
-                                "error": validate_error if not ok_insert else None,
-                            }
+            provider_result = {
+                "available": operation_result.status == "generated" and bool(operation_result.diff_text),
+                "provider": operation_result.provider or config.providers.provider,
+                "model": operation_result.model or selected_model,
+                "diff": operation_result.diff_text if operation_result.status == "generated" else "",
+                "error": operation_result.error,
+            }
+            if operation_result.status == "blocked":
+                structured_blocked = True
+                structured_patch["status"] = "failed"
+                structured_patch["failure_reason"] = operation_result.error or OPERATION_CONTRACT_INVALID
             use_unified_fallback = False
         if use_unified_fallback:
             provider_result, provider_timed_out = _run_with_provider_heartbeat(

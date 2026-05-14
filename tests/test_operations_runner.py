@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from aegis_code.operations import OperationRequest, OperationResult, normalize_operation_contract, run_operation
+
+
+def _request(operation: str) -> OperationRequest:
+    return OperationRequest(
+        contract=normalize_operation_contract(
+            operation=operation,
+            target_file="src/helpers.py",
+            source="cli",
+        ),
+        task="task",
+        cwd=Path.cwd(),
+        context={},
+        failures={},
+        patch_plan={},
+        aegis_execution={},
+        model="gpt-4.1-mini",
+    )
+
+
+def test_run_operation_dispatches_append(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.append.run_append_operation", _fake)
+    result = run_operation(_request("append"))
+    assert seen == ["append"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_create_file(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.create_file.run_create_file_operation", _fake)
+    result = run_operation(_request("create-file"))
+    assert seen == ["create-file"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_insert_after(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.insert.run_insert_after_operation", _fake)
+    result = run_operation(_request("insert-after"))
+    assert seen == ["insert-after"]
+    assert result.status == "generated"
+
+
+def test_run_operation_unsupported_operation_is_blocked() -> None:
+    result = run_operation(_request("replace"))
+    assert result.attempted is False
+    assert result.status == "blocked"
+    assert result.error == "operation_contract_invalid"
+    assert result.operation == "replace"
+    assert result.source == "cli"

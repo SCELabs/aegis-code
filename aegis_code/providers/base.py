@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from aegis_code.patches.constraints import build_patch_constraints
+from aegis_code.providers.prompts import build_append_prompt
 from aegis_code.safety.patch_review import render_safety_constraints_for_prompt
 from aegis_code.providers.context_builder import (
     build_named_test_file_context,
@@ -321,49 +322,12 @@ def build_structured_edit_prompt(
     operation: str | None = None,
 ) -> str:
     if str(operation or "").strip().lower() == "append":
-        allowed_targets = patch_plan.get("allowed_targets", [])
-        target = str(allowed_targets[0]).strip() if isinstance(allowed_targets, list) and allowed_targets else ""
-        repo_map_rendered = _repo_map_text(context)
-        append_target_context_text = _append_target_context_text(context)
-        relevant_snippets = _relevant_snippets_text(context)
-        return (
-            "Return only JSON. No markdown. No explanations.\n"
-            "Schema:\n"
-            "{\n"
-            '  "content": "text to append at end of file"\n'
-            "}\n"
-            "Rules:\n"
-            "- return append content only, not full file content\n"
-            "- do not return unified diff\n"
-            f"- target path: {target}\n"
-            "- use the repository map to avoid inventing module names, CLI commands, files, functions, or unsupported options\n"
-            "- prefer exact symbols and command patterns already present in the repo\n"
-            "- if the repository map conflicts with the task wording, follow the repository map unless the user explicitly requests a change\n"
-            "- Do not repeat imports already present in the target file.\n"
-            "- Do not add a test/function with a name already present.\n"
-            "- Do not duplicate an existing workflow already covered in the target file.\n"
-            "- For docs append tasks, document only behavior visible in source snippets.\n"
-            "- Do not invent cleanup, sanitization, stripping, punctuation handling, or URL-safe behavior unless present.\n"
-            '- If package_json_type is "module" or js_module_system is "esm", do not use require(); use import/export style.\n'
-            '- If js_test_framework is "node:test", do not use Jest globals like describe/expect; use node:test style.\n'
-            "- Do not introduce unrelated symbols or commands absent from repo map/snippets.\n"
-            '- If the requested behavior is already covered, return: {"content": ""}\n'
-            f"{render_safety_constraints_for_prompt(task)}"
-            f"Task: {task}\n"
-            f"Failures: {failures}\n"
-            f"Context: {context}\n"
-            + (f"Repository map:\n{repo_map_rendered}\n" if repo_map_rendered else "")
-            + (
-                "Snippet grounding guidance:\n"
-                "- Prefer exact behaviors/output observed in provided excerpts.\n"
-                "- Do not invent commands/options/modules not present in snippets.\n"
-                f"{relevant_snippets}\n"
-                if relevant_snippets
-                else ""
-            )
-            + (f"{append_target_context_text}\n" if append_target_context_text else "")
-            + f"Patch plan: {patch_plan}\n"
-            + f"Aegis execution guidance: {aegis_execution}\n"
+        return build_append_prompt(
+            task=task,
+            failures=failures,
+            context=context,
+            patch_plan=patch_plan,
+            aegis_execution=aegis_execution,
         )
     allowed_targets = patch_plan.get("allowed_targets", [])
     allowed_text = ""

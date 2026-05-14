@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from aegis_code.operations.contract import OperationContract, normalize_operation_contract
+from aegis_code.operations.runner import OperationRequest, OperationResult, run_operation
+from aegis_code.operations.append import run_append_operation
 from aegis_code.operations.create_file import (
     _build_create_file_diff,
     _parse_create_file_provider_response,
     _target_exists,
     _validate_create_file_diff,
+    run_create_file_operation,
 )
 from aegis_code.operations.insert import (
     _build_insert_after_diff,
@@ -13,6 +16,7 @@ from aegis_code.operations.insert import (
     insert_after_index,
     _parse_insert_provider_response,
     resolve_insert_after_index,
+    run_insert_after_operation,
     _validate_insert_diff,
 )
 from aegis_code.operations.errors import (
@@ -37,7 +41,13 @@ from aegis_code.operations.errors import (
 
 __all__ = [
     "OperationContract",
+    "OperationRequest",
+    "OperationResult",
     "normalize_operation_contract",
+    "run_operation",
+    "run_append_operation",
+    "run_create_file_operation",
+    "run_insert_after_operation",
     "OPERATION_CONTRACT_INVALID",
     "OPERATION_TARGET_MISSING",
     "OPERATION_ANCHOR_NOT_FOUND",
