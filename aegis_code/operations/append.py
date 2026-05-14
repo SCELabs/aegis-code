@@ -137,11 +137,20 @@ def run_append_operation(request: OperationRequest) -> OperationResult:
     from aegis_code.operations.runner import OperationResult
 
     context = request.context if isinstance(request.context, dict) else {}
+    deps = request.dependencies
     provider = str(context.get("provider", "") or "")
     model = str(request.model or context.get("model", "") or "")
-    run_with_provider_heartbeat = context.get("run_with_provider_heartbeat")
-    generate_structured_edits_fn = context.get("generate_structured_edits")
-    task_options = context.get("task_options")
+    run_with_provider_heartbeat = (
+        deps.run_with_provider_heartbeat
+        if deps and deps.run_with_provider_heartbeat
+        else context.get("run_with_provider_heartbeat")
+    )
+    generate_structured_edits_fn = (
+        deps.generate_structured_edits
+        if deps and deps.generate_structured_edits
+        else context.get("generate_structured_edits")
+    )
+    task_options = deps.task_options if deps and deps.task_options is not None else context.get("task_options")
     timeout_seconds = int(request.provider_timeout or 60)
     if not callable(run_with_provider_heartbeat) or not callable(generate_structured_edits_fn):
         return OperationResult(
@@ -182,9 +191,15 @@ def run_append_operation(request: OperationRequest) -> OperationResult:
             context=append_prompt_context,
             patch_plan=request.patch_plan,
             aegis_execution=request.aegis_execution,
-            api_key_env=context.get("api_key_env"),
-            base_url=str(context.get("base_url", "") or ""),
-            max_context_chars=int(context.get("max_context_chars", 0) or 0),
+            api_key_env=(deps.api_key_env if deps and deps.api_key_env is not None else context.get("api_key_env")),
+            base_url=str(
+                (deps.base_url if deps and deps.base_url is not None else context.get("base_url", ""))
+                or ""
+            ),
+            max_context_chars=int(
+                (deps.max_context_chars if deps and deps.max_context_chars is not None else context.get("max_context_chars", 0))
+                or 0
+            ),
             operation="append",
         ),
         timeout_seconds=timeout_seconds,
@@ -246,7 +261,11 @@ def run_append_operation(request: OperationRequest) -> OperationResult:
         )
 
     original_text = target_file.read_text(encoding="utf-8", errors="replace")
-    append_sanity_fn = context.get("append_python_sanity_error")
+    append_sanity_fn = (
+        deps.append_python_sanity_error
+        if deps and deps.append_python_sanity_error
+        else context.get("append_python_sanity_error")
+    )
     if not callable(append_sanity_fn):
         append_sanity_fn = _append_python_sanity_error
     append_sanity_error = append_sanity_fn(
@@ -283,7 +302,11 @@ def run_append_operation(request: OperationRequest) -> OperationResult:
             source=request.contract.source,
         )
     append_diff = _build_append_diff(target_path=target_path, original_text=original_text, appended_content=append_content)
-    validate_append_fn = context.get("validate_append_diff")
+    validate_append_fn = (
+        deps.validate_append_diff
+        if deps and deps.validate_append_diff
+        else context.get("validate_append_diff")
+    )
     if not callable(validate_append_fn):
         validate_append_fn = _validate_append_diff
     ok_append, append_error = validate_append_fn(

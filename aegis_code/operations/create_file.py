@@ -75,12 +75,21 @@ def run_create_file_operation(request: OperationRequest) -> OperationResult:
     from aegis_code.operations.runner import OperationResult
 
     context = request.context if isinstance(request.context, dict) else {}
+    deps = request.dependencies
     provider = str(context.get("provider", "") or "")
     model = str(request.model or context.get("model", "") or "")
-    run_with_provider_heartbeat = context.get("run_with_provider_heartbeat")
-    generate_text_fn = context.get("generate_text")
-    build_prompt_fn = context.get("build_create_file_prompt")
-    task_options = context.get("task_options")
+    run_with_provider_heartbeat = (
+        deps.run_with_provider_heartbeat
+        if deps and deps.run_with_provider_heartbeat
+        else context.get("run_with_provider_heartbeat")
+    )
+    generate_text_fn = deps.generate_text if deps and deps.generate_text else context.get("generate_text")
+    build_prompt_fn = (
+        deps.build_create_file_prompt
+        if deps and deps.build_create_file_prompt
+        else context.get("build_create_file_prompt")
+    )
+    task_options = deps.task_options if deps and deps.task_options is not None else context.get("task_options")
     timeout_seconds = int(request.provider_timeout or 60)
     if not callable(run_with_provider_heartbeat) or not callable(generate_text_fn) or not callable(build_prompt_fn):
         return OperationResult(
@@ -107,8 +116,11 @@ def run_create_file_operation(request: OperationRequest) -> OperationResult:
             provider=provider,
             model=model,
             prompt=prompt,
-            api_key_env=context.get("api_key_env"),
-            base_url=str(context.get("base_url", "") or ""),
+            api_key_env=(deps.api_key_env if deps and deps.api_key_env is not None else context.get("api_key_env")),
+            base_url=str(
+                (deps.base_url if deps and deps.base_url is not None else context.get("base_url", ""))
+                or ""
+            ),
         ),
         timeout_seconds=timeout_seconds,
     )

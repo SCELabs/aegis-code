@@ -2,9 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from aegis_code.operations.contract import OperationContract
+
+
+@dataclass(slots=True)
+class OperationDependencies:
+    run_with_provider_heartbeat: Callable[..., Any] | None = None
+    generate_text: Callable[..., Any] | None = None
+    generate_structured_edits: Callable[..., Any] | None = None
+    build_create_file_prompt: Callable[..., str] | None = None
+    build_insert_after_prompt: Callable[..., str] | None = None
+    task_options: Any = None
+    api_key_env: str | None = None
+    base_url: str | None = None
+    max_context_chars: int | None = None
+    append_python_sanity_error: Callable[..., str | None] | None = None
+    validate_append_diff: Callable[..., tuple[bool, str | None]] | None = None
 
 
 @dataclass(slots=True)
@@ -17,6 +32,7 @@ class OperationRequest:
     patch_plan: dict[str, Any]
     aegis_execution: dict[str, Any]
     model: str
+    dependencies: OperationDependencies | None = None
     provider_timeout: int | None = None
 
 

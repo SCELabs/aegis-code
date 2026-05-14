@@ -62,6 +62,17 @@ aegis-code provider model <tier> <provider:model>
 - Provider-backed patch generation is proposal-only.
 - All generated patches still go through validation, safety scoring, and apply gating.
 - Aegis Code remains a controlled pipeline even when provider output is available.
+- Provider integration is pluggable; control policy and validation remain local runtime responsibilities.
+
+## Prompt Ownership (Current)
+
+Operation-specific prompts are owned by dedicated prompt modules:
+
+- `aegis_code/providers/prompts/append.py`
+- `aegis_code/providers/prompts/create_file.py`
+- `aegis_code/providers/prompts/insert_after.py`
+
+Runtime/provider orchestration routes request context and contracts to these builders; prompt specialization is intentionally decoupled from core runtime flow.
 
 ## Aegis Integration
 

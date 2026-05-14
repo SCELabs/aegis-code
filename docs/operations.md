@@ -1,127 +1,181 @@
 # Operations Architecture (Controlled Mutations)
 
 ## Purpose
-Define a clear operation model for mutation proposals where intent is explicit, enforcement is deterministic, and execution remains bounded.
+Describe the current controlled mutation architecture used by scoped patch flows, including stable contracts, ownership boundaries, and extension points.
 
-## Mutation Philosophy
-1. Developer/agent declares mutation intent: scope and operation.
-2. Aegis enforces contract constraints before and after generation.
-3. Provider proposes changes inside the contract boundary.
-4. Verification (tests + validation + safety checks) determines readiness.
+## Controlled Mutation Model
+1. User or agent declares explicit mutation intent (`--operation`, scoped files, optional anchor).
+2. Runtime normalizes contract and enforces scope/policy guards.
+3. Operation stage builds a typed request and dependencies.
+4. Operation runner dispatches to a specific operation module.
+5. Operation module requests provider output, builds local diff, validates operation semantics.
+6. Runtime performs broader diff validation/safety/report assembly.
+7. Apply remains explicit (`apply --confirm`).
 
-This keeps Aegis Code proposal-first and control-first: no silent operation selection, no implicit broad edits.
+Core philosophy:
+- AI proposes.
+- Aegis controls.
+- Developer decides.
+- Tests verify.
 
-## Operation Set
-Current:
+## Current Operations
+Validated:
 - `append`
-
-Planned:
 - `create-file`
 - `insert-after`
+
+Planned:
 - `insert-before`
 - `replace-block`
+- `replace-symbol`
 - `delete-block`
 - `replace-file`
 
-Notes:
-- `append` remains explicit (`--operation append`).
-- Planned operations are design targets only; this doc does not introduce new CLI behavior.
-
-## Operation Contract Fields
-Every operation request should normalize into one contract object with:
-- `operation`: operation name.
-- `target_file`: normalized repo-relative file path.
-- `anchor`: textual or structural anchor (line marker, heading, pattern) when required.
-- `symbol`: optional symbol/function/class anchor for structured insertion/replacement.
-- `allow_deletions`: boolean guard (default false for additive operations).
-- `allow_new_file`: boolean guard for creation semantics.
-- `max_changed_lines`: hard budget for mutation size.
-
-Recommended existing companion fields:
-- allowed targets/files
-- allowed operations
-- max files
-- missing targets / block reason
-
-## Module Boundaries
-- `aegis_code/cli.py`: parse user intent only (task, scope flags, operation flags).
-- `aegis_code/scope/contract.py`: owns scope and contract normalization/validation.
-- `aegis_code/operations/` (planned): owns operation execution semantics and operation-specific validators.
-- `aegis_code/providers/prompts/` (planned): owns operation-specific prompt templates/instructions.
-- `aegis_code/runtime.py`: orchestration only (routing, policy checks, verification/report assembly), not operation business logic.
+## Runtime and Operation Ownership
+- `aegis_code/runtime.py`: orchestration, policy checks, verification, report payload shaping.
+- `aegis_code/runtime_components/operation_stage.py`: operation-stage bridge (`run_operation_stage`), request/dependency assembly.
+- `aegis_code/operations/runner.py`: typed request/result/dependencies + dispatch (`run_operation`).
+- `aegis_code/operations/<operation>.py`: operation-specific execution semantics and local operation validation.
+- `aegis_code/providers/prompts/`: operation prompt ownership (`append`, `create_file`, `insert_after` prompt builders).
 
 Boundary rule:
-- Runtime should consume contracts and operation results, not encode operation semantics inline.
+- Runtime consumes operation results; operation modules own operation-specific provider orchestration and local mutation semantics.
+
+## Stable Contracts
+
+### OperationContract
+Source: `aegis_code/operations/contract.py`
+
+Primary fields:
+- `operation`
+- `target_file`
+- `anchor`
+- `symbol`
+- `allow_deletions`
+- `allow_new_file`
+- `max_changed_lines`
+- `source`
+
+### OperationRequest
+Source: `aegis_code/operations/runner.py`
+
+Carries runtime-to-operation input:
+- `contract`
+- `task`
+- `cwd`
+- `context` (compatibility channel; still supported)
+- `failures`
+- `patch_plan`
+- `aegis_execution`
+- `model`
+- `dependencies` (`OperationDependencies`, optional)
+- `provider_timeout`
+
+### OperationDependencies
+Source: `aegis_code/operations/runner.py`
+
+Typed dependency bundle for operation modules:
+- provider hooks (`run_with_provider_heartbeat`, `generate_text`, `generate_structured_edits`)
+- prompt builders (`build_create_file_prompt`, `build_insert_after_prompt`)
+- runtime/provider metadata (`task_options`, `api_key_env`, `base_url`, `max_context_chars`)
+- append validators (`append_python_sanity_error`, `validate_append_diff`)
+
+Compatibility note:
+- Operation modules prefer typed dependencies when present and fall back to `request.context` keys for backward compatibility.
+
+### OperationResult
+Source: `aegis_code/operations/runner.py`
+
+Standard operation-stage output:
+- `attempted`, `status`
+- `diff_text`, `error`
+- `provider`, `model`
+- `validation_result`
+- `operation`, `source`
+- `metadata`
+
+## Dispatch and Stage APIs
+
+### run_operation(request)
+Source: `aegis_code/operations/runner.py`
+
+Dispatches to:
+- `run_append_operation`
+- `run_create_file_operation`
+- `run_insert_after_operation`
+
+Unsupported operation behavior is stable:
+- `attempted=False`
+- `status="blocked"`
+- `error="operation_contract_invalid"`
+
+### run_operation_stage(...)
+Source: `aegis_code/runtime_components/operation_stage.py`
+
+Bridge used by runtime operation flow:
+- builds `OperationRequest`
+- builds typed `OperationDependencies` from runtime values
+- calls `run_operation`
+- returns `OperationResult`
+
+## Prompt Ownership
+Operation prompt builders now live in:
+- `aegis_code/providers/prompts/append.py`
+- `aegis_code/providers/prompts/create_file.py`
+- `aegis_code/providers/prompts/insert_after.py`
+
+This keeps prompt policy modular and prevents runtime/provider base from accumulating operation-specific prompt logic.
 
 ## Error Code Model
-Operation failures should be explicit, stable, and user-actionable.
+Operation errors are explicit and stable.
 
-Shape:
-- `operation_<operation>_<reason>`
-- Keep existing stable codes where already in use (for backward compatibility), especially append codes.
+Generic families:
+- `operation_contract_invalid`
+- `operation_target_missing`
+- `operation_anchor_not_found`
+- `operation_anchor_ambiguous`
+- `operation_validation_failed`
+- `operation_target_exists`
 
-Existing append-specific examples:
+Current operation-specific examples:
 - `append_output_invalid`
 - `append_syntax_invalid`
 - `append_semantic_suspicious`
 - `invalid_append_operation`
 - `append_source_conflict`
 - `no_append_needed`
+- `create_file_output_invalid`
+- `insert_output_invalid`
 
-Proposed generic families:
-- `operation_contract_invalid`
-- `operation_target_missing`
-- `operation_anchor_not_found`
-- `operation_symbol_not_found`
-- `operation_budget_exceeded`
-- `operation_validation_failed`
-- `operation_policy_blocked`
+## Reporting and Metadata
+Runtime preserves operation metadata in payload/report:
+- `patch_operation.operation`
+- `patch_operation.source`
 
-Rule:
-- Do not collapse operation-specific failures into generic skip reasons when operation flow was actually attempted.
+This metadata remains stable for diagnostics, auditing, and downstream automation.
 
-## Agent Usage Examples
-Explicit append:
-```bash
-aegis-code patch --file tests/test_cli.py --operation append "add regression test for invalid todo id"
-```
+## Compatibility Exports and Notes
+- `aegis_code/operations/__init__.py` exports:
+  - `OperationContract`
+  - `OperationRequest`
+  - `OperationDependencies`
+  - `OperationResult`
+  - `run_operation`
+  - operation entrypoints
+- Runtime compatibility wrappers are intentionally retained where tests/monkeypatching depend on runtime symbols.
+- Context-based dependency lookup remains supported alongside typed dependencies.
 
-Planned insert-after shape (future):
-```text
-operation=insert-after
-target_file=src/notes.js
-symbol=addNote
-max_changed_lines=40
-allow_deletions=false
-```
-
-Planned replace-block shape (future):
-```text
-operation=replace-block
-target_file=README.md
-anchor="## Usage"
-max_changed_lines=80
-allow_deletions=true
-```
-
-## Phased Roadmap
-1. Contract hardening
-- Normalize operation contract fields in one place.
-- Enforce explicit operation intent with no silent inference.
-
-2. Operation module extraction
-- Move append and future operation semantics into `operations/`.
-- Keep runtime orchestration stable.
-
-3. Prompt specialization
-- Add operation-specific provider prompt modules under `providers/prompts/`.
-- Keep operation constraints mirrored in post-generation validators.
-
-4. Planned operation rollout
-- Introduce one operation at a time with validator + policy + report support.
-- Add regression tests for routing, enforcement, and error-code propagation.
-
-5. Consistency and observability
-- Ensure reports always surface operation name, source, and exact operation failure code.
-- Preserve stable error-code contracts across releases.
-
+## Adding a New Operation (Checklist)
+1. Extend `OperationContract` only if new contract fields are truly required.
+2. Add prompt builder(s) under `aegis_code/providers/prompts/` if operation needs custom prompting.
+3. Implement `run_<operation>_operation()` in `aegis_code/operations/`.
+4. Register dispatch in `run_operation()` (`aegis_code/operations/runner.py`).
+5. Add/update tests:
+   - operation unit tests
+   - runner dispatch tests
+   - runtime operation-stage flow tests
+   - error-path and metadata preservation tests
+6. Update docs:
+   - `README.md`
+   - `docs/commands.md`
+   - `docs/operations.md`

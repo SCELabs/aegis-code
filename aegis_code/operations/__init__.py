@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from aegis_code.operations.contract import OperationContract, normalize_operation_contract
-from aegis_code.operations.runner import OperationRequest, OperationResult, run_operation
+from aegis_code.operations.runner import (
+    OperationDependencies,
+    OperationRequest,
+    OperationResult,
+    run_operation,
+)
 from aegis_code.operations.append import run_append_operation
 from aegis_code.operations.create_file import (
     _build_create_file_diff,
@@ -41,6 +46,7 @@ from aegis_code.operations.errors import (
 
 __all__ = [
     "OperationContract",
+    "OperationDependencies",
     "OperationRequest",
     "OperationResult",
     "normalize_operation_contract",

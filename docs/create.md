@@ -4,6 +4,7 @@
 
 - It generates a deterministic local project plan preview.
 - It does not write project files unless both `--target` and `--confirm` are provided.
+- It is separate from controlled patch mutation operations (`append`, `create-file`, `insert-after`) used by `aegis-code patch`.
 
 Discover stack profiles without planning or scaffolding:
 
@@ -57,3 +58,4 @@ Notes:
 
 - Internal scaffold profiles only for now.
 - No external Copier/Cookiecutter template dependency yet.
+- Runtime mutation safety/apply gates still apply to normal patch/apply flows; `create` focuses on deterministic scaffold planning and optional scaffold write.

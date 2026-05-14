@@ -1,5 +1,15 @@
 # Runtime Modularization RFC (No-Behavior-Change Plan)
 
+## Status (Implemented Through Phase 3B)
+This RFC is a planning/history document. The current implementation has already completed key milestones:
+
+- Phase 1: operation runner + request/result contracts
+- Phase 2: operation prompt extraction under `aegis_code/providers/prompts/`
+- Phase 3: operation-stage bridge in `aegis_code/runtime_components/operation_stage.py`
+- Phase 3B: typed `OperationDependencies`
+
+Some sections below use future/planned language from the original RFC and are retained for historical sequencing context.
+
 ## Summary
 `aegis_code/runtime.py` currently combines orchestration, policy, prompt shaping inputs, diff validation/safety, append-specific execution, feature-step execution, diagnostics, and payload assembly. This RFC proposes a phased modular refactor that preserves current behavior and public CLI/runtime contracts while reducing coupling and regression risk.
 
@@ -190,4 +200,3 @@ Compatibility strategy for monkeypatch-heavy tests:
 - `aegis_code/verification.py` already encapsulates verification command resolution and should remain canonical.
 - `aegis_code/providers/base.py` already centralizes prompt construction constraints and should continue to receive grounded context from runtime.
 - `aegis_code/patches/*` modules remain canonical for diff inspection/repair/policy primitives; extraction should compose these rather than duplicate logic.
-

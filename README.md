@@ -13,6 +13,13 @@ Aegis Code is a safety/control layer around AI-assisted patch generation. It is 
 - require explicit human confirmation before file mutation
 - optionally verify with tests after apply
 
+Core philosophy:
+
+- AI proposes.
+- Aegis controls.
+- Developer decides.
+- Tests verify.
+
 ## What Aegis Code Is Not
 
 Aegis Code is not:
@@ -21,6 +28,27 @@ Aegis Code is not:
 - a replacement for developer review
 - a blind patch applier
 - a guarantee that every generated patch is correct
+
+## Controlled Mutation Architecture
+
+Aegis Code is provider-agnostic and proposal-first. Runtime orchestration and operation execution are intentionally separated so mutation intent is explicit and enforceable.
+
+Current validated operations:
+
+- `append`
+- `create-file`
+- `insert-after`
+
+Architecture overview:
+
+`CLI -> Runtime -> Operation Stage -> Operation Runner -> Operation Module -> Local Diff Validation -> Report -> Apply`
+
+Extension path:
+
+- Add a new operation module with local validation semantics.
+- Add prompt builder(s) under `aegis_code/providers/prompts/` when needed.
+- Register dispatch in the operation runner.
+- Add runtime/operation tests and update docs.
 
 ## Core Workflow
 
@@ -95,6 +123,7 @@ aegis-code apply --confirm --run-tests
 ## Safety Model
 
 - Proposal-first: generation is proposal-only.
+- Explicit operation intent: operation mode is user-declared and contract-checked for scoped patch flows.
 - No silent apply: `--confirm` is required for mutation.
 - Accepted vs invalid diffs:
   - accepted diff: `.aegis/runs/latest.diff`
@@ -106,6 +135,7 @@ aegis-code apply --confirm --run-tests
   - `LOW` and `BLOCKED` are blocked.
 - Hard-invalid guards block placeholder/truncation content and destructive rewrites.
 - Destructive rewrite protection includes tests/docs-focused guards.
+- Validation path includes diff inspection, operation-specific checks, and patch safety scoring.
 - No git commands are run by Aegis Code.
 - Stale diff cleanup: task runs clear prior `latest.diff` / `latest.invalid.diff` before new generation.
 
@@ -116,14 +146,18 @@ aegis-code apply --confirm --run-tests
 ```bash
 aegis-code patch --file src/example.py "fix bug in parser"
 aegis-code patch --file README.md --operation append "add usage examples"
+aegis-code patch --file src/helpers.js --operation create-file "create helper module"
+aegis-code patch --file src/helpers.js --operation insert-after --anchor "// ANCHOR" "insert helper after anchor"
 ```
 
 Behavior:
 
 - Requires explicit scope: at least one `--file`.
 - Uses proposal-only generation and validation; no mutation without `apply --confirm`.
-- `--operation append` enables append-only generation for additive updates.
+- Supported explicit operations: `append`, `create-file`, `insert-after`.
+- `--anchor` is required for `--operation insert-after` and must match an exact line.
 - For additive docs tasks without explicit append mode, CLI prints guidance to rerun with `--operation append` (no automatic operation inference).
+- Runtime reports preserve operation metadata (`patch_operation.operation`, `patch_operation.source`) for diagnostics and auditing.
 
 ## Fix Loop
 
@@ -200,6 +234,12 @@ aegis-code budget status
 aegis-code budget clear
 aegis-code policy status
 ```
+
+Runtime awareness:
+
+- Workspace-aware: scoped runs honor per-project config, context, and verification settings.
+- Budget-aware: mode/control signals can adapt based on configured local budget state.
+- Provider-agnostic: provider integration is pluggable; control and safety gates stay local and deterministic.
 
 Workspace:
 
@@ -289,3 +329,4 @@ aegis-code diff --full
 - Providers and keys: `docs/providers.md`
 - Create workflow: `docs/create.md`
 - Demo workflow: `docs/demo_workflow.md`
+
