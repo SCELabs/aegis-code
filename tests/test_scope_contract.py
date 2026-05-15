@@ -125,3 +125,65 @@ def test_scope_contract_replace_block_operation_requires_replace_block_mode(tmp_
     assert contract.allow_new_files is False
     assert contract.allowed_operations == ["replace-block"]
     assert contract.block_reason is None
+
+
+def test_scope_contract_delete_block_operation_requires_delete_block_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="delete-block",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["delete-block"]
+    assert contract.block_reason is None
+
+
+def test_scope_contract_replace_file_operation_requires_replace_file_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="replace-file",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["replace-file"]
+    assert contract.block_reason is None
+
+
+def test_scope_contract_delete_file_operation_requires_delete_file_mode(tmp_path: Path) -> None:
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "docs" / "old-notes.md").write_text("deprecated\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["docs/old-notes.md"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="delete-file",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["delete-file"]
+    assert contract.block_reason is None
+
+
+def test_scope_contract_replace_symbol_operation_requires_symbol_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("export function addNote(text) { return text; }\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="replace-symbol",
+        symbol="addNote",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["replace-symbol"]
+    assert contract.symbol == "addNote"
+    assert contract.block_reason is None

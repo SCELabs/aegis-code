@@ -33,6 +33,12 @@ def _build_operation_dependencies(context: dict[str, Any]) -> OperationDependenc
         build_replace_block_prompt=context.get("build_replace_block_prompt")
         if callable(context.get("build_replace_block_prompt"))
         else None,
+        build_replace_file_prompt=context.get("build_replace_file_prompt")
+        if callable(context.get("build_replace_file_prompt"))
+        else None,
+        build_replace_symbol_prompt=context.get("build_replace_symbol_prompt")
+        if callable(context.get("build_replace_symbol_prompt"))
+        else None,
         task_options=context.get("task_options"),
         api_key_env=str(context.get("api_key_env")) if context.get("api_key_env") is not None else None,
         base_url=str(context.get("base_url")) if context.get("base_url") is not None else None,

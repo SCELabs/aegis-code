@@ -610,6 +610,272 @@ def test_runtime_replace_block_resolves_anchor_before_provider_output(monkeypatc
     assert payload["patch_diff"].get("error") != "operation_anchor_ambiguous"
 
 
+def test_runtime_delete_block_generates_local_diff_without_provider_call(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "helpers.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("line 1\nOLD BLOCK\nline 3\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run for delete-block")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="delete block",
+            propose_patch=True,
+            command="patch",
+            patch_operation="delete-block",
+            anchor="OLD BLOCK",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "delete-block",
+                "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["delete-block"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "delete-block"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
+def test_runtime_replace_file_uses_generate_text_and_preserves_metadata(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "notes.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export function add(a, b) { return a + b; }\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for replace-file")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for replace-file")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function add(a, b) {\\n  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;\\n  return a + b;\\n}\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="rewrite module",
+            propose_patch=True,
+            command="patch",
+            patch_operation="replace-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "replace-file",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "replace-file"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
+def test_runtime_delete_file_generates_local_diff_without_provider_call(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "docs" / "old-notes.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# Old notes\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run for delete-file")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="delete obsolete file",
+            propose_patch=True,
+            command="patch",
+            patch_operation="delete-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "delete-file",
+                "allowed_targets": ["docs/old-notes.md"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["delete-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "delete-file"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
+def test_runtime_replace_symbol_uses_generate_text_and_preserves_metadata(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "notes.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export function addNote(text) {\n  return text;\n}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for replace-symbol")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for replace-symbol")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function addNote(text) {\\n  const value = text.trim();\\n  if (!value) return null;\\n  return value;\\n}\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="rewrite addNote",
+            propose_patch=True,
+            command="patch",
+            patch_operation="replace-symbol",
+            symbol="addNote",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "replace-symbol",
+                "symbol": "addNote",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace-symbol"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "replace-symbol"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
+def test_runtime_replace_symbol_no_provider_call_when_symbol_not_found(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "notes.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export function addNote(text) {\n  return text;\n}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run when symbol cannot be resolved")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="rewrite missing symbol",
+            propose_patch=True,
+            command="patch",
+            patch_operation="replace-symbol",
+            symbol="missingSymbol",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "replace-symbol",
+                "symbol": "missingSymbol",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace-symbol"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "operation_symbol_not_found"
+
+
+def test_runtime_replace_symbol_provider_content_can_include_symbol_name(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "notes.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("export function addNote(text) {\n  return text;\n}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": '{"content":"export function addNote(text) {\\n  return text.trim();\\n}\\n"}',
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="rewrite addNote",
+            propose_patch=True,
+            command="patch",
+            patch_operation="replace-symbol",
+            symbol="addNote",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "replace-symbol",
+                "symbol": "addNote",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["replace-symbol"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+
+
 def test_runtime_insert_after_blocks_when_provider_content_contains_anchor_text(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / "src" / "helpers.js"
     target.parent.mkdir(parents=True, exist_ok=True)

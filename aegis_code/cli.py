@@ -482,8 +482,9 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
-    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block"], default=None, help="Explicit patch operation mode.")
-    parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block.")
+    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol"], default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block/delete-block.")
+    parser.add_argument("--symbol", default=None, help="Required symbol name for --operation replace-symbol.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
     parser.add_argument("--allow-create", action="store_true", help="Allow creating missing target files.")
     parser.add_argument("task", help="Task prompt for patch proposal generation.")
@@ -2285,6 +2286,9 @@ def handle_patch(argv: Sequence[str]) -> int:
         print("Patch blocked: explicit scope required. Use --file at least once.")
         return 2
     effective_operation = args.operation
+    if effective_operation == "replace-symbol" and not str(args.symbol or "").strip():
+        print("Patch blocked: --operation replace-symbol requires --symbol.")
+        return 2
     scope_contract = build_scope_contract_from_cli(
         files=[str(item) for item in args.files],
         allow_create=bool(args.allow_create),
@@ -2292,6 +2296,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         cwd=cwd.resolve(),
         operation=effective_operation,
         anchor=args.anchor,
+        symbol=args.symbol,
     )
     options = TaskOptions(
         task=args.task,
@@ -2311,6 +2316,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         scope_contract=asdict(scope_contract),
         patch_operation=effective_operation,
         anchor=args.anchor,
+        symbol=args.symbol,
     )
     payload = run_task(options=options, cwd=cwd)
     patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}

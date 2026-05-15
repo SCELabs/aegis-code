@@ -87,6 +87,58 @@ def test_run_operation_dispatches_replace_block(monkeypatch) -> None:
     assert result.status == "generated"
 
 
+def test_run_operation_dispatches_delete_block(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.delete_block.run_delete_block_operation", _fake)
+    result = run_operation(_request("delete-block"))
+    assert seen == ["delete-block"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_replace_file(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.replace_file.run_replace_file_operation", _fake)
+    result = run_operation(_request("replace-file"))
+    assert seen == ["replace-file"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_delete_file(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.delete_file.run_delete_file_operation", _fake)
+    result = run_operation(_request("delete-file"))
+    assert seen == ["delete-file"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_replace_symbol(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.replace_symbol.run_replace_symbol_operation", _fake)
+    result = run_operation(_request("replace-symbol"))
+    assert seen == ["replace-symbol"]
+    assert result.status == "generated"
+
+
 def test_run_operation_unsupported_operation_is_blocked() -> None:
     result = run_operation(_request("replace"))
     assert result.attempted is False

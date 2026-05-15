@@ -6,6 +6,8 @@ from aegis_code.providers.prompts import (
     build_insert_after_prompt,
     build_insert_before_prompt,
     build_replace_block_prompt,
+    build_replace_file_prompt,
+    build_replace_symbol_prompt,
 )
 
 
@@ -108,4 +110,34 @@ def test_build_replace_block_prompt_contains_schema_and_anchor_rules() -> None:
     assert "- target path: src/helpers.js" in prompt
     assert "- replace exact anchor block text: OLD BLOCK" in prompt
     assert "return replacement block content only, not full file content" in prompt
+    assert "do not return unified diff" in prompt
+
+
+def test_build_replace_file_prompt_contains_schema_and_rules() -> None:
+    prompt = build_replace_file_prompt(
+        task="rewrite file",
+        target_path="src/helpers.js",
+        failure_context={"files": []},
+        patch_plan={},
+    )
+    assert "Return strict JSON only. No markdown. No prose." in prompt
+    assert '"content": "full file contents"' in prompt
+    assert "- target path: src/helpers.js" in prompt
+    assert "return full replacement file contents only" in prompt
+    assert "do not return unified diff" in prompt
+
+
+def test_build_replace_symbol_prompt_contains_schema_and_rules() -> None:
+    prompt = build_replace_symbol_prompt(
+        task="rewrite symbol",
+        target_path="src/helpers.js",
+        symbol="addNote",
+        failure_context={"files": []},
+        patch_plan={},
+    )
+    assert "Return strict JSON only. No markdown. No prose." in prompt
+    assert '"content": "replacement symbol source"' in prompt
+    assert "- target path: src/helpers.js" in prompt
+    assert "- replace symbol name: addNote" in prompt
+    assert "return replacement symbol source only, not full file content" in prompt
     assert "do not return unified diff" in prompt

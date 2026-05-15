@@ -13,6 +13,7 @@ class ScopeContract:
     allowed_operations: list[str]
     operation: str | None
     anchor: str | None
+    symbol: str | None
     missing_targets: list[str]
     block_reason: str | None
 
@@ -38,6 +39,7 @@ def build_scope_contract_from_cli(
     cwd: Path,
     operation: str | None = None,
     anchor: str | None = None,
+    symbol: str | None = None,
 ) -> ScopeContract:
     normalized: list[str] = []
     for value in files:
@@ -48,6 +50,7 @@ def build_scope_contract_from_cli(
     resolved_max = int(max_files) if isinstance(max_files, int) and max_files > 0 else len(normalized)
     normalized_operation = str(operation or "").strip().lower()
     normalized_anchor = str(anchor or "").strip() or None
+    normalized_symbol = str(symbol or "").strip() or None
     if normalized_operation == "append":
         allow_new_files = False
         allowed_operations = ["append"]
@@ -64,6 +67,18 @@ def build_scope_contract_from_cli(
     elif normalized_operation == "replace-block":
         allow_new_files = False
         allowed_operations = ["replace-block"]
+    elif normalized_operation == "delete-block":
+        allow_new_files = False
+        allowed_operations = ["delete-block"]
+    elif normalized_operation == "replace-file":
+        allow_new_files = False
+        allowed_operations = ["replace-file"]
+    elif normalized_operation == "delete-file":
+        allow_new_files = False
+        allowed_operations = ["delete-file"]
+    elif normalized_operation == "replace-symbol":
+        allow_new_files = False
+        allowed_operations = ["replace-symbol"]
     else:
         allow_new_files = bool(allow_create)
         allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]
@@ -76,6 +91,7 @@ def build_scope_contract_from_cli(
         allowed_operations=allowed_operations,
         operation=normalized_operation or None,
         anchor=normalized_anchor,
+        symbol=normalized_symbol,
         missing_targets=missing_targets,
         block_reason=block_reason,
     )

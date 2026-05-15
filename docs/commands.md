@@ -35,18 +35,23 @@ aegis-code patch --file src/helpers.js --operation create-file "create helper mo
 aegis-code patch --file src/helpers.js --operation insert-after --anchor "// ANCHOR" "insert helper after anchor"
 aegis-code patch --file src/helpers.js --operation insert-before --anchor "// ANCHOR" "insert helper before anchor"
 aegis-code patch --file src/helpers.js --operation replace-block --anchor "OLD BLOCK" "replace block with safer implementation"
+aegis-code patch --file src/helpers.js --operation delete-block --anchor "OLD BLOCK" "delete obsolete block"
+aegis-code patch --file src/helpers.js --operation replace-file "rewrite module with stronger validation"
+aegis-code patch --file docs/old-notes.md --operation delete-file "delete obsolete file"
+aegis-code patch --file src/notes.js --operation replace-symbol --symbol addNote "rewrite addNote with validation"
 ```
 
 Options:
 
-- `--operation {append,create-file,insert-after,insert-before,replace-block}`: explicit controlled mutation mode.
-- `--anchor "<text>"`: required for `--operation insert-after` and `--operation insert-before` (exact line text), and `--operation replace-block` (exact block text).
+- `--operation {append,create-file,insert-after,insert-before,replace-block,delete-block,replace-file,delete-file,replace-symbol}`: explicit controlled mutation mode.
+- `--anchor "<text>"`: required for `--operation insert-after` and `--operation insert-before` (exact line text), and `--operation replace-block` / `--operation delete-block` (exact block text).
+- `--symbol "<name>"`: required for `--operation replace-symbol`.
 
 Behavior:
 
 - `patch` requires explicit scope (`--file` at least once).
 - Generation is proposal-only; no file mutation without `apply --confirm`.
-- Supported operation modes are explicit (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`).
+- Supported operation modes are explicit (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`).
 - No operation inference: additive docs/test tasks without `--operation append` stay in normal flow, but CLI prints stronger rerun guidance.
 - Append mode supports no-op signal (`{"content": ""}`) and can block with `no_append_needed`.
 - Docs/test destructive rewrite protections can block proposals (`destructive_docs_rewrite`, `destructive_test_rewrite`).

@@ -25,22 +25,39 @@ Validated:
 - `insert-after`
 - `insert-before`
 - `replace-block`
+- `delete-block`
+- `replace-file`
+- `delete-file`
+- `replace-symbol`
 
 `replace-block` notes:
 - anchor semantics are exact block text matching (line-ending normalized, no fuzzy/symbol-aware matching yet)
 - deletions are allowed only inside the uniquely matched block span being replaced
 
-Planned:
-- `replace-symbol`
-- `delete-block`
-- `replace-file`
+`delete-block` notes:
+- anchor semantics are exact block text matching (line-ending normalized, no fuzzy/symbol-aware matching yet)
+- the uniquely matched block span is removed from a single target file
+
+`replace-file` notes:
+- rewrites full contents of an explicit existing target file
+- still proposal-first, locally diff-validated, and safety-gated before apply
+
+`delete-file` notes:
+- removes an explicit existing target file
+- provider-free operation with local deletion diff generation and validation
+
+`replace-symbol` notes:
+- replaces one uniquely resolved symbol in an explicit existing target file
+- initial resolution support is conservative:
+  - Python: `def`, `async def`, and `class` definitions
+  - JS/TS: function declarations and `const` arrow functions (with or without `export`)
 
 ## Runtime and Operation Ownership
 - `aegis_code/runtime.py`: orchestration, policy checks, verification, report payload shaping.
 - `aegis_code/runtime_components/operation_stage.py`: operation-stage bridge (`run_operation_stage`), request/dependency assembly.
 - `aegis_code/operations/runner.py`: typed request/result/dependencies + dispatch (`run_operation`).
 - `aegis_code/operations/<operation>.py`: operation-specific execution semantics and local operation validation.
-- `aegis_code/providers/prompts/`: operation prompt ownership (`append`, `create_file`, `insert_after`, `insert_before`, `replace_block` prompt builders).
+- `aegis_code/providers/prompts/`: operation prompt ownership (`append`, `create_file`, `insert_after`, `insert_before`, `replace_block`, `replace_file`, `replace_symbol` prompt builders).
 
 Boundary rule:
 - Runtime consumes operation results; operation modules own operation-specific provider orchestration and local mutation semantics.
@@ -80,7 +97,7 @@ Source: `aegis_code/operations/runner.py`
 
 Typed dependency bundle for operation modules:
 - provider hooks (`run_with_provider_heartbeat`, `generate_text`, `generate_structured_edits`)
-- prompt builders (`build_create_file_prompt`, `build_insert_after_prompt`, `build_insert_before_prompt`, `build_replace_block_prompt`)
+- prompt builders (`build_create_file_prompt`, `build_insert_after_prompt`, `build_insert_before_prompt`, `build_replace_block_prompt`, `build_replace_file_prompt`, `build_replace_symbol_prompt`)
 - runtime/provider metadata (`task_options`, `api_key_env`, `base_url`, `max_context_chars`)
 - append validators (`append_python_sanity_error`, `validate_append_diff`)
 
@@ -109,6 +126,10 @@ Dispatches to:
 - `run_insert_after_operation`
 - `run_insert_before_operation`
 - `run_replace_block_operation`
+- `run_delete_block_operation`
+- `run_replace_file_operation`
+- `run_delete_file_operation`
+- `run_replace_symbol_operation`
 
 Unsupported operation behavior is stable:
 - `attempted=False`
@@ -144,6 +165,8 @@ Generic families:
 - `operation_anchor_ambiguous`
 - `operation_validation_failed`
 - `operation_target_exists`
+- `operation_symbol_not_found`
+- `operation_symbol_ambiguous`
 
 Current operation-specific examples:
 - `append_output_invalid`
@@ -155,6 +178,8 @@ Current operation-specific examples:
 - `create_file_output_invalid`
 - `insert_output_invalid`
 - `replace_block_output_invalid`
+- `replace_file_output_invalid`
+- `replace_symbol_output_invalid`
 
 ## Reporting and Metadata
 Runtime preserves operation metadata in payload/report:

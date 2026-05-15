@@ -16,6 +16,8 @@ class OperationDependencies:
     build_insert_after_prompt: Callable[..., str] | None = None
     build_insert_before_prompt: Callable[..., str] | None = None
     build_replace_block_prompt: Callable[..., str] | None = None
+    build_replace_file_prompt: Callable[..., str] | None = None
+    build_replace_symbol_prompt: Callable[..., str] | None = None
     task_options: Any = None
     api_key_env: str | None = None
     base_url: str | None = None
@@ -78,6 +80,22 @@ def run_operation(request: OperationRequest) -> OperationResult:
         from aegis_code.operations.replace_block import run_replace_block_operation
 
         return run_replace_block_operation(request)
+    if operation == "delete-block":
+        from aegis_code.operations.delete_block import run_delete_block_operation
+
+        return run_delete_block_operation(request)
+    if operation == "replace-file":
+        from aegis_code.operations.replace_file import run_replace_file_operation
+
+        return run_replace_file_operation(request)
+    if operation == "delete-file":
+        from aegis_code.operations.delete_file import run_delete_file_operation
+
+        return run_delete_file_operation(request)
+    if operation == "replace-symbol":
+        from aegis_code.operations.replace_symbol import run_replace_symbol_operation
+
+        return run_replace_symbol_operation(request)
     return OperationResult(
         attempted=False,
         status="blocked",

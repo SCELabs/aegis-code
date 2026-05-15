@@ -15,10 +15,12 @@ from aegis_code.operations.errors import (
     OPERATION_BUDGET_EXCEEDED,
     OPERATION_CONTRACT_INVALID,
     OPERATION_POLICY_BLOCKED,
+    OPERATION_SYMBOL_AMBIGUOUS,
     OPERATION_SYMBOL_NOT_FOUND,
     OPERATION_TARGET_EXISTS,
     OPERATION_TARGET_MISSING,
     OPERATION_VALIDATION_FAILED,
+    REPLACE_SYMBOL_OUTPUT_INVALID,
 )
 
 
@@ -51,6 +53,7 @@ def test_operation_error_constants_match_stable_string_values() -> None:
     assert OPERATION_ANCHOR_NOT_FOUND == "operation_anchor_not_found"
     assert OPERATION_ANCHOR_AMBIGUOUS == "operation_anchor_ambiguous"
     assert OPERATION_SYMBOL_NOT_FOUND == "operation_symbol_not_found"
+    assert OPERATION_SYMBOL_AMBIGUOUS == "operation_symbol_ambiguous"
     assert OPERATION_BUDGET_EXCEEDED == "operation_budget_exceeded"
     assert OPERATION_VALIDATION_FAILED == "operation_validation_failed"
     assert OPERATION_POLICY_BLOCKED == "operation_policy_blocked"
@@ -63,3 +66,4 @@ def test_operation_error_constants_match_stable_string_values() -> None:
     assert INVALID_APPEND_OPERATION == "invalid_append_operation"
     assert APPEND_SOURCE_CONFLICT == "append_source_conflict"
     assert NO_APPEND_NEEDED == "no_append_needed"
+    assert REPLACE_SYMBOL_OUTPUT_INVALID == "replace_symbol_output_invalid"
