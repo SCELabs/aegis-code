@@ -56,3 +56,16 @@ def test_new_file_diff_normalized() -> None:
     normalized = normalize_unified_diff(raw)
     assert normalized.startswith("diff --git a/src/helper.py b/src/helper.py\n")
     assert "--- /dev/null\n+++ b/src/helper.py\n" in normalized
+
+
+def test_new_file_diff_with_mode_line_does_not_duplicate_header() -> None:
+    raw = (
+        "diff --git a/src/helper.py b/src/helper.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/src/helper.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+x=1\n"
+    )
+    normalized = normalize_unified_diff(raw)
+    assert normalized.count("diff --git a/src/helper.py b/src/helper.py") == 1

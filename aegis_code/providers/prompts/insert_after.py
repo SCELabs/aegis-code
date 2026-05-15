@@ -23,6 +23,7 @@ def build_insert_after_prompt(
         "- return only insertion content, not full file content\n"
         "- do not include the anchor line itself in returned content\n"
         "- do not repeat surrounding existing file blocks; return only new insertion text\n"
+        "- do not include any existing line from the target file near the anchor\n"
         "- do not return unified diff\n"
         "- do not include any fields other than content\n"
         f"Task: {task}\n"

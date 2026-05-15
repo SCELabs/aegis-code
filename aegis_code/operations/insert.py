@@ -60,6 +60,49 @@ def _insert_content_includes_anchor(*, insert_content: str, anchor: str) -> bool
     return any(str(line).strip() == needle for line in str(insert_content or "").splitlines())
 
 
+def _insert_content_repeats_surrounding_lines(
+    *,
+    insert_content: str,
+    original_text: str,
+    anchor_index: int,
+) -> bool:
+    lines = str(original_text or "").splitlines(keepends=True)
+    idx = int(anchor_index)
+    window_start = max(0, idx - 2)
+    window_end = min(len(lines), idx + 3)
+    nearby = {
+        str(line).strip()
+        for i, line in enumerate(lines[window_start:window_end], start=window_start)
+        if i != idx and str(line).strip()
+    }
+    if not nearby:
+        return False
+    insert_lines = [str(line).strip() for line in str(insert_content or "").splitlines() if str(line).strip()]
+    repeated = sum(1 for line in insert_lines if line in nearby)
+    has_function_wrapper = any(
+        line.startswith("function ") or line.startswith("export function ")
+        for line in insert_lines
+    )
+    has_brace_only_line = any(line == "}" for line in insert_lines)
+    if repeated >= 2:
+        return True
+    if repeated >= 1 and has_function_wrapper and has_brace_only_line:
+        return True
+    return False
+
+
+def _insert_content_has_unmatched_closing_brace(*, insert_content: str) -> bool:
+    balance = 0
+    for ch in str(insert_content or ""):
+        if ch == "{":
+            balance += 1
+        elif ch == "}":
+            balance -= 1
+            if balance < 0:
+                return True
+    return False
+
+
 def resolve_insert_after_index(*, original_text: str, anchor: str) -> tuple[bool, int | None, str | None]:
     lines = str(original_text or "").splitlines(keepends=True)
     needle = str(anchor or "").strip()
@@ -262,6 +305,30 @@ def _run_insert_operation(request: OperationRequest, *, mode: str) -> OperationR
                 source=request.contract.source,
             )
         anchor_index_value = int(anchor_index)
+    if _insert_content_repeats_surrounding_lines(
+        insert_content=insert_content,
+        original_text=original_text,
+        anchor_index=int(anchor_index_value),
+    ):
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error=INSERT_OUTPUT_INVALID,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
+    if _insert_content_has_unmatched_closing_brace(insert_content=insert_content):
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error=INSERT_OUTPUT_INVALID,
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
 
     if mode == "before":
         inserted_text = insert_before_index(

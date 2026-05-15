@@ -273,6 +273,69 @@ def test_runtime_create_file_dispatch_uses_scope_contract_operation_when_patch_o
     assert payload["patch_operation"]["source"] == "cli"
 
 
+def test_runtime_create_file_markdown_accepts_docs_language_mismatch_for_controlled_docs_file(
+    monkeypatch, tmp_path: Path
+) -> None:
+    (tmp_path / "package.json").write_text(
+        '{"name":"notes","type":"module","scripts":{"test":"node --test"}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for create-file")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for create-file")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_patch_diff",
+        lambda **_: (_ for _ in ()).throw(AssertionError("fallback should not run for create-file")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": (
+                '{"content":"# Search Notes\\n\\n## Usage\\n\\n```python\\n'
+                'def search_notes(notes, term):\\n'
+                '    return [n for n in notes if term in n]\\n'
+                '```\\n"}'
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="Create a short markdown document for search notes",
+            propose_patch=True,
+            command="patch",
+            patch_operation="create-file",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "create-file",
+                "allowed_targets": ["docs/search-notes.md"],
+                "max_files": 1,
+                "allow_new_files": True,
+                "allowed_operations": ["create-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_diff"]["error"] not in {"docs_language_mismatch", "structured_output_invalid"}
+
+
 def test_runtime_insert_after_uses_generate_text_and_preserves_metadata(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / "src" / "helpers.js"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -585,6 +648,69 @@ def test_runtime_insert_after_blocks_when_provider_content_contains_anchor_text(
                 "source": "cli_explicit",
                 "operation": "insert-after",
                 "allowed_targets": ["src/helpers.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["insert-after"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "blocked"
+    assert payload["patch_diff"]["error"] == "insert_output_invalid"
+
+
+def test_runtime_insert_after_blocks_when_provider_content_repeats_surrounding_source_lines(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "notes.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export function addNote(notes, text) {\n"
+        "  const normalized = text.trim();\n"
+        "  return [...notes, { text: normalized, done: false }];\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_structured_proposal_controller",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured controller should not run for insert-after")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_structured_edits",
+        lambda **_: (_ for _ in ()).throw(AssertionError("structured edits should not run for insert-after")),
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: {
+            "available": True,
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "text": (
+                '{"content":"function normalizeNoteText(text) {\\n'
+                '  return text.trim().toLowerCase();\\n'
+                '}\\n'
+                '  return [...notes, { text: normalized, done: false }];\\n"}'
+            ),
+            "error": None,
+        },
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="insert helper",
+            propose_patch=True,
+            command="patch",
+            patch_operation="insert-after",
+            anchor="export function addNote(notes, text) {",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "insert-after",
+                "allowed_targets": ["src/notes.js"],
                 "max_files": 1,
                 "allow_new_files": False,
                 "allowed_operations": ["insert-after"],

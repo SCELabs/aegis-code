@@ -1925,11 +1925,11 @@ def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
     patch_diff = payload.get("patch_diff", {})
     if not isinstance(patch_diff, dict):
         return False
-    if not bool(patch_diff.get("plan_consistent", False)):
+    if "plan_consistent" in patch_diff and not bool(patch_diff.get("plan_consistent", False)):
         return False
     patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
     operation_name = str(patch_operation.get("operation", "") or "").strip().lower()
-    operation_source = str(patch_operation.get("source", "") or "").strip().lower()
+    allowed_ops = {"append", "create-file", "insert-before", "replace-block"}
     validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result"), dict) else {}
     if "valid" in validation and not bool(validation.get("valid", False)):
         return False
@@ -1938,26 +1938,72 @@ def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
     if len(files) != 1:
         return False
     item = files[0] if isinstance(files[0], dict) else {}
-    if item.get("old_path") is None or item.get("new_path") is None:
-        return False
+    old_path = item.get("old_path")
+    new_path = item.get("new_path")
     additions = int(summary.get("additions", 0) or 0)
     deletions = int(summary.get("deletions", 0) or 0)
     task_text = str(payload.get("task", "") or "").lower()
     patch_plan = payload.get("patch_plan", {}) if isinstance(payload.get("patch_plan"), dict) else {}
-    explicit_scope = (
-        operation_source == "cli"
-        and bool(patch_plan)
-        and not bool(patch_plan.get("allow_new_files", False))
-        and int(patch_plan.get("max_files", 0) or 0) <= 1
-    )
-    replace_block_override = operation_name == "replace-block" and explicit_scope
-    if not replace_block_override:
-        if (additions + deletions) > 5:
+    create_file_target_path: str | None = None
+    if operation_name:
+        if operation_name not in allowed_ops:
             return False
-        if not ("fix failing tests" in task_text or explicit_scope):
+        if operation_name == "create-file":
+            create_file_target_path = str(new_path or old_path or "").strip().replace("\\", "/")
+            if not create_file_target_path:
+                return False
+            target_missing = bool(item.get("exists") is False)
+            if not target_missing:
+                try:
+                    target_missing = not (cwd / create_file_target_path).exists()
+                except Exception:
+                    target_missing = False
+            # Create-file override is only safe when the target does not already
+            # exist, even if diff metadata is malformed.
+            if not target_missing:
+                return False
+            old_path_norm = str(old_path or "").strip().replace("\\", "/").lower()
+            if old_path is not None and old_path_norm not in {"/dev/null", "dev/null", "a/dev/null", "b/dev/null"}:
+                # Accept odd payloads where old_path mirrors the target only
+                # when the operation is explicit create-file and file is missing.
+                if old_path_norm != str(create_file_target_path).lower():
+                    return False
+        else:
+            if old_path is None or new_path is None:
+                return False
+            target_path = str(new_path or old_path or "").strip().replace("\\", "/")
+            if not target_path:
+                return False
+            target_exists = bool(item.get("exists") is True)
+            if not target_exists:
+                try:
+                    target_exists = (cwd / target_path).exists()
+                except Exception:
+                    target_exists = False
+            if not target_exists:
+                return False
+    else:
+        if old_path is None or new_path is None:
             return False
-    elif (additions + deletions) > 200:
+        if "fix failing tests" not in task_text:
+            return False
+        # Legacy bounded-fix override stays intentionally narrow when operation
+        # metadata is unavailable.
+        if additions > 2 or deletions > 2:
+            return False
+    if (additions + deletions) > (200 if operation_name == "replace-block" else 80):
         return False
+    diagnostics = patch_diff.get("policy_diagnostics", {}) if isinstance(patch_diff.get("policy_diagnostics"), dict) else {}
+    final_policy_reason = str(diagnostics.get("final_policy_reason", "") or "").strip()
+    if final_policy_reason:
+        allow_docs_language_for_create_file = (
+            operation_name == "create-file"
+            and final_policy_reason == "docs_language_mismatch"
+            and isinstance(create_file_target_path, str)
+            and create_file_target_path.lower().endswith(".md")
+        )
+        if not allow_docs_language_for_create_file:
+            return False
     try:
         diff_text = path.read_text(encoding="utf-8", errors="replace").lower()
     except Exception:

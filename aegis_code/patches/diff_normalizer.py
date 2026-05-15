@@ -40,7 +40,11 @@ def normalize_unified_diff(diff_text: str) -> str:
                 base = _normalize_path(new_raw)
             else:
                 base = ""
-            if base:
+            recent_header = any(
+                lines[j].startswith("diff --git ")
+                for j in range(max(0, i - 4), i)
+            )
+            if base and not recent_header:
                 out.append(f"diff --git a/{base} b/{base}")
             out.append(f"--- {'/dev/null' if old_raw == '/dev/null' else f'a/{_normalize_path(old_raw)}'}")
             out.append(f"+++ {'/dev/null' if new_raw == '/dev/null' else f'b/{_normalize_path(new_raw)}'}")

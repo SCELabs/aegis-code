@@ -580,6 +580,31 @@ def _hard_invalid_content_evaluate(
     )
 
 
+def _relax_operation_policy_reason(
+    *,
+    reason: str | None,
+    requested_operation: str,
+    diff_text: str,
+    validation: dict[str, Any],
+) -> str | None:
+    normalized_reason = str(reason or "").strip()
+    if normalized_reason != "docs_language_mismatch":
+        return reason
+    if str(requested_operation or "").strip().lower() != "create-file":
+        return reason
+    files = validation.get("files", []) if isinstance(validation.get("files", []), list) else []
+    if len(files) != 1:
+        return reason
+    entry = files[0] if isinstance(files[0], dict) else {}
+    target_path = str(entry.get("new_path") or entry.get("old_path") or "").strip().lower()
+    if not target_path.endswith(".md"):
+        return reason
+    safety = scan_diff(diff_text)
+    if str(safety.highest_severity or "warn").lower() != "pass":
+        return reason
+    return None
+
+
 def _compute_apply_safety(
     *,
     validation_valid: bool,
@@ -2999,6 +3024,12 @@ def build_run_payload(
                 cwd=(cwd or Path.cwd()),
             )
             content_hard_invalid = str(policy_evaluation.get("final_policy_reason", "") or "") or None
+            content_hard_invalid = _relax_operation_policy_reason(
+                reason=content_hard_invalid,
+                requested_operation=requested_operation,
+                diff_text=diff_text,
+                validation=validation_used if isinstance(validation_used, dict) else {},
+            )
             if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_docs_rewrite"
             if content_hard_invalid is None and _is_destructive_source_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
@@ -3103,6 +3134,12 @@ def build_run_payload(
                 cwd=(cwd or Path.cwd()),
             )
             content_hard_invalid = str(policy_evaluation.get("final_policy_reason", "") or "") or None
+            content_hard_invalid = _relax_operation_policy_reason(
+                reason=content_hard_invalid,
+                requested_operation=requested_operation,
+                diff_text=diff_text,
+                validation=validation_used if isinstance(validation_used, dict) else {},
+            )
             if content_hard_invalid is None and _is_destructive_docs_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):
                 content_hard_invalid = "destructive_docs_rewrite"
             if content_hard_invalid is None and _is_destructive_source_rewrite(diff_text, options.task, patch_plan if isinstance(patch_plan, dict) else {}):

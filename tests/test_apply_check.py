@@ -520,6 +520,233 @@ def test_apply_check_allows_controlled_replace_block_low_safety_override(tmp_pat
     assert "low_safety" not in out
 
 
+def test_apply_check_allows_controlled_append_low_safety_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "notes.test.js").write_text("import test from 'node:test';\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/tests/notes.test.js b/tests/notes.test.js\n"
+        "--- a/tests/notes.test.js\n"
+        "+++ b/tests/notes.test.js\n"
+        "@@ -1 +1,2 @@\n"
+        " import test from 'node:test';\n"
+        "+test('placeholder', () => {});\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "append one test",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "append", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "tests/notes.test.js", "new_path": "tests/notes.test.js"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_allows_controlled_create_file_low_safety_override_real_latest_json_flow(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/docs/search-notes.md b/docs/search-notes.md\n"
+        "new file mode 100644\n"
+        "--- a/docs/search-notes.md\n"
+        "+++ b/docs/search-notes.md\n"
+        "@@ -0,0 +1,3 @@\n"
+        "+# Search Notes\n"
+        "+\n"
+        "+Use `searchNotes(notes, query)` to filter notes by term.\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "create docs file",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "create-file", "source": "cli"},
+                "patch_plan": {"allow_new_files": True, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": "docs_language_mismatch"},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 3, "deletions": 0},
+                        "files": [{"old_path": "/dev/null", "new_path": "docs/search-notes.md", "exists": False}],
+                        "warnings": ["referenced file missing: docs/search-notes.md"],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_create_file_missing_target_warning_is_informational(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/docs/search-notes.md b/docs/search-notes.md\n"
+        "new file mode 100644\n"
+        "--- a/docs/search-notes.md\n"
+        "+++ b/docs/search-notes.md\n"
+        "@@ -0,0 +1 @@\n"
+        "+# Search Notes\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "create docs file",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "create-file", "source": "cli"},
+                "patch_plan": {"allow_new_files": True, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": "docs_language_mismatch"},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "/dev/null", "new_path": "docs/search-notes.md", "exists": False}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "referenced file missing: docs/search-notes.md" in out
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_keeps_low_safety_block_for_create_file_when_target_exists(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "docs" / "search-notes.md").write_text("# Existing\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/docs/search-notes.md b/docs/search-notes.md\n"
+        "new file mode 100644\n"
+        "--- a/docs/search-notes.md\n"
+        "+++ b/docs/search-notes.md\n"
+        "@@ -0,0 +1 @@\n"
+        "+# Search Notes\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "create docs file",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "create-file", "source": "cli"},
+                "patch_plan": {"allow_new_files": True, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": "docs_language_mismatch"},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "/dev/null", "new_path": "docs/search-notes.md", "exists": True}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
+def test_apply_check_non_create_file_missing_reference_still_blocks_low_safety(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/missing.py b/src/missing.py\n"
+        "--- a/src/missing.py\n"
+        "+++ b/src/missing.py\n"
+        "@@ -1 +1,2 @@\n"
+        " x = 1\n"
+        "+y = 2\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "append line",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "append", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": None},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "src/missing.py", "new_path": "src/missing.py", "exists": False}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "referenced file missing: src/missing.py" in out
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
 def test_apply_check_keeps_low_safety_block_for_unsafe_replace_block(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)
@@ -552,6 +779,52 @@ def test_apply_check_keeps_low_safety_block_for_unsafe_replace_block(tmp_path: P
                         "valid": True,
                         "summary": {"additions": 1, "deletions": 0},
                         "files": [{"old_path": "src/main.py", "new_path": "src/main.py"}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
+def test_apply_check_keeps_low_safety_block_for_insert_after_even_when_structural_checks_pass(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text("export function addNote(notes, text) {\n  return notes;\n}\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,3 +1,4 @@\n"
+        " export function addNote(notes, text) {\n"
+        "+  const normalized = text.trim();\n"
+        "   return notes;\n"
+        " }\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "insert helper",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "insert-after", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 1, "deletions": 0},
+                        "files": [{"old_path": "src/notes.js", "new_path": "src/notes.js"}],
                     },
                 },
             }

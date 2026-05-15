@@ -73,6 +73,7 @@ def test_build_insert_after_prompt_contains_schema_and_anchor_rules() -> None:
     assert "- insert after exact anchor text: // ANCHOR" in prompt
     assert "return only insertion content, not full file content" in prompt
     assert "do not include the anchor line itself in returned content" in prompt
+    assert "do not include any existing line from the target file near the anchor" in prompt
     assert "do not return unified diff" in prompt
 
 
@@ -90,6 +91,7 @@ def test_build_insert_before_prompt_contains_schema_and_anchor_rules() -> None:
     assert "- insert before exact anchor text: // ANCHOR" in prompt
     assert "return only insertion content, not full file content" in prompt
     assert "do not include the anchor line itself in returned content" in prompt
+    assert "do not include any existing line from the target file near the anchor" in prompt
     assert "do not return unified diff" in prompt
 
 
