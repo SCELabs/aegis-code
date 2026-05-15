@@ -139,6 +139,19 @@ def test_run_operation_dispatches_replace_symbol(monkeypatch) -> None:
     assert result.status == "generated"
 
 
+def test_run_operation_dispatches_delete_symbol(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.delete_symbol.run_delete_symbol_operation", _fake)
+    result = run_operation(_request("delete-symbol"))
+    assert seen == ["delete-symbol"]
+    assert result.status == "generated"
+
+
 def test_run_operation_unsupported_operation_is_blocked() -> None:
     result = run_operation(_request("replace"))
     assert result.attempted is False

@@ -29,6 +29,7 @@ Validated:
 - `replace-file`
 - `delete-file`
 - `replace-symbol`
+- `delete-symbol`
 
 `replace-block` notes:
 - anchor semantics are exact block text matching (line-ending normalized, no fuzzy/symbol-aware matching yet)
@@ -51,6 +52,11 @@ Validated:
 - initial resolution support is conservative:
   - Python: `def`, `async def`, and `class` definitions
   - JS/TS: function declarations and `const` arrow functions (with or without `export`)
+
+`delete-symbol` notes:
+- provider-free operation that removes one uniquely resolved symbol in an explicit existing target file
+- uses the same conservative symbol resolution rules as `replace-symbol`
+- when symbol resolution is unsupported for a file pattern, use `replace-block` as a fallback operation mode
 
 ## Runtime and Operation Ownership
 - `aegis_code/runtime.py`: orchestration, policy checks, verification, report payload shaping.
@@ -130,6 +136,7 @@ Dispatches to:
 - `run_replace_file_operation`
 - `run_delete_file_operation`
 - `run_replace_symbol_operation`
+- `run_delete_symbol_operation`
 
 Unsupported operation behavior is stable:
 - `attempted=False`

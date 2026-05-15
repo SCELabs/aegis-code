@@ -96,6 +96,10 @@ def run_operation(request: OperationRequest) -> OperationResult:
         from aegis_code.operations.replace_symbol import run_replace_symbol_operation
 
         return run_replace_symbol_operation(request)
+    if operation == "delete-symbol":
+        from aegis_code.operations.delete_symbol import run_delete_symbol_operation
+
+        return run_delete_symbol_operation(request)
     return OperationResult(
         attempted=False,
         status="blocked",

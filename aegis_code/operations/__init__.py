@@ -40,6 +40,12 @@ from aegis_code.operations.delete_file import (
     _validate_delete_file_diff,
     run_delete_file_operation,
 )
+from aegis_code.operations.delete_symbol import (
+    _build_delete_symbol_diff,
+    _validate_delete_symbol_diff,
+    delete_symbol_span,
+    run_delete_symbol_operation,
+)
 from aegis_code.operations.replace_file import (
     _build_replace_file_diff,
     _parse_replace_file_provider_response,
@@ -94,6 +100,7 @@ __all__ = [
     "run_delete_file_operation",
     "run_replace_file_operation",
     "run_replace_symbol_operation",
+    "run_delete_symbol_operation",
     "OPERATION_CONTRACT_INVALID",
     "OPERATION_TARGET_MISSING",
     "OPERATION_ANCHOR_NOT_FOUND",
@@ -131,6 +138,8 @@ __all__ = [
     "_validate_replace_block_diff",
     "_build_delete_file_diff",
     "_validate_delete_file_diff",
+    "_build_delete_symbol_diff",
+    "_validate_delete_symbol_diff",
     "_parse_replace_file_provider_response",
     "_build_replace_file_diff",
     "_validate_replace_file_diff",
@@ -141,4 +150,5 @@ __all__ = [
     "replace_block_span",
     "resolve_symbol_span",
     "replace_symbol_span",
+    "delete_symbol_span",
 ]

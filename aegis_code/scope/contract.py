@@ -79,6 +79,9 @@ def build_scope_contract_from_cli(
     elif normalized_operation == "replace-symbol":
         allow_new_files = False
         allowed_operations = ["replace-symbol"]
+    elif normalized_operation == "delete-symbol":
+        allow_new_files = False
+        allowed_operations = ["delete-symbol"]
     else:
         allow_new_files = bool(allow_create)
         allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]

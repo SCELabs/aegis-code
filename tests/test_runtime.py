@@ -739,6 +739,49 @@ def test_runtime_delete_file_generates_local_diff_without_provider_call(monkeypa
     assert payload["patch_operation"]["source"] == "cli"
 
 
+def test_runtime_delete_symbol_generates_local_diff_without_provider_call(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "src" / "notes.js"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "export function keep() {\n  return 1;\n}\n\nexport function removeMe() {\n  return 2;\n}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run for delete-symbol")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="delete obsolete symbol",
+            propose_patch=True,
+            command="patch",
+            patch_operation="delete-symbol",
+            symbol="removeMe",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "delete-symbol",
+                "symbol": "removeMe",
+                "allowed_targets": ["src/notes.js"],
+                "max_files": 1,
+                "allow_new_files": False,
+                "allowed_operations": ["delete-symbol"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "delete-symbol"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
 def test_runtime_replace_symbol_uses_generate_text_and_preserves_metadata(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / "src" / "notes.js"
     target.parent.mkdir(parents=True, exist_ok=True)

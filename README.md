@@ -44,6 +44,7 @@ Current validated operations:
 - `replace-file`
 - `delete-file`
 - `replace-symbol`
+- `delete-symbol`
 
 Architecture overview:
 
@@ -160,18 +161,20 @@ aegis-code patch --file src/helpers.js --operation delete-block --anchor "OLD BL
 aegis-code patch --file src/helpers.js --operation replace-file "rewrite module with stronger validation"
 aegis-code patch --file docs/old-notes.md --operation delete-file "delete obsolete file"
 aegis-code patch --file src/notes.js --operation replace-symbol --symbol addNote "rewrite addNote with validation"
+aegis-code patch --file src/notes.js --operation delete-symbol --symbol searchNotes "delete obsolete function"
 ```
 
 Behavior:
 
 - Requires explicit scope: at least one `--file`.
 - Uses proposal-only generation and validation; no mutation without `apply --confirm`.
-- Supported explicit operations: `append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`.
+- Supported explicit operations: `append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`, `delete-symbol`.
 - `--anchor` is required for `--operation insert-after` and `--operation insert-before` (exact line), and for `--operation replace-block` / `--operation delete-block` (exact block text).
-- `--symbol` is required for `--operation replace-symbol`.
+- `--symbol` is required for `--operation replace-symbol` and `--operation delete-symbol`.
 - `replace-file` rewrites complete file contents for an explicit existing target, with local diff validation and normal safety/apply gates.
 - `delete-file` is provider-free and removes one explicit existing target via local diff generation and validation.
 - `replace-symbol` rewrites one uniquely resolved symbol in one explicit existing target, with local diff validation and normal safety/apply gates.
+- `delete-symbol` is provider-free and removes one uniquely resolved symbol in one explicit existing target, with local diff validation and normal safety/apply gates.
 - For additive docs tasks without explicit append mode, CLI prints guidance to rerun with `--operation append` (no automatic operation inference).
 - Runtime reports preserve operation metadata (`patch_operation.operation`, `patch_operation.source`) for diagnostics and auditing.
 

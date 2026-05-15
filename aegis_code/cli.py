@@ -482,7 +482,7 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
-    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol"], default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"], default=None, help="Explicit patch operation mode.")
     parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block/delete-block.")
     parser.add_argument("--symbol", default=None, help="Required symbol name for --operation replace-symbol.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
@@ -2286,8 +2286,8 @@ def handle_patch(argv: Sequence[str]) -> int:
         print("Patch blocked: explicit scope required. Use --file at least once.")
         return 2
     effective_operation = args.operation
-    if effective_operation == "replace-symbol" and not str(args.symbol or "").strip():
-        print("Patch blocked: --operation replace-symbol requires --symbol.")
+    if effective_operation in {"replace-symbol", "delete-symbol"} and not str(args.symbol or "").strip():
+        print(f"Patch blocked: --operation {effective_operation} requires --symbol.")
         return 2
     scope_contract = build_scope_contract_from_cli(
         files=[str(item) for item in args.files],

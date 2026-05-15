@@ -187,3 +187,20 @@ def test_scope_contract_replace_symbol_operation_requires_symbol_mode(tmp_path: 
     assert contract.allowed_operations == ["replace-symbol"]
     assert contract.symbol == "addNote"
     assert contract.block_reason is None
+
+
+def test_scope_contract_delete_symbol_operation_requires_symbol_mode(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("export function removeMe() { return 1; }\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="delete-symbol",
+        symbol="removeMe",
+    )
+    assert contract.allow_new_files is False
+    assert contract.allowed_operations == ["delete-symbol"]
+    assert contract.symbol == "removeMe"
+    assert contract.block_reason is None
