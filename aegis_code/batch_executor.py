@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import unified_diff
 from pathlib import Path
 import shutil
@@ -27,7 +27,9 @@ from aegis_code.runtime_components.operation_stage import run_operation_stage
 class BatchExecutionResult:
     success: bool
     diff_text: str
-    completed_steps: int
+    total_steps: int = 0
+    completed_steps: int = 0
+    step_results: list[dict[str, Any]] = field(default_factory=list)
     failed_step_index: int | None = None
     error: str | None = None
 
@@ -232,18 +234,39 @@ def execute_batch(
     max_context_chars = int(context.get("max_context_chars", 12000) or 12000)
     provider_timeout = int(context.get("provider_timeout", 60) or 60)
 
+    total_steps = len(batch.operations)
     completed_steps = 0
     touched_paths: set[str] = set()
+    step_results: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="aegis_batch_") as temp_dir:
         temp_root = Path(temp_dir) / "workspace"
         _copy_workspace(root, temp_root)
         for index, step in enumerate(batch.operations, start=1):
+            step_result: dict[str, Any] = {
+                "index": index,
+                "operation": step.operation,
+                "target_file": step.target_file,
+                "status": "pending",
+                "error": None,
+                "patch_generated": False,
+            }
+            if step.symbol:
+                step_result["symbol"] = step.symbol
+            if step.anchor:
+                step_result["anchor"] = step.anchor
+            if step.destination_path:
+                step_result["destination_path"] = step.destination_path
             operation_definition = get_operation(step.operation)
             if operation_definition is None or step.operation == "batch":
+                step_result["status"] = "blocked"
+                step_result["error"] = "operation_contract_invalid"
+                step_results.append(step_result)
                 return BatchExecutionResult(
                     success=False,
                     diff_text="",
+                    total_steps=total_steps,
                     completed_steps=completed_steps,
+                    step_results=step_results,
                     failed_step_index=index,
                     error="operation_contract_invalid",
                 )
@@ -290,28 +313,47 @@ def execute_batch(
                 model=model,
                 provider_timeout=provider_timeout,
             )
-            if str(operation_result.status or "") != "generated" or not str(operation_result.diff_text or "").strip():
+            operation_status = str(operation_result.status or "blocked")
+            operation_error = str(operation_result.error or "operation_validation_failed")
+            has_diff = bool(str(operation_result.diff_text or "").strip())
+            if operation_status != "generated" or not has_diff:
+                step_result["status"] = operation_status
+                step_result["error"] = operation_error
+                step_result["patch_generated"] = has_diff
+                step_results.append(step_result)
                 return BatchExecutionResult(
                     success=False,
                     diff_text="",
+                    total_steps=total_steps,
                     completed_steps=completed_steps,
+                    step_results=step_results,
                     failed_step_index=index,
-                    error=str(operation_result.error or "operation_validation_failed"),
+                    error=operation_error,
                 )
             applied_ok, apply_error, step_touched = _apply_step_diff(
                 diff_text=str(operation_result.diff_text or ""),
                 workspace_root=temp_root,
             )
             if not applied_ok:
+                step_result["status"] = "apply_failed"
+                step_result["error"] = str(apply_error or "operation_validation_failed")
+                step_result["patch_generated"] = True
+                step_results.append(step_result)
                 return BatchExecutionResult(
                     success=False,
                     diff_text="",
+                    total_steps=total_steps,
                     completed_steps=completed_steps,
+                    step_results=step_results,
                     failed_step_index=index,
                     error=str(apply_error or "operation_validation_failed"),
                 )
             touched_paths.update(step_touched)
             completed_steps += 1
+            step_result["status"] = "generated"
+            step_result["error"] = None
+            step_result["patch_generated"] = True
+            step_results.append(step_result)
         combined_diff = _build_combined_diff(
             original_root=root,
             updated_root=temp_root,
@@ -321,15 +363,18 @@ def execute_batch(
         return BatchExecutionResult(
             success=False,
             diff_text="",
+            total_steps=total_steps,
             completed_steps=completed_steps,
+            step_results=step_results,
             failed_step_index=None,
             error="operation_validation_failed",
         )
     return BatchExecutionResult(
         success=True,
         diff_text=combined_diff,
+        total_steps=total_steps,
         completed_steps=completed_steps,
+        step_results=step_results,
         failed_step_index=None,
         error=None,
     )
-

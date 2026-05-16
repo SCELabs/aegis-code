@@ -2363,14 +2363,108 @@ def handle_patch(argv: Sequence[str]) -> int:
                 "aegis_execution": {},
             },
         )
+        total_steps = int(batch_result.total_steps or len(batch_definition.operations) or 0)
+        batch_report = {
+            "total_steps": total_steps,
+            "completed_steps": int(batch_result.completed_steps or 0),
+            "failed_step_index": batch_result.failed_step_index,
+            "success": bool(batch_result.success),
+            "steps": batch_result.step_results if isinstance(batch_result.step_results, list) else [],
+            "stop_on_first_failure": bool(batch_definition.stop_on_first_failure),
+        }
+        failed_step: dict[str, object] | None = None
+        if batch_result.failed_step_index is not None:
+            for step_info in batch_report["steps"]:
+                if isinstance(step_info, dict) and int(step_info.get("index", 0) or 0) == int(batch_result.failed_step_index):
+                    failed_step = step_info
+                    break
         if not batch_result.success:
+            failed_index = batch_result.failed_step_index
+            failed_error = str((failed_step or {}).get("error") or batch_result.error or "operation_validation_failed")
+            failed_operation = str((failed_step or {}).get("operation") or "")
+            failed_target = str((failed_step or {}).get("target_file") or "")
+            failed_status = str((failed_step or {}).get("status") or "blocked")
+            patch_error = (
+                f"batch_step_{failed_index}_{failed_error}"
+                if failed_index is not None
+                else failed_error
+            )
+            payload = {
+                "task": f"batch ({len(batch_definition.operations)} steps)",
+                "mode": final_mode,
+                "dry_run": bool(args.dry_run),
+                "status": "batch_blocked",
+                "failures": {"failure_count": 1},
+                "symptoms": [],
+                "retry_policy": {"retry_attempted": False, "retry_count": 0},
+                "patch_plan": {
+                    "strategy": "batch_operation",
+                    "confidence": 0.9,
+                    "proposed_changes": [
+                        {
+                            "file": step.target_file,
+                            "change_type": "batch_step",
+                            "description": step.task,
+                            "reason": step.operation,
+                        }
+                        for step in batch_definition.operations
+                    ],
+                    "allowed_targets": [step.target_file for step in batch_definition.operations],
+                    "allowed_operations": ["batch"],
+                    "max_files": len(batch_definition.operations),
+                    "allow_new_files": True,
+                },
+                "patch_diff": {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "error": patch_error,
+                    "validation_result": {},
+                    "preview": "",
+                    "plan_consistent": True,
+                    "plan_missing_targets": [],
+                    "provider": "batch",
+                    "model": "batch-phase3",
+                    "touched_files": [],
+                },
+                "patch_operation": {"operation": "batch", "source": "cli"},
+                "patch_quality": None,
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "apply_safety": "BLOCKED",
+                "verification": {"available": True, "test_command": str(cfg.commands.test or "").strip() or "n/a"},
+                "runtime_policy": build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+                "budget_state": get_budget_state(cwd=cwd),
+                "project_context": load_runtime_context(cwd=cwd),
+                "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
+                "selected_model_tier": "mid",
+                "selected_model": "batch-phase3",
+                "structured_patch": {"status": "blocked", "failure_reason": failed_error},
+                "batch_report": batch_report,
+                "batch": {
+                    "success": False,
+                    "completed_steps": int(batch_result.completed_steps or 0),
+                    "total_steps": total_steps,
+                    "failed_step_index": failed_index,
+                    "stop_on_first_failure": bool(batch_definition.stop_on_first_failure),
+                },
+            }
+            if not bool(args.no_report):
+                write_reports(payload, cwd=cwd)
             print("Patch status: blocked")
             print("Patch operation: batch")
-            failed_index = batch_result.failed_step_index
             if failed_index is not None:
-                print(f"Patch error: batch_step_{failed_index}_{batch_result.error or 'operation_validation_failed'}")
+                print(f"Batch failed at step {failed_index}/{total_steps}:")
+                if failed_operation:
+                    print(f"- operation: {failed_operation}")
+                if failed_target:
+                    print(f"- target: {failed_target}")
+                print(f"- status: {failed_status}")
+                print(f"- error: {failed_error}")
+                print(f"Patch error: batch_step_{failed_index}_{failed_error}")
             else:
-                print(f"Patch error: {batch_result.error or 'operation_validation_failed'}")
+                print("Batch failed.")
+                print(f"Patch error: {failed_error}")
             return 1
         remove_latest_invalid_diff(cwd=cwd)
         diff_path = write_latest_diff(batch_result.diff_text, cwd=cwd)
@@ -2409,7 +2503,7 @@ def handle_patch(argv: Sequence[str]) -> int:
                 "plan_consistent": True,
                 "plan_missing_targets": [],
                 "provider": "batch",
-                "model": "batch-phase2",
+                "model": "batch-phase3",
                 "touched_files": [
                     str(item.get("new_path") or item.get("old_path") or "")
                     for item in (validation_result.get("files", []) if isinstance(validation_result.get("files", []), list) else [])
@@ -2431,12 +2525,14 @@ def handle_patch(argv: Sequence[str]) -> int:
             "project_context": load_runtime_context(cwd=cwd),
             "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
             "selected_model_tier": "mid",
-            "selected_model": "batch-phase2",
+            "selected_model": "batch-phase3",
             "structured_patch": {"status": "succeeded"},
+            "batch_report": batch_report,
             "batch": {
                 "success": True,
                 "completed_steps": batch_result.completed_steps,
-                "total_steps": len(batch_definition.operations),
+                "total_steps": total_steps,
+                "failed_step_index": None,
                 "stop_on_first_failure": bool(batch_definition.stop_on_first_failure),
             },
         }
@@ -2444,7 +2540,8 @@ def handle_patch(argv: Sequence[str]) -> int:
             write_reports(payload, cwd=cwd)
         print("Patch status: generated")
         print("Patch operation: batch")
-        print(f"Batch steps completed: {batch_result.completed_steps}/{len(batch_definition.operations)}")
+        print("Batch completed successfully.")
+        print(f"Steps completed: {batch_result.completed_steps}/{total_steps}")
         print(f"Patch diff: {diff_path}")
         return 0
     if not args.files:

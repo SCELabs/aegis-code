@@ -130,6 +130,7 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
     patch_safety = payload.get("patch_safety", {}) if isinstance(payload.get("patch_safety"), dict) else {}
     patch_quality = payload.get("patch_quality")
     patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
+    batch_report = payload.get("batch_report", {}) if isinstance(payload.get("batch_report"), dict) else {}
     feature_plan = payload.get("feature_plan", {}) if isinstance(payload.get("feature_plan"), dict) else {}
     apply_safety = str(payload.get("apply_safety", "BLOCKED") or "BLOCKED")
     task_driven_patch_proposal = bool(payload.get("task_driven_patch_proposal", False))
@@ -583,6 +584,53 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
             lines.append(f"- Repair targets: `{', '.join(str(item) for item in repair_targets)}`")
         if patch_diff.get("repair_error"):
             lines.append(f"- Repair error: `{patch_diff.get('repair_error')}`")
+
+    if batch_report:
+        batch_steps = batch_report.get("steps", []) if isinstance(batch_report.get("steps", []), list) else []
+        lines.extend(
+            [
+                "",
+                "## Batch Report",
+                "",
+                f"- Success: `{bool(batch_report.get('success', False))}`",
+                f"- Total steps: `{int(batch_report.get('total_steps', 0) or 0)}`",
+                f"- Completed steps: `{int(batch_report.get('completed_steps', 0) or 0)}`",
+                (
+                    f"- Failed step index: `{batch_report.get('failed_step_index')}`"
+                    if batch_report.get("failed_step_index") is not None
+                    else "- Failed step index: `none`"
+                ),
+            ]
+        )
+        if batch_steps:
+            lines.append("- Steps:")
+            for step in batch_steps:
+                if not isinstance(step, dict):
+                    continue
+                line = (
+                    f"  - [{int(step.get('index', 0) or 0)}] op={step.get('operation', 'unknown')} "
+                    f"target={step.get('target_file', '')} status={step.get('status', 'unknown')} "
+                    f"patch_generated={bool(step.get('patch_generated', False))} "
+                    f"error={step.get('error', 'none') or 'none'}"
+                )
+                lines.append(line)
+        failed_index = batch_report.get("failed_step_index")
+        if failed_index is not None:
+            failed_entry = None
+            for step in batch_steps:
+                if isinstance(step, dict) and int(step.get("index", 0) or 0) == int(failed_index):
+                    failed_entry = step
+                    break
+            if isinstance(failed_entry, dict):
+                lines.extend(
+                    [
+                        "- Failing step details:",
+                        f"  - operation={failed_entry.get('operation', 'unknown')}",
+                        f"  - target={failed_entry.get('target_file', '')}",
+                        f"  - status={failed_entry.get('status', 'unknown')}",
+                        f"  - error={failed_entry.get('error', 'none') or 'none'}",
+                    ]
+                )
 
     _append_policy_diagnostics(lines, patch_diff)
 

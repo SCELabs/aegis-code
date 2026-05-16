@@ -1649,7 +1649,27 @@ def test_patch_batch_valid_file_executes_and_writes_combined_diff(tmp_path: Path
                 "@@ -0,0 +1 @@\n"
                 "+export const helper = 1;\n"
             ),
+            total_steps=2,
             completed_steps=2,
+            step_results=[
+                {
+                    "index": 1,
+                    "operation": "create-file",
+                    "target_file": "src/utils.js",
+                    "status": "generated",
+                    "error": None,
+                    "patch_generated": True,
+                },
+                {
+                    "index": 2,
+                    "operation": "replace-symbol",
+                    "target_file": "src/main.js",
+                    "status": "generated",
+                    "error": None,
+                    "patch_generated": True,
+                    "symbol": "run",
+                },
+            ],
             failed_step_index=None,
             error=None,
         ),
@@ -1667,10 +1687,105 @@ def test_patch_batch_valid_file_executes_and_writes_combined_diff(tmp_path: Path
     assert exit_code == 0
     assert "Patch status: generated" in out
     assert "Patch operation: batch" in out
-    assert "Batch steps completed: 2/2" in out
+    assert "Batch completed successfully." in out
+    assert "Steps completed: 2/2" in out
     latest_diff = tmp_path / ".aegis" / "runs" / "latest.diff"
     assert latest_diff.exists()
     assert "diff --git a/src/utils.js b/src/utils.js" in latest_diff.read_text(encoding="utf-8")
+    latest_json = tmp_path / ".aegis" / "runs" / "latest.json"
+    payload = json.loads(latest_json.read_text(encoding="utf-8"))
+    assert payload.get("patch_operation", {}).get("operation") == "batch"
+    batch_report = payload.get("batch_report", {})
+    assert batch_report.get("success") is True
+    assert batch_report.get("total_steps") == 2
+    assert batch_report.get("completed_steps") == 2
+    assert batch_report.get("failed_step_index") is None
+    assert len(batch_report.get("steps", [])) == 2
+
+
+def test_patch_batch_failure_outputs_step_summary_and_writes_batch_report(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    batch_path = tmp_path / ".aegis" / "batch.json"
+    batch_path.parent.mkdir(parents=True, exist_ok=True)
+    batch_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "operations": [
+                    {
+                        "operation": "create-file",
+                        "target_file": "src/utils.js",
+                        "task": "Create utility helpers.",
+                    },
+                    {
+                        "operation": "replace-symbol",
+                        "target_file": "src/main.js",
+                        "symbol": "run",
+                        "task": "Use helpers.",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("runtime should not run for batch execution")))
+    monkeypatch.setattr(
+        "aegis_code.cli.execute_batch",
+        lambda batch, cwd, runtime_context: BatchExecutionResult(
+            success=False,
+            diff_text="",
+            total_steps=2,
+            completed_steps=1,
+            step_results=[
+                {
+                    "index": 1,
+                    "operation": "create-file",
+                    "target_file": "src/utils.js",
+                    "status": "generated",
+                    "error": None,
+                    "patch_generated": True,
+                },
+                {
+                    "index": 2,
+                    "operation": "replace-symbol",
+                    "target_file": "src/main.js",
+                    "status": "blocked",
+                    "error": "operation_symbol_not_found",
+                    "patch_generated": False,
+                    "symbol": "run",
+                },
+            ],
+            failed_step_index=2,
+            error="operation_symbol_not_found",
+        ),
+    )
+    exit_code = cli.main(
+        [
+            "patch",
+            "--operation",
+            "batch",
+            "--batch-file",
+            ".aegis/batch.json",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Patch status: blocked" in out
+    assert "Patch operation: batch" in out
+    assert "Batch failed at step 2/2:" in out
+    assert "- operation: replace-symbol" in out
+    assert "- target: src/main.js" in out
+    assert "- status: blocked" in out
+    assert "- error: operation_symbol_not_found" in out
+    latest_json = tmp_path / ".aegis" / "runs" / "latest.json"
+    payload = json.loads(latest_json.read_text(encoding="utf-8"))
+    assert payload.get("status") == "batch_blocked"
+    batch_report = payload.get("batch_report", {})
+    assert batch_report.get("success") is False
+    assert batch_report.get("total_steps") == 2
+    assert batch_report.get("completed_steps") == 1
+    assert batch_report.get("failed_step_index") == 2
+    assert len(batch_report.get("steps", [])) == 2
 
 
 def test_patch_insert_after_requires_anchor(tmp_path: Path, monkeypatch, capsys) -> None:

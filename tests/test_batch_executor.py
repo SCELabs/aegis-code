@@ -55,8 +55,14 @@ def test_batch_executor_single_step_succeeds(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setattr("aegis_code.batch_executor.run_operation_stage", _fake_run_operation_stage)
     result = execute_batch(batch=batch, cwd=tmp_path, runtime_context={})
     assert result.success is True
+    assert result.total_steps == 1
     assert result.completed_steps == 1
     assert result.failed_step_index is None
+    assert len(result.step_results) == 1
+    assert result.step_results[0]["operation"] == "create-file"
+    assert result.step_results[0]["status"] == "generated"
+    assert result.step_results[0]["patch_generated"] is True
+    assert result.step_results[0]["error"] is None
     assert "diff --git a/src/utils.js b/src/utils.js" in result.diff_text
 
 
@@ -90,7 +96,10 @@ def test_batch_executor_multi_step_succeeds(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setattr("aegis_code.batch_executor.run_operation_stage", _fake_run_operation_stage)
     result = execute_batch(batch=batch, cwd=tmp_path, runtime_context={})
     assert result.success is True
+    assert result.total_steps == 2
     assert result.completed_steps == 2
+    assert len(result.step_results) == 2
+    assert [item["status"] for item in result.step_results] == ["generated", "generated"]
     assert "export const x = 2;" in result.diff_text
     assert "export const x = 1;" not in result.diff_text
 
@@ -125,9 +134,16 @@ def test_batch_executor_step_failure_aborts(monkeypatch, tmp_path: Path) -> None
     monkeypatch.setattr("aegis_code.batch_executor.run_operation_stage", _fake_run_operation_stage)
     result = execute_batch(batch=batch, cwd=tmp_path, runtime_context={})
     assert result.success is False
+    assert result.total_steps == 2
     assert result.completed_steps == 1
     assert result.failed_step_index == 2
     assert result.error == "operation_validation_failed"
+    assert len(result.step_results) == 2
+    assert result.step_results[1]["operation"] == "replace-symbol"
+    assert result.step_results[1]["target_file"] == "src/main.js"
+    assert result.step_results[1]["status"] == "blocked"
+    assert result.step_results[1]["patch_generated"] is False
+    assert result.step_results[1]["error"] == "operation_validation_failed"
 
 
 def test_batch_executor_combined_diff_includes_all_successful_changes(monkeypatch, tmp_path: Path) -> None:

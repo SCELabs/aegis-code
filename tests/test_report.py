@@ -964,3 +964,107 @@ def test_report_renders_policy_diagnostics_section(tmp_path: Path) -> None:
     assert "diff --git a/app/main.py b/app/main.py" in content
     assert "detected_project_stack: `python_pytest`" in content
     assert "detected_additive_task: `True`" in content
+
+
+def test_report_renders_batch_report_success(tmp_path: Path) -> None:
+    payload = {
+        "task": "batch task",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "batch-phase3",
+        "repo_scan": {"file_count": 2, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "batch", "confidence": 0.9, "proposed_changes": [{"file": "src/a.js"}, {"file": "src/b.js"}]},
+        "patch_operation": {"operation": "batch", "source": "cli"},
+        "patch_diff": {
+            "attempted": True,
+            "available": True,
+            "status": "generated",
+            "validation_result": {"summary": {"additions": 2, "deletions": 0}, "files": [{"new_path": "src/a.js"}, {"new_path": "src/b.js"}]},
+        },
+        "patch_quality": {"grounded": True, "relevant_files": True, "confidence": 0.9, "issues": []},
+        "batch_report": {
+            "success": True,
+            "total_steps": 2,
+            "completed_steps": 2,
+            "failed_step_index": None,
+            "steps": [
+                {"index": 1, "operation": "create-file", "target_file": "src/a.js", "status": "generated", "error": None, "patch_generated": True},
+                {"index": 2, "operation": "replace-file", "target_file": "src/b.js", "status": "generated", "error": None, "patch_generated": True},
+            ],
+        },
+        "status": "batch_generated",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "## Batch Report" in content
+    assert "Success: `True`" in content
+    assert "Total steps: `2`" in content
+    assert "Completed steps: `2`" in content
+    assert "Failed step index: `none`" in content
+    assert "[1] op=create-file target=src/a.js status=generated patch_generated=True error=none" in content
+
+
+def test_report_renders_batch_report_failure_details(tmp_path: Path) -> None:
+    payload = {
+        "task": "batch task",
+        "mode": "balanced",
+        "dry_run": False,
+        "budget": {"total": 1.0, "spent": 0.0, "remaining": 1.0},
+        "aegis_execution": {},
+        "selected_model_tier": "mid",
+        "selected_model": "batch-phase3",
+        "repo_scan": {"file_count": 2, "top_level_directories": ["src"]},
+        "commands_run": [],
+        "test_attempts": [],
+        "initial_failures": {"failed_tests": [], "failure_count": 0},
+        "final_failures": {"failed_tests": [], "failure_count": 0},
+        "symptoms": [],
+        "retry_policy": {"max_retries": 0, "allow_escalation": False, "retry_attempted": False, "retry_count": 0, "stopped_reason": "n/a"},
+        "failures": {"failed_tests": [], "failure_count": 0},
+        "failure_context": {"files": []},
+        "sll_analysis": {"available": False},
+        "patch_plan": {"strategy": "batch", "confidence": 0.9, "proposed_changes": [{"file": "src/a.js"}, {"file": "src/main.js"}]},
+        "patch_operation": {"operation": "batch", "source": "cli"},
+        "patch_diff": {"attempted": True, "available": False, "status": "blocked", "error": "batch_step_2_operation_symbol_not_found"},
+        "patch_quality": None,
+        "batch_report": {
+            "success": False,
+            "total_steps": 2,
+            "completed_steps": 1,
+            "failed_step_index": 2,
+            "steps": [
+                {"index": 1, "operation": "create-file", "target_file": "src/a.js", "status": "generated", "error": None, "patch_generated": True},
+                {
+                    "index": 2,
+                    "operation": "replace-symbol",
+                    "target_file": "src/main.js",
+                    "status": "blocked",
+                    "error": "operation_symbol_not_found",
+                    "patch_generated": False,
+                    "symbol": "run",
+                },
+            ],
+        },
+        "status": "batch_blocked",
+        "notes": [],
+    }
+    content = write_reports(payload, cwd=tmp_path)["md"].read_text(encoding="utf-8")
+    assert "Success: `False`" in content
+    assert "Failed step index: `2`" in content
+    assert "Failing step details:" in content
+    assert "operation=replace-symbol" in content
+    assert "target=src/main.js" in content
+    assert "status=blocked" in content
+    assert "error=operation_symbol_not_found" in content
