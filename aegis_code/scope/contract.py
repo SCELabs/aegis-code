@@ -12,6 +12,7 @@ class ScopeContract:
     allow_new_files: bool
     allowed_operations: list[str]
     operation: str | None
+    destination_path: str | None
     anchor: str | None
     symbol: str | None
     missing_targets: list[str]
@@ -38,6 +39,7 @@ def build_scope_contract_from_cli(
     max_files: int | None,
     cwd: Path,
     operation: str | None = None,
+    destination_path: str | None = None,
     anchor: str | None = None,
     symbol: str | None = None,
 ) -> ScopeContract:
@@ -49,6 +51,7 @@ def build_scope_contract_from_cli(
     missing_targets = [path for path in normalized if not (cwd / path).exists()]
     resolved_max = int(max_files) if isinstance(max_files, int) and max_files > 0 else len(normalized)
     normalized_operation = str(operation or "").strip().lower()
+    normalized_destination = _normalize_rel(str(destination_path or ""), cwd) if str(destination_path or "").strip() else None
     normalized_anchor = str(anchor or "").strip() or None
     normalized_symbol = str(symbol or "").strip() or None
     if normalized_operation == "append":
@@ -82,10 +85,35 @@ def build_scope_contract_from_cli(
     elif normalized_operation == "delete-symbol":
         allow_new_files = False
         allowed_operations = ["delete-symbol"]
+    elif normalized_operation == "rename-file":
+        allow_new_files = True
+        allowed_operations = ["rename-file"]
+    elif normalized_operation == "move-file":
+        allow_new_files = True
+        allowed_operations = ["move-file"]
     else:
         allow_new_files = bool(allow_create)
         allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]
-    block_reason = "requested_target_missing" if (normalized_operation != "create-file" and missing_targets and not allow_new_files) else None
+    requires_existing_source = normalized_operation in {
+        "append",
+        "insert-after",
+        "insert-before",
+        "replace-block",
+        "delete-block",
+        "replace-file",
+        "delete-file",
+        "replace-symbol",
+        "delete-symbol",
+        "rename-file",
+        "move-file",
+    }
+    block_reason: str | None = None
+    if missing_targets:
+        if normalized_operation:
+            if requires_existing_source:
+                block_reason = "requested_target_missing"
+        elif not allow_new_files:
+            block_reason = "requested_target_missing"
     return ScopeContract(
         source="cli_explicit",
         allowed_targets=normalized,
@@ -93,6 +121,7 @@ def build_scope_contract_from_cli(
         allow_new_files=allow_new_files,
         allowed_operations=allowed_operations,
         operation=normalized_operation or None,
+        destination_path=normalized_destination,
         anchor=normalized_anchor,
         symbol=normalized_symbol,
         missing_targets=missing_targets,

@@ -28,6 +28,7 @@ def test_operation_contract_defaults() -> None:
     contract = OperationContract(operation="append", target_file="tests/test_cli.py")
     assert contract.operation == "append"
     assert contract.target_file == "tests/test_cli.py"
+    assert contract.destination_path is None
     assert contract.anchor is None
     assert contract.symbol is None
     assert contract.allow_deletions is False
@@ -44,6 +45,32 @@ def test_normalize_operation_contract_preserves_explicit_operation_and_target_fi
     )
     assert contract.operation == "append"
     assert contract.target_file == "src/notes.js"
+    assert contract.source == "cli"
+
+
+def test_normalize_operation_contract_preserves_destination_path() -> None:
+    contract = normalize_operation_contract(
+        operation="rename-file",
+        target_file="src/old_name.py",
+        destination_path="src/new_name.py",
+        source="cli",
+    )
+    assert contract.operation == "rename-file"
+    assert contract.target_file == "src/old_name.py"
+    assert contract.destination_path == "src/new_name.py"
+    assert contract.source == "cli"
+
+
+def test_normalize_operation_contract_preserves_destination_path_for_move_file() -> None:
+    contract = normalize_operation_contract(
+        operation="move-file",
+        target_file="src/utils.js",
+        destination_path="src/lib/utils.js",
+        source="cli",
+    )
+    assert contract.operation == "move-file"
+    assert contract.target_file == "src/utils.js"
+    assert contract.destination_path == "src/lib/utils.js"
     assert contract.source == "cli"
 
 

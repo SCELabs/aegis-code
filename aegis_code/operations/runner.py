@@ -36,6 +36,7 @@ class OperationRequest:
     patch_plan: dict[str, Any]
     aegis_execution: dict[str, Any]
     model: str
+    destination_path: str | None = None
     dependencies: OperationDependencies | None = None
     provider_timeout: int | None = None
 
@@ -100,6 +101,14 @@ def run_operation(request: OperationRequest) -> OperationResult:
         from aegis_code.operations.delete_symbol import run_delete_symbol_operation
 
         return run_delete_symbol_operation(request)
+    if operation == "rename-file":
+        from aegis_code.operations.rename_file import run_rename_file_operation
+
+        return run_rename_file_operation(request)
+    if operation == "move-file":
+        from aegis_code.operations.move_file import run_move_file_operation
+
+        return run_move_file_operation(request)
     return OperationResult(
         attempted=False,
         status="blocked",

@@ -30,6 +30,8 @@ Validated:
 - `delete-file`
 - `replace-symbol`
 - `delete-symbol`
+- `rename-file`
+- `move-file`
 
 `replace-block` notes:
 - anchor semantics are exact block text matching (line-ending normalized, no fuzzy/symbol-aware matching yet)
@@ -58,6 +60,18 @@ Validated:
 - uses the same conservative symbol resolution rules as `replace-symbol`
 - when symbol resolution is unsupported for a file pattern, use `replace-block` as a fallback operation mode
 
+`rename-file` notes:
+- provider-free operation that renames one explicit existing source path to one explicit destination path
+- source and destination must be different
+- destination must not already exist
+- generated diff is deterministic and validated as a one-file rename with unchanged contents
+
+`move-file` notes:
+- provider-free operation that moves one explicit existing source path to one explicit destination path
+- uses the same deterministic one-file relocation model as `rename-file`
+- source and destination must be different
+- destination must not already exist
+
 ## Runtime and Operation Ownership
 - `aegis_code/runtime.py`: orchestration, policy checks, verification, report payload shaping.
 - `aegis_code/runtime_components/operation_stage.py`: operation-stage bridge (`run_operation_stage`), request/dependency assembly.
@@ -76,6 +90,7 @@ Source: `aegis_code/operations/contract.py`
 Primary fields:
 - `operation`
 - `target_file`
+- `destination_path`
 - `anchor`
 - `symbol`
 - `allow_deletions`
@@ -95,6 +110,7 @@ Carries runtime-to-operation input:
 - `patch_plan`
 - `aegis_execution`
 - `model`
+- `destination_path` (optional; used by destination-style operations such as `rename-file` and `move-file`)
 - `dependencies` (`OperationDependencies`, optional)
 - `provider_timeout`
 
@@ -137,6 +153,8 @@ Dispatches to:
 - `run_delete_file_operation`
 - `run_replace_symbol_operation`
 - `run_delete_symbol_operation`
+- `run_rename_file_operation`
+- `run_move_file_operation`
 
 Unsupported operation behavior is stable:
 - `attempted=False`

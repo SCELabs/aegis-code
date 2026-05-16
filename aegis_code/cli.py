@@ -482,7 +482,8 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
-    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"], default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"], default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--target", default=None, help="Secondary target path for operations that require destination path (for example rename-file and move-file).")
     parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block/delete-block.")
     parser.add_argument("--symbol", default=None, help="Required symbol name for --operation replace-symbol.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
@@ -2335,12 +2336,20 @@ def handle_patch(argv: Sequence[str]) -> int:
     if effective_operation in {"replace-symbol", "delete-symbol"} and not str(args.symbol or "").strip():
         print(f"Patch blocked: --operation {effective_operation} requires --symbol.")
         return 2
+    if effective_operation in {"rename-file", "move-file"}:
+        if len(args.files) != 1:
+            print(f"Patch blocked: --operation {effective_operation} requires exactly one --file source path.")
+            return 2
+        if not str(args.target or "").strip():
+            print(f"Patch blocked: --operation {effective_operation} requires --target destination path.")
+            return 2
     scope_contract = build_scope_contract_from_cli(
         files=[str(item) for item in args.files],
         allow_create=bool(args.allow_create),
         max_files=args.max_files,
         cwd=cwd.resolve(),
         operation=effective_operation,
+        destination_path=args.target,
         anchor=args.anchor,
         symbol=args.symbol,
     )
@@ -2361,6 +2370,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         command="patch",
         scope_contract=asdict(scope_contract),
         patch_operation=effective_operation,
+        destination_path=args.target,
         anchor=args.anchor,
         symbol=args.symbol,
     )

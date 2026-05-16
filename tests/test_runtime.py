@@ -739,6 +739,86 @@ def test_runtime_delete_file_generates_local_diff_without_provider_call(monkeypa
     assert payload["patch_operation"]["source"] == "cli"
 
 
+def test_runtime_rename_file_generates_local_diff_without_provider_call(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "src" / "old_name.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("def fn():\n    return 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run for rename-file")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="rename source file",
+            propose_patch=True,
+            command="patch",
+            patch_operation="rename-file",
+            destination_path="src/new_name.py",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "rename-file",
+                "destination_path": "src/new_name.py",
+                "allowed_targets": ["src/old_name.py"],
+                "max_files": 1,
+                "allow_new_files": True,
+                "allowed_operations": ["rename-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "rename-file"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
+def test_runtime_move_file_generates_local_diff_without_provider_call(monkeypatch, tmp_path: Path) -> None:
+    source = tmp_path / "src" / "utils.js"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("export const value = 1;\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_fail(), status="failed", exit_code=1),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    monkeypatch.setattr(
+        "aegis_code.runtime.generate_text",
+        lambda **_: (_ for _ in ()).throw(AssertionError("provider should not run for move-file")),
+    )
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="move source file",
+            propose_patch=True,
+            command="patch",
+            patch_operation="move-file",
+            destination_path="src/lib/utils.js",
+            scope_contract={
+                "source": "cli_explicit",
+                "operation": "move-file",
+                "destination_path": "src/lib/utils.js",
+                "allowed_targets": ["src/utils.js"],
+                "max_files": 1,
+                "allow_new_files": True,
+                "allowed_operations": ["move-file"],
+                "missing_targets": [],
+                "block_reason": None,
+            },
+        ),
+        cwd=tmp_path,
+        client=_CapturingClient(),
+    )
+    assert payload["patch_diff"]["status"] == "generated"
+    assert payload["patch_operation"]["operation"] == "move-file"
+    assert payload["patch_operation"]["source"] == "cli"
+
+
 def test_runtime_delete_symbol_generates_local_diff_without_provider_call(monkeypatch, tmp_path: Path) -> None:
     target = tmp_path / "src" / "notes.js"
     target.parent.mkdir(parents=True, exist_ok=True)

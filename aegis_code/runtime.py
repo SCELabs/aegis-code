@@ -106,6 +106,7 @@ class TaskOptions:
     command: str | None = None
     scope_contract: dict[str, Any] | None = None
     patch_operation: str | None = None
+    destination_path: str | None = None
     anchor: str | None = None
     symbol: str | None = None
 
@@ -1838,6 +1839,7 @@ def build_run_payload(
     replace_symbol_span: tuple[int, int] | None = None
     replace_symbol_original_text: str | None = None
     replace_symbol_name: str | None = None
+    rename_destination_path: str | None = None
     if explicit_scope_active:
         scope_targets = [_normalize_rel_path(str(item)) for item in explicit_scope.get("allowed_targets", []) if str(item).strip()] if isinstance(explicit_scope.get("allowed_targets", []), list) else []
         scope_max_files = int(explicit_scope.get("max_files", len(scope_targets)) or len(scope_targets))
@@ -2315,7 +2317,66 @@ def build_run_payload(
                     )
                     should_attempt_provider_diff = False
                     should_patch_flow = False
-                elif (not symbol_ok) and symbol_error == OPERATION_SYMBOL_AMBIGUOUS:
+    if requested_operation in {"rename-file", "move-file"}:
+        explicit_targets = [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()] if isinstance(patch_plan.get("allowed_targets", []), list) else []
+        destination_text = str(options.destination_path or "").strip()
+        if not destination_text:
+            destination_text = str(explicit_scope.get("destination_path", "") or "").strip()
+        rename_destination_path = _normalize_rel_path(destination_text) if destination_text else None
+        patch_plan["proposed_changes"] = [
+            {
+                "file": target,
+                "change_type": "rename",
+                "description": "Rename existing file without changing file content.",
+                "reason": (
+                    "rename_file_operation"
+                    if requested_operation == "rename-file"
+                    else "move_file_operation"
+                ),
+            }
+            for target in explicit_targets
+        ]
+        rename_contract_ok = len(explicit_targets) == 1 and bool(rename_destination_path)
+        if not rename_contract_ok:
+            patch_quality = None
+            remove_latest_diff(cwd=cwd)
+            remove_latest_invalid_diff(cwd=cwd)
+            patch_diff.update(
+                {
+                    "attempted": True,
+                    "available": False,
+                    "status": "blocked",
+                    "path": None,
+                    "invalid_diff_path": None,
+                    "error": OPERATION_CONTRACT_INVALID,
+                    "preview": "",
+                }
+            )
+            should_attempt_provider_diff = False
+            should_patch_flow = False
+        else:
+            source_path = explicit_targets[0]
+            if source_path == rename_destination_path:
+                patch_quality = None
+                remove_latest_diff(cwd=cwd)
+                remove_latest_invalid_diff(cwd=cwd)
+                patch_diff.update(
+                    {
+                        "attempted": True,
+                        "available": False,
+                        "status": "blocked",
+                        "path": None,
+                        "invalid_diff_path": None,
+                        "error": OPERATION_CONTRACT_INVALID,
+                        "preview": "",
+                    }
+                )
+                should_attempt_provider_diff = False
+                should_patch_flow = False
+            else:
+                source_file = ((cwd or Path.cwd()).resolve() / source_path).resolve()
+                destination_file = ((cwd or Path.cwd()).resolve() / rename_destination_path).resolve()
+                if not source_file.exists() or not source_file.is_file():
                     patch_quality = None
                     remove_latest_diff(cwd=cwd)
                     remove_latest_invalid_diff(cwd=cwd)
@@ -2326,7 +2387,24 @@ def build_run_payload(
                             "status": "blocked",
                             "path": None,
                             "invalid_diff_path": None,
-                            "error": OPERATION_SYMBOL_AMBIGUOUS,
+                            "error": OPERATION_TARGET_MISSING,
+                            "preview": "",
+                        }
+                    )
+                    should_attempt_provider_diff = False
+                    should_patch_flow = False
+                elif destination_file.exists():
+                    patch_quality = None
+                    remove_latest_diff(cwd=cwd)
+                    remove_latest_invalid_diff(cwd=cwd)
+                    patch_diff.update(
+                        {
+                            "attempted": True,
+                            "available": False,
+                            "status": "blocked",
+                            "path": None,
+                            "invalid_diff_path": None,
+                            "error": OPERATION_TARGET_EXISTS,
                             "preview": "",
                         }
                     )
@@ -2543,7 +2621,7 @@ def build_run_payload(
         use_unified_fallback = True
         structured_blocked = False
         structured_primary_accepted = False
-        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation not in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"}:
+        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation not in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
             contract = build_proposal_contract(
                 task=options.task,
                 patch_plan=patch_plan,
@@ -2798,7 +2876,7 @@ def build_run_payload(
                             "diff": "",
                             "error": "structured_output_invalid",
                         }
-        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"}:
+        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
             operation_targets = (
                 [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()]
                 if isinstance(patch_plan.get("allowed_targets", []), list)
@@ -2814,7 +2892,9 @@ def build_run_payload(
                     else replace_anchor_text if requested_operation in {"replace-block", "delete-block"} else None
                 ),
                 symbol=replace_symbol_name if requested_operation in {"replace-symbol", "delete-symbol"} else None,
-                allow_deletions=requested_operation in {"replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"},
+                destination_path=rename_destination_path if requested_operation in {"rename-file", "move-file"} else None,
+                allow_deletions=requested_operation in {"replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"},
+                allow_new_file=requested_operation in {"create-file", "rename-file", "move-file"},
                 source="cli",
             )
             operation_result = run_operation_stage(
@@ -3021,7 +3101,7 @@ def build_run_payload(
         initial_issues = [str(item) for item in initial_quality.get("issues", [])]
         regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
         reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
-        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"}:
+        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
             regenerate = False
             reasons = []
         if docs_wrapped_applied:
@@ -3241,7 +3321,7 @@ def build_run_payload(
                 missing_step_targets = sorted(path for path in planned_step_targets if path not in diff_targets)
                 plan_consistent = not missing_step_targets
                 plan_missing_targets = missing_step_targets
-        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"} and bool(validation_used.get("valid", False)):
+        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"} and bool(validation_used.get("valid", False)):
             allowed = {
                 _normalize_rel_path(str(item))
                 for item in patch_plan.get("allowed_targets", [])
@@ -3422,7 +3502,7 @@ def build_run_payload(
         if (
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
-            and requested_operation not in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"}
+            and requested_operation not in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}
             and not bool(regeneration.get("attempted", False))
             and not structured_blocked
             and not structured_primary_accepted
@@ -3683,7 +3763,7 @@ def build_run_payload(
                 blocked_error = failure_reason_value or REPLACE_FILE_OUTPUT_INVALID
             elif requested_operation == "replace-symbol":
                 blocked_error = failure_reason_value or REPLACE_SYMBOL_OUTPUT_INVALID
-            elif requested_operation in {"delete-block", "delete-file", "delete-symbol"}:
+            elif requested_operation in {"delete-block", "delete-file", "delete-symbol", "rename-file", "move-file"}:
                 blocked_error = failure_reason_value or OPERATION_VALIDATION_FAILED
             elif feature_plan_active:
                 blocked_error = failure_reason_value or "structured_output_invalid"
@@ -3704,7 +3784,7 @@ def build_run_payload(
                 diagnostics = structured_patch.get("target_diagnostics")
                 if isinstance(diagnostics, dict):
                     patch_diff["target_diagnostics"] = diagnostics
-            if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol"}:
+            if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
                 patch_diff["plan_consistent"] = None
                 patch_diff["plan_missing_targets"] = []
         if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):

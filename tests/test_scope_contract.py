@@ -204,3 +204,63 @@ def test_scope_contract_delete_symbol_operation_requires_symbol_mode(tmp_path: P
     assert contract.allowed_operations == ["delete-symbol"]
     assert contract.symbol == "removeMe"
     assert contract.block_reason is None
+
+
+def test_scope_contract_rename_file_operation_preserves_destination(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "old_name.py").write_text("x = 1\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/old_name.py"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="rename-file",
+        destination_path="src/new_name.py",
+    )
+    assert contract.allow_new_files is True
+    assert contract.allowed_operations == ["rename-file"]
+    assert contract.destination_path == "src/new_name.py"
+    assert contract.block_reason is None
+
+
+def test_scope_contract_rename_file_blocks_when_source_missing(tmp_path: Path) -> None:
+    contract = build_scope_contract_from_cli(
+        ["src/missing.py"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="rename-file",
+        destination_path="src/new_name.py",
+    )
+    assert contract.block_reason == "requested_target_missing"
+    assert contract.missing_targets == ["src/missing.py"]
+
+
+def test_scope_contract_move_file_operation_preserves_destination(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "utils.js").write_text("export const x = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/utils.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="move-file",
+        destination_path="src/lib/utils.js",
+    )
+    assert contract.allow_new_files is True
+    assert contract.allowed_operations == ["move-file"]
+    assert contract.destination_path == "src/lib/utils.js"
+    assert contract.block_reason is None
+
+
+def test_scope_contract_move_file_blocks_when_source_missing(tmp_path: Path) -> None:
+    contract = build_scope_contract_from_cli(
+        ["src/missing.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="move-file",
+        destination_path="src/lib/utils.js",
+    )
+    assert contract.block_reason == "requested_target_missing"
+    assert contract.missing_targets == ["src/missing.js"]

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class OperationContract:
     operation: str
     target_file: str | None
+    destination_path: str | None = None
     anchor: str | None = None
     symbol: str | None = None
     allow_deletions: bool = False
@@ -19,6 +20,7 @@ def normalize_operation_contract(
     *,
     operation: str,
     target_file: str | None,
+    destination_path: str | None = None,
     anchor: str | None = None,
     symbol: str | None = None,
     allow_deletions: bool = False,
@@ -28,12 +30,14 @@ def normalize_operation_contract(
 ) -> OperationContract:
     normalized_operation = str(operation or "").strip().lower()
     normalized_target = str(target_file).strip() if target_file is not None else None
+    normalized_destination = str(destination_path).strip() if destination_path is not None else None
     normalized_anchor = str(anchor).strip() if anchor is not None else None
     normalized_symbol = str(symbol).strip() if symbol is not None else None
     normalized_source = str(source or "unknown").strip() or "unknown"
     return OperationContract(
         operation=normalized_operation,
         target_file=normalized_target,
+        destination_path=normalized_destination,
         anchor=normalized_anchor,
         symbol=normalized_symbol,
         allow_deletions=bool(allow_deletions),
@@ -41,4 +45,3 @@ def normalize_operation_contract(
         max_changed_lines=max_changed_lines,
         source=normalized_source,
     )
-

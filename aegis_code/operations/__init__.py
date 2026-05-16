@@ -40,6 +40,12 @@ from aegis_code.operations.delete_file import (
     _validate_delete_file_diff,
     run_delete_file_operation,
 )
+from aegis_code.operations.rename_file import (
+    _build_rename_file_diff,
+    _validate_rename_file_diff,
+    run_rename_file_operation,
+)
+from aegis_code.operations.move_file import run_move_file_operation
 from aegis_code.operations.delete_symbol import (
     _build_delete_symbol_diff,
     _validate_delete_symbol_diff,
@@ -98,6 +104,8 @@ __all__ = [
     "run_replace_block_operation",
     "run_delete_block_operation",
     "run_delete_file_operation",
+    "run_rename_file_operation",
+    "run_move_file_operation",
     "run_replace_file_operation",
     "run_replace_symbol_operation",
     "run_delete_symbol_operation",
@@ -138,6 +146,8 @@ __all__ = [
     "_validate_replace_block_diff",
     "_build_delete_file_diff",
     "_validate_delete_file_diff",
+    "_build_rename_file_diff",
+    "_validate_rename_file_diff",
     "_build_delete_symbol_diff",
     "_validate_delete_symbol_diff",
     "_parse_replace_file_provider_response",

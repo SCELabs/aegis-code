@@ -76,6 +76,7 @@ def run_operation_stage(
         patch_plan=patch_plan,
         aegis_execution=aegis_execution,
         model=model,
+        destination_path=contract.destination_path,
         dependencies=_build_operation_dependencies(normalized_context),
         provider_timeout=provider_timeout,
     )

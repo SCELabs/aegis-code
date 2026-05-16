@@ -152,6 +152,32 @@ def test_run_operation_dispatches_delete_symbol(monkeypatch) -> None:
     assert result.status == "generated"
 
 
+def test_run_operation_dispatches_rename_file(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.rename_file.run_rename_file_operation", _fake)
+    result = run_operation(_request("rename-file"))
+    assert seen == ["rename-file"]
+    assert result.status == "generated"
+
+
+def test_run_operation_dispatches_move_file(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def _fake(request: OperationRequest) -> OperationResult:
+        seen.append(request.contract.operation)
+        return OperationResult(attempted=True, status="generated", diff_text="diff")
+
+    monkeypatch.setattr("aegis_code.operations.move_file.run_move_file_operation", _fake)
+    result = run_operation(_request("move-file"))
+    assert seen == ["move-file"]
+    assert result.status == "generated"
+
+
 def test_run_operation_unsupported_operation_is_blocked() -> None:
     result = run_operation(_request("replace"))
     assert result.attempted is False
