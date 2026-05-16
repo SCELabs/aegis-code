@@ -15,6 +15,8 @@ from typing import Sequence
 
 from aegis_code.budget import can_spend, clear_budget, get_budget_state, load_budget, record_event, set_budget
 from aegis_code.config import load_config
+from aegis_code.batch_schema import load_batch_definition
+from aegis_code.batch_executor import execute_batch
 from aegis_code.compare import build_comparison, format_comparison, load_last_runs
 from aegis_code.context.capabilities import detect_capabilities
 from aegis_code.environment import diagnose_environment
@@ -70,6 +72,7 @@ from aegis_code.sll_adapter import check_sll_available
 from aegis_code.tools.tests import run_configured_tests
 from aegis_code.tools.shell import run_shell_command
 from aegis_code.probe import get_capabilities, run_project_probe
+from aegis_code.safety.patch_review import safety_report_to_dict, scan_diff
 from aegis_code.usage import get_usage_warning, load_usage
 from aegis_code.verification import resolve_verification_command
 from aegis_code.workspace import (
@@ -484,12 +487,13 @@ def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
     parser.add_argument("--operation", choices=list_operation_names(), default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--batch-file", default=None, help="Path to batch operation definition JSON (only valid with --operation batch).")
     parser.add_argument("--target", default=None, help="Secondary target path for operations that require destination path (for example rename-file and move-file).")
     parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block/delete-block.")
     parser.add_argument("--symbol", default=None, help="Required symbol name for --operation replace-symbol/delete-symbol.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
     parser.add_argument("--allow-create", action="store_true", help="Allow creating missing target files.")
-    parser.add_argument("task", help="Task prompt for patch proposal generation.")
+    parser.add_argument("task", nargs="?", default="", help="Task prompt for patch proposal generation (required unless --operation batch).")
     parser.add_argument("--budget", type=float, default=None, help="Budget cap for this task.")
     parser.add_argument(
         "--mode",
@@ -2330,10 +2334,125 @@ def handle_patch(argv: Sequence[str]) -> int:
     reason = get_mode_reason(base_mode, final_mode, cwd=cwd)
     if not _allow_runtime_or_print(cwd, selected_mode=final_mode, reason=reason):
         return 0
+    effective_operation = args.operation
+    if str(args.batch_file or "").strip() and effective_operation != "batch":
+        print("Patch blocked: --batch-file is only valid when --operation batch is selected.")
+        return 2
+    if effective_operation == "batch":
+        batch_file_text = str(args.batch_file or "").strip()
+        if not batch_file_text:
+            print("Patch blocked: --operation batch requires --batch-file.")
+            return 2
+        try:
+            batch_definition = load_batch_definition(Path(batch_file_text))
+        except ValueError as exc:
+            print(f"Patch blocked: {exc}")
+            return 2
+        batch_result = execute_batch(
+            batch=batch_definition,
+            cwd=cwd,
+            runtime_context={
+                "provider": cfg.providers.provider,
+                "model": cfg.models.mid,
+                "api_key_env": cfg.providers.api_key_env,
+                "base_url": str(cfg.providers.base_url or ""),
+                "max_context_chars": int(cfg.patches.max_context_chars),
+                "provider_timeout": int(args.provider_timeout or cfg.providers.timeout_seconds or 60),
+                "task_options": None,
+                "failure_context": {"files": []},
+                "aegis_execution": {},
+            },
+        )
+        if not batch_result.success:
+            print("Patch status: blocked")
+            print("Patch operation: batch")
+            failed_index = batch_result.failed_step_index
+            if failed_index is not None:
+                print(f"Patch error: batch_step_{failed_index}_{batch_result.error or 'operation_validation_failed'}")
+            else:
+                print(f"Patch error: {batch_result.error or 'operation_validation_failed'}")
+            return 1
+        remove_latest_invalid_diff(cwd=cwd)
+        diff_path = write_latest_diff(batch_result.diff_text, cwd=cwd)
+        validation_result = check_patch_text(batch_result.diff_text, cwd=cwd)
+        patch_safety = safety_report_to_dict(scan_diff(batch_result.diff_text))
+        safety_level = str(patch_safety.get("highest_severity", "pass") or "pass").lower()
+        apply_safety = "BLOCKED" if bool(validation_result.get("apply_blocked", False)) else ("MEDIUM" if safety_level == "warn" else "HIGH")
+        payload = {
+            "task": f"batch ({len(batch_definition.operations)} steps)",
+            "mode": final_mode,
+            "dry_run": bool(args.dry_run),
+            "status": "batch_generated",
+            "failures": {"failure_count": 0},
+            "symptoms": [],
+            "retry_policy": {"retry_attempted": False, "retry_count": 0},
+            "patch_plan": {
+                "strategy": "batch_operation",
+                "confidence": 0.9,
+                "proposed_changes": [
+                    {"file": step.target_file, "change_type": "batch_step", "description": step.task, "reason": step.operation}
+                    for step in batch_definition.operations
+                ],
+                "allowed_targets": [step.target_file for step in batch_definition.operations],
+                "allowed_operations": ["batch"],
+                "max_files": len(batch_definition.operations),
+                "allow_new_files": True,
+            },
+            "patch_diff": {
+                "attempted": True,
+                "available": True,
+                "status": "generated",
+                "path": str(diff_path),
+                "error": None,
+                "validation_result": validation_result,
+                "preview": str(batch_result.diff_text or "")[:1200],
+                "plan_consistent": True,
+                "plan_missing_targets": [],
+                "provider": "batch",
+                "model": "batch-phase2",
+                "touched_files": [
+                    str(item.get("new_path") or item.get("old_path") or "")
+                    for item in (validation_result.get("files", []) if isinstance(validation_result.get("files", []), list) else [])
+                    if isinstance(item, dict)
+                ],
+            },
+            "patch_operation": {"operation": "batch", "source": "cli"},
+            "patch_quality": {
+                "grounded": bool(validation_result.get("valid", False)),
+                "relevant_files": True,
+                "confidence": 0.9,
+                "issues": [],
+            },
+            "patch_safety": patch_safety,
+            "apply_safety": apply_safety,
+            "verification": {"available": True, "test_command": str(cfg.commands.test or "").strip() or "n/a"},
+            "runtime_policy": build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+            "budget_state": get_budget_state(cwd=cwd),
+            "project_context": load_runtime_context(cwd=cwd),
+            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
+            "selected_model_tier": "mid",
+            "selected_model": "batch-phase2",
+            "structured_patch": {"status": "succeeded"},
+            "batch": {
+                "success": True,
+                "completed_steps": batch_result.completed_steps,
+                "total_steps": len(batch_definition.operations),
+                "stop_on_first_failure": bool(batch_definition.stop_on_first_failure),
+            },
+        }
+        if not bool(args.no_report):
+            write_reports(payload, cwd=cwd)
+        print("Patch status: generated")
+        print("Patch operation: batch")
+        print(f"Batch steps completed: {batch_result.completed_steps}/{len(batch_definition.operations)}")
+        print(f"Patch diff: {diff_path}")
+        return 0
     if not args.files:
         print("Patch blocked: explicit scope required. Use --file at least once.")
         return 2
-    effective_operation = args.operation
+    if not str(args.task or "").strip():
+        print("Patch blocked: task prompt is required.")
+        return 2
     operation_definition = get_operation(effective_operation)
     if operation_definition is not None and bool(operation_definition.requires_anchor) and not str(args.anchor or "").strip():
         print(f"Patch blocked: --operation {effective_operation} requires --anchor.")

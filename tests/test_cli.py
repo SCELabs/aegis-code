@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from aegis_code import cli
+from aegis_code.batch_executor import BatchExecutionResult
 from aegis_code.patches.apply_check import check_patch_text
 from tests.helpers import command_result_from_output
 from aegis_code.budget import load_budget
@@ -1554,6 +1555,122 @@ def test_patch_move_file_requires_single_source_file(tmp_path: Path, monkeypatch
     out = capsys.readouterr().out
     assert exit_code == 2
     assert "--operation move-file requires exactly one --file source path" in out
+
+
+def test_patch_batch_requires_batch_file(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli.main(
+        [
+            "patch",
+            "--operation",
+            "batch",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert "--operation batch requires --batch-file" in out
+
+
+def test_patch_batch_file_only_valid_for_batch_operation(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli.main(
+        [
+            "patch",
+            "--file",
+            "README.md",
+            "--operation",
+            "append",
+            "--batch-file",
+            ".aegis/batch.json",
+            "append docs",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert "--batch-file is only valid when --operation batch is selected" in out
+
+
+def test_patch_batch_invalid_file_blocks_cleanly(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    batch_path = tmp_path / ".aegis" / "batch.json"
+    batch_path.parent.mkdir(parents=True, exist_ok=True)
+    batch_path.write_text("{ invalid json", encoding="utf-8")
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("runtime should not run for batch validation")))
+    exit_code = cli.main(
+        [
+            "patch",
+            "--operation",
+            "batch",
+            "--batch-file",
+            ".aegis/batch.json",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert "batch file is not valid JSON" in out
+
+
+def test_patch_batch_valid_file_executes_and_writes_combined_diff(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    batch_path = tmp_path / ".aegis" / "batch.json"
+    batch_path.parent.mkdir(parents=True, exist_ok=True)
+    batch_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "operations": [
+                    {
+                        "operation": "create-file",
+                        "target_file": "src/utils.js",
+                        "task": "Create utility helpers.",
+                    },
+                    {
+                        "operation": "replace-symbol",
+                        "target_file": "src/main.js",
+                        "symbol": "run",
+                        "task": "Use helpers.",
+                    },
+                ],
+                "options": {"stop_on_first_failure": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("aegis_code.cli.run_task", lambda **_: (_ for _ in ()).throw(AssertionError("runtime should not run for batch execution")))
+    monkeypatch.setattr(
+        "aegis_code.cli.execute_batch",
+        lambda batch, cwd, runtime_context: BatchExecutionResult(
+            success=True,
+            diff_text=(
+                "diff --git a/src/utils.js b/src/utils.js\n"
+                "new file mode 100644\n"
+                "--- /dev/null\n"
+                "+++ b/src/utils.js\n"
+                "@@ -0,0 +1 @@\n"
+                "+export const helper = 1;\n"
+            ),
+            completed_steps=2,
+            failed_step_index=None,
+            error=None,
+        ),
+    )
+    exit_code = cli.main(
+        [
+            "patch",
+            "--operation",
+            "batch",
+            "--batch-file",
+            ".aegis/batch.json",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Patch status: generated" in out
+    assert "Patch operation: batch" in out
+    assert "Batch steps completed: 2/2" in out
+    latest_diff = tmp_path / ".aegis" / "runs" / "latest.diff"
+    assert latest_diff.exists()
+    assert "diff --git a/src/utils.js b/src/utils.js" in latest_diff.read_text(encoding="utf-8")
 
 
 def test_patch_insert_after_requires_anchor(tmp_path: Path, monkeypatch, capsys) -> None:

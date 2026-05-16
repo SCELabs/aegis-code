@@ -48,6 +48,10 @@ Current validated operations:
 - `rename-file`
 - `move-file`
 
+Planned (Phase 1 schema validation only):
+
+- `batch`
+
 Canonical source of truth:
 
 - `aegis_code/operations/registry.py` defines supported operation names and operation metadata used by CLI, scope, and runtime gates.
@@ -171,22 +175,25 @@ aegis-code patch --file src/notes.js --operation replace-symbol --symbol addNote
 aegis-code patch --file src/notes.js --operation delete-symbol --symbol searchNotes "delete obsolete function"
 aegis-code patch --file src/old_name.py --operation rename-file --target src/new_name.py "Rename this file."
 aegis-code patch --file src/utils.js --operation move-file --target src/lib/utils.js "Move this file to lib."
+aegis-code patch --operation batch --batch-file .aegis/batch.json
 ```
 
 Behavior:
 
 - Requires explicit scope: at least one `--file`.
 - Uses proposal-only generation and validation; no mutation without `apply --confirm`.
-- Supported explicit operations: `append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`, `delete-symbol`, `rename-file`, `move-file`.
+- Supported explicit operations: `append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`, `delete-symbol`, `rename-file`, `move-file`, `batch`.
 - `--anchor` is required for `--operation insert-after` and `--operation insert-before` (exact line), and for `--operation replace-block` / `--operation delete-block` (exact block text).
 - `--symbol` is required for `--operation replace-symbol` and `--operation delete-symbol`.
 - `--target` is required for `--operation rename-file` and `--operation move-file` (destination path).
+- `--batch-file` is required for `--operation batch`, and `--batch-file` is only valid with `--operation batch`.
 - `replace-file` rewrites complete file contents for an explicit existing target, with local diff validation and normal safety/apply gates.
 - `delete-file` is provider-free and removes one explicit existing target via local diff generation and validation.
 - `replace-symbol` rewrites one uniquely resolved symbol in one explicit existing target, with local diff validation and normal safety/apply gates.
 - `delete-symbol` is provider-free and removes one uniquely resolved symbol in one explicit existing target, with local diff validation and normal safety/apply gates.
 - `rename-file` is provider-free and renames one explicit existing source path to a new destination path while preserving file contents exactly.
 - `move-file` is provider-free and moves one explicit existing source path to a new destination path while preserving file contents exactly.
+- `batch` currently supports JSON schema parsing and validation only (Phase 1); batch execution is not implemented yet.
 - For additive docs tasks without explicit append mode, CLI prints guidance to rerun with `--operation append` (no automatic operation inference).
 - Runtime reports preserve operation metadata (`patch_operation.operation`, `patch_operation.source`) for diagnostics and auditing.
 

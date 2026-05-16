@@ -42,11 +42,13 @@ aegis-code patch --file src/notes.js --operation replace-symbol --symbol addNote
 aegis-code patch --file src/notes.js --operation delete-symbol --symbol searchNotes "delete obsolete function"
 aegis-code patch --file src/old_name.py --operation rename-file --target src/new_name.py "Rename this file."
 aegis-code patch --file src/utils.js --operation move-file --target src/lib/utils.js "Move this file to lib."
+aegis-code patch --operation batch --batch-file .aegis/batch.json
 ```
 
 Options:
 
-- `--operation {append,create-file,insert-after,insert-before,replace-block,delete-block,replace-file,delete-file,replace-symbol,delete-symbol,rename-file,move-file}`: explicit controlled mutation mode.
+- `--operation {append,create-file,insert-after,insert-before,replace-block,delete-block,replace-file,delete-file,replace-symbol,delete-symbol,rename-file,move-file,batch}`: explicit controlled mutation mode.
+- `--batch-file "<path>"`: batch definition JSON path (required for `--operation batch`, invalid for other operations).
 - `--target "<path>"`: destination path for operations that require a secondary target (`rename-file`, `move-file`).
 - `--anchor "<text>"`: required for `--operation insert-after` and `--operation insert-before` (exact line text), and `--operation replace-block` / `--operation delete-block` (exact block text).
 - `--symbol "<name>"`: required for `--operation replace-symbol` and `--operation delete-symbol`.
@@ -55,9 +57,10 @@ Behavior:
 
 - `patch` requires explicit scope (`--file` at least once).
 - Generation is proposal-only; no file mutation without `apply --confirm`.
-- Supported operation modes are explicit (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`, `delete-symbol`, `rename-file`, `move-file`).
+- Supported operation modes are explicit (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`, `delete-symbol`, `rename-file`, `move-file`, `batch`).
 - `rename-file` is provider-free, requires one `--file` source and one `--target` destination, and preserves file contents exactly.
 - `move-file` is provider-free, requires one `--file` source and one `--target` destination, and preserves file contents exactly.
+- `batch` Phase 1 is schema-validation only. Valid batch files parse successfully, then CLI reports execution is not implemented yet.
 - No operation inference: additive docs/test tasks without `--operation append` stay in normal flow, but CLI prints stronger rerun guidance.
 - Append mode supports no-op signal (`{"content": ""}`) and can block with `no_append_needed`.
 - Docs/test destructive rewrite protections can block proposals (`destructive_docs_rewrite`, `destructive_test_rewrite`).

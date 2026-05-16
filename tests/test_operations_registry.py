@@ -24,6 +24,7 @@ def test_operation_registry_contains_all_supported_operations() -> None:
         "delete-symbol",
         "rename-file",
         "move-file",
+        "batch",
     ]
     assert set(OPERATIONS.keys()) == set(list_operation_names())
 
@@ -53,6 +54,8 @@ def test_operation_registry_metadata_flags_are_correct() -> None:
     assert get_operation("rename-file").allows_new_files is True  # type: ignore[union-attr]
     assert get_operation("move-file").requires_destination_path is True  # type: ignore[union-attr]
     assert get_operation("move-file").allows_new_files is True  # type: ignore[union-attr]
+    assert get_operation("batch").category == "composite"  # type: ignore[union-attr]
+    assert get_operation("batch").provider_required is False  # type: ignore[union-attr]
 
 
 def test_operation_registry_helper_functions() -> None:
@@ -76,4 +79,5 @@ def test_operation_registry_helper_functions() -> None:
         "delete-symbol",
         "rename-file",
         "move-file",
+        "batch",
     ]

@@ -121,6 +121,13 @@ OPERATIONS: dict[str, OperationDefinition] = {
         allows_deletions=True,
         description="Move one explicit source file to a new destination path.",
     ),
+    "batch": OperationDefinition(
+        name="batch",
+        category="composite",
+        provider_required=False,
+        requires_target_file=False,
+        description="Execute multiple controlled operations atomically.",
+    ),
 }
 
 
@@ -145,4 +152,3 @@ def list_provider_required_operations() -> list[str]:
 
 def list_provider_free_operations() -> list[str]:
     return [name for name, definition in OPERATIONS.items() if not definition.provider_required]
-
