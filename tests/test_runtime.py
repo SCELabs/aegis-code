@@ -1830,6 +1830,12 @@ def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, t
         client=client,
     )
     assert payload["schema_version"] == 1
+    assert payload["model_selection"]["provider"] == "openai"
+    assert payload["model_selection"]["model"] == "gpt-4.1-mini"
+    assert payload["model_selection"]["tier"] == "mid"
+    assert payload["model_selection"]["mode"] == "balanced"
+    assert payload["model_selection"]["reason"] == "default"
+    assert payload["model_selection"]["provider_timeout_seconds"] == 60
     assert payload["budget_state"]["available"] is True
     assert payload["budget_state"]["remaining_estimate"] == 0.8
     assert payload["runtime_policy"]["requested_mode"] == "balanced"
@@ -1901,6 +1907,39 @@ def test_no_aegis_guidance_keeps_behavior(monkeypatch, tmp_path: Path) -> None:
     payload = build_run_payload(options=TaskOptions(task="unchanged"), cwd=tmp_path, client=client)
     assert payload["selected_model_tier"] == "mid"
     assert payload["retry_policy"]["max_retries"] == 2
+
+
+def test_payload_includes_control_guidance_provenance_and_legacy_compat(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "aegis_code.runtime.run_configured_tests",
+        lambda _cmd, cwd=None: command_result_from_output(pytest_output_pass(), status="ok", exit_code=0),
+    )
+    monkeypatch.setattr("aegis_code.runtime.analyze_failures_sll", lambda _text: {"available": False})
+    client = _CapturingClient()
+    payload = build_run_payload(
+        options=TaskOptions(
+            task="provenance control guidance",
+            aegis_guidance={
+                "model_tier": "cheap",
+                "max_retries": 1,
+                "allow_escalation": False,
+                "context_mode": "minimal",
+                "budget_guidance": {"pressure": "high"},
+                "extra_note": "ignored",
+            },
+        ),
+        cwd=tmp_path,
+        client=client,
+    )
+    assert payload["control_guidance"] == {
+        "model_tier": "cheap",
+        "max_retries": 1,
+        "allow_escalation": False,
+        "context_mode": "minimal",
+        "budget_guidance": {"pressure": "high"},
+    }
+    assert payload["advisory_guidance"] is None
+    assert payload["aegis_guidance"] == payload["control_guidance"]
 
 
 def test_cheapest_mode_forces_cheap_model_tier(monkeypatch, tmp_path: Path) -> None:

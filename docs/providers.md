@@ -61,6 +61,10 @@ Runtime support matrix:
 
 - Supported runtime providers today: `openai`, `openai-compatible`
 - Provider presets may include additional providers for future/optional routing setups
+- `aegis-code provider status` distinguishes:
+  - runtime-supported providers
+  - configured provider (enabled/base URL/timeout/key env)
+  - preset catalog entries, including preset-only providers not yet runtime-supported for execution
 
 ## Behavior Notes
 

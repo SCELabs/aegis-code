@@ -6,6 +6,62 @@ from pathlib import Path
 from typing import Any
 
 from aegis_code.config import project_paths
+from aegis_code.run_payload import normalize_run_payload
+
+
+def _normalize_model_selection(payload: dict[str, Any]) -> dict[str, Any]:
+    existing = payload.get("model_selection", {})
+    model_selection = dict(existing) if isinstance(existing, dict) else {}
+
+    legacy_model = str(payload.get("selected_model", "") or "").strip()
+    provider = str(model_selection.get("provider", "") or "").strip()
+    model = str(model_selection.get("model", "") or "").strip()
+
+    if ":" in legacy_model:
+        legacy_provider, legacy_model_name = legacy_model.split(":", 1)
+    else:
+        legacy_provider, legacy_model_name = "", legacy_model
+
+    if not provider:
+        provider = legacy_provider or str((payload.get("patch_diff", {}) or {}).get("provider", "") or "").strip()
+    if not model:
+        model = legacy_model_name or legacy_model
+
+    runtime_policy = payload.get("runtime_policy", {}) if isinstance(payload.get("runtime_policy", {}), dict) else {}
+    mode = str(model_selection.get("mode", "") or "").strip() or str(runtime_policy.get("selected_mode", "") or "").strip() or str(payload.get("mode", "") or "").strip() or "balanced"
+    reason = str(model_selection.get("reason", "") or "").strip() or str(runtime_policy.get("reason", "") or "").strip() or "default"
+
+    tier = str(model_selection.get("tier", "") or "").strip() or str(payload.get("selected_model_tier", "") or "").strip() or "mid"
+
+    timeout_value = model_selection.get("provider_timeout_seconds")
+    if timeout_value is None:
+        timeout_value = payload.get("provider_timeout_seconds")
+
+    normalized = {
+        "provider": provider or "unknown",
+        "model": model or "unknown",
+        "tier": tier,
+        "mode": mode,
+        "reason": reason,
+    }
+    if timeout_value is not None:
+        normalized["provider_timeout_seconds"] = timeout_value
+    return normalized
+
+
+def _resolve_legacy_aegis_guidance(
+    *,
+    control_guidance: dict[str, Any] | None,
+    advisory_guidance: dict[str, Any] | None,
+    legacy_guidance: Any,
+) -> dict[str, Any] | None:
+    if isinstance(advisory_guidance, dict) and advisory_guidance:
+        return advisory_guidance
+    if isinstance(control_guidance, dict) and control_guidance:
+        return control_guidance
+    if isinstance(legacy_guidance, dict):
+        return legacy_guidance
+    return None
 
 
 def write_reports(payload: dict[str, Any], cwd: Path | None = None) -> dict[str, Path]:
@@ -13,8 +69,7 @@ def write_reports(payload: dict[str, Any], cwd: Path | None = None) -> dict[str,
     paths["runs_dir"].mkdir(parents=True, exist_ok=True)
     history_dir = paths["runs_dir"] / "history"
     history_dir.mkdir(parents=True, exist_ok=True)
-    report_payload = dict(payload or {})
-    report_payload.setdefault("schema_version", 1)
+    report_payload = normalize_run_payload(dict(payload or {}))
 
     md_content = render_markdown_report(report_payload, cwd=cwd)
     history_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".json"
@@ -115,12 +170,14 @@ def _append_policy_diagnostics(lines: list[str], patch_diff: dict[str, Any]) -> 
 
 
 def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> str:
+    payload = normalize_run_payload(dict(payload or {}))
     budget = payload.get("budget", {})
     commands_run = payload.get("commands_run", [])
     repo_scan = payload.get("repo_scan", {})
     guidance = payload.get("aegis_execution", {})
     selected_tier = payload.get("selected_model_tier", "mid")
     selected_model = payload.get("selected_model", "unknown")
+    model_selection = payload.get("model_selection", {}) if isinstance(payload.get("model_selection", {}), dict) else {}
     failures = payload.get("failures", {})
     final_failures = payload.get("final_failures", failures)
     initial_failures = payload.get("initial_failures", {})
@@ -145,6 +202,9 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
     project_context = payload.get("project_context", {}) or {}
     adapter = payload.get("adapter", {}) or {}
     applied_guidance = payload.get("applied_aegis_guidance", {}) or {}
+    control_guidance = payload.get("control_guidance") if isinstance(payload.get("control_guidance"), dict) else None
+    advisory_guidance = payload.get("advisory_guidance") if isinstance(payload.get("advisory_guidance"), dict) else None
+    legacy_aegis_guidance = payload.get("aegis_guidance") if isinstance(payload.get("aegis_guidance"), dict) else None
     key_usage = payload.get("key_usage", []) if isinstance(payload.get("key_usage", []), list) else []
     guidance_hints = payload.get("guidance_hints", []) if isinstance(payload.get("guidance_hints", []), list) else []
 
@@ -160,16 +220,46 @@ def render_markdown_report(payload: dict[str, Any], cwd: Path | None = None) -> 
         f"- Total: `{budget.get('total', 0.0)}`",
         f"- Spent: `{budget.get('spent', 0.0)}`",
         f"- Remaining: `{budget.get('remaining', 0.0)}`",
+        "- Note: Budget values are estimated runtime guidance for model/mode selection, not exact provider billing.",
         "",
         "## Model Selection",
         "",
-        f"- Tier: `{selected_tier}`",
-        f"- Model: `{selected_model}`",
+        f"- Provider: `{model_selection.get('provider', 'unknown')}`",
+        f"- Model: `{model_selection.get('model', selected_model)}`",
+        f"- Tier: `{model_selection.get('tier', selected_tier)}`",
+        f"- Mode: `{model_selection.get('mode', payload.get('mode', 'balanced'))}`",
+        f"- Reason: `{model_selection.get('reason', 'default')}`",
+        (
+            f"- Provider timeout (s): `{model_selection.get('provider_timeout_seconds')}`"
+            if model_selection.get("provider_timeout_seconds") is not None
+            else "- Provider timeout (s): `n/a`"
+        ),
+        f"- Legacy selected_model: `{selected_model}`",
         "",
         "## Aegis Execution Guidance",
         "",
         "```json",
         json.dumps(guidance, indent=2, sort_keys=True),
+        "```",
+        "",
+        "## Guidance Provenance",
+        "",
+        "### Control Guidance",
+        "",
+        "```json",
+        json.dumps(control_guidance, indent=2, sort_keys=True),
+        "```",
+        "",
+        "### Advisory Guidance",
+        "",
+        "```json",
+        json.dumps(advisory_guidance, indent=2, sort_keys=True),
+        "```",
+        "",
+        "### Legacy Guidance (aegis_guidance)",
+        "",
+        "```json",
+        json.dumps(legacy_aegis_guidance, indent=2, sort_keys=True),
         "```",
         "",
         "## Repo Scan Summary",

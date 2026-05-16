@@ -46,9 +46,12 @@ from aegis_code.providers import generate_structured_edits
 from aegis_code.providers import generate_text
 from aegis_code.patches.proposal_controller import build_proposal_contract, run_structured_proposal_controller
 from aegis_code.report import write_reports
+from aegis_code.run_payload import build_run_payload_base
+from aegis_code.runtime_control_service import RuntimeControlService
+from aegis_code.runtime_control_policy import control_requested as runtime_control_requested
 from aegis_code.routing import normalize_tier, resolve_model_for_tier
 from aegis_code.safety.patch_review import safety_report_to_dict, scan_diff
-from aegis_code.secrets import list_scoped_keys, resolve_key, resolve_key_source
+from aegis_code.secrets import list_scoped_keys, resolve_key_source
 from aegis_code.short_circuit import should_skip_provider
 from aegis_code.sll_guidance import build_sll_fix_guidance
 from aegis_code.sll_adapter import analyze_failures_sll, classify_sll_risk, run_sll_analysis
@@ -117,6 +120,38 @@ class TaskOptions:
     destination_path: str | None = None
     anchor: str | None = None
     symbol: str | None = None
+
+
+_LEGACY_AEGIS_GUIDANCE_DEFAULT: dict[str, Any] = {
+    "available": False,
+    "actions": [],
+    "explanation": "",
+    "used_fallback": False,
+}
+
+
+def _normalize_control_guidance(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(raw, dict) or not raw:
+        return None
+    normalized: dict[str, Any] = {}
+    for key in ("model_tier", "max_retries", "allow_escalation", "context_mode", "budget_guidance"):
+        if key in raw:
+            normalized[key] = raw.get(key)
+    if not normalized:
+        return None
+    return normalized
+
+
+def _resolve_legacy_aegis_guidance(
+    *,
+    control_guidance: dict[str, Any] | None,
+    advisory_guidance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if isinstance(advisory_guidance, dict) and advisory_guidance:
+        return advisory_guidance
+    if isinstance(control_guidance, dict) and control_guidance:
+        return control_guidance
+    return dict(_LEGACY_AEGIS_GUIDANCE_DEFAULT)
 
 
 def _progress(options: TaskOptions, message: str) -> None:
@@ -716,29 +751,11 @@ def _aegis_regeneration_control(
     base_url: str,
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
-    fallback = {"status": "not_available", "error": None, "actions": {}}
-    try:
-        from aegis import AegisClient  # type: ignore
-    except Exception:
-        return fallback
-    try:
-        client = AegisClient(base_url=base_url)
-        response = client.auto().step(
-            step_name="patch_regeneration_control",
-            step_input={"control": "hard_invalid_patch"},
-            symptoms=["invalid_patch"],
-            severity="high",
-            metadata=metadata,
-        )
-        if isinstance(response, dict):
-            return {
-                "status": "applied",
-                "error": None,
-                "actions": response.get("actions", response),
-            }
-        return {"status": "no_guidance_returned", "error": None, "actions": {}}
-    except Exception as exc:
-        return {"status": "client_error", "error": str(exc), "actions": {}}
+    service = RuntimeControlService(options=None, config=None, cwd=Path.cwd())
+    return service.get_regeneration_control(
+        task="",
+        payload={"base_url": base_url, "metadata": metadata},
+    )
 
 
 def _is_ignored_path(path: Path) -> bool:
@@ -835,18 +852,11 @@ def build_task_context(cwd: Path) -> dict:
 
 
 def _control_requested(cfg: Any, cwd: Path) -> bool:
-    setting = cfg.aegis.control_enabled
-    key_available = bool(resolve_key("AEGIS_API_KEY", cwd))
-    if isinstance(setting, bool):
-        return setting
-    lowered = str(setting).strip().lower()
-    if lowered == "auto":
-        return key_available
-    if lowered in {"true", "1", "yes", "on"}:
-        return True
-    if lowered in {"false", "0", "no", "off"}:
-        return False
-    return key_available
+    return runtime_control_requested(
+        options=None,
+        config=cfg,
+        environment={"cwd": cwd.resolve()},
+    )
 
 
 def _key_usage_metadata(cwd: Path, cfg: Any) -> list[dict[str, Any]]:
@@ -1079,64 +1089,17 @@ def _aegis_corrective_control(
     context_paths: list[str],
     base_url: str,
 ) -> dict[str, Any]:
-    fallback = {
-        "applied": False,
-        "status": "not_available",
-        "reason": "not_available",
-        "error": None,
-        "constraints": [],
-        "context_mode": None,
-        "allowed_targets": [],
-        "guidance_signals": [],
-    }
-    try:
-        from aegis import AegisClient  # type: ignore
-    except Exception:
-        fallback["status"] = "not_available"
-        fallback["reason"] = "not_available"
-        return fallback
-    try:
-        client = AegisClient(base_url=base_url)
-        response = client.auto().step(
-            step_name="patch_regeneration_correction",
-            step_input={
-                "task": task,
-                "task_type": task_type,
-                "issues": issues,
-                "validation_errors": validation_errors,
-                "context_files": context_paths,
-            },
-            symptoms=["low_patch_quality"],
-            severity="medium",
-            metadata={"task_type": task_type},
-        )
-        if not isinstance(response, dict):
-            fallback["status"] = "no_guidance_returned"
-            fallback["reason"] = "no_guidance_returned"
-            return fallback
-        constraints = response.get("constraints", [])
-        allowed_targets = response.get("allowed_targets", [])
-        guidance_signals = response.get("guidance_signals", [])
-        has_guidance = bool(constraints) or bool(allowed_targets) or bool(guidance_signals) or bool(response.get("context_mode"))
-        if not has_guidance:
-            fallback["status"] = "no_guidance_returned"
-            fallback["reason"] = "no_guidance_returned"
-            return fallback
-        return {
-            "applied": True,
-            "status": "applied",
-            "reason": "applied",
-            "error": None,
-            "constraints": constraints if isinstance(constraints, list) else [],
-            "context_mode": response.get("context_mode"),
-            "allowed_targets": allowed_targets if isinstance(allowed_targets, list) else [],
-            "guidance_signals": guidance_signals if isinstance(guidance_signals, list) else [],
-        }
-    except Exception as exc:
-        fallback["status"] = "client_error"
-        fallback["reason"] = "client_error"
-        fallback["error"] = str(exc)
-        return fallback
+    service = RuntimeControlService(options=None, config=None, cwd=Path.cwd())
+    return service.get_corrective_control(
+        task=task,
+        payload={
+            "task_type": task_type,
+            "issues": issues,
+            "validation_errors": validation_errors,
+            "context_paths": context_paths,
+            "base_url": base_url,
+        },
+    )
 
 
 def _parse_unified_diff_files(diff_text: str) -> list[dict[str, Any]]:
@@ -1245,59 +1208,10 @@ def _syntactic_python_check(diff_text: str, cwd: Path) -> tuple[bool, str | None
 
 
 def _refine_task_context_with_aegis(task: str, local_context: dict, cwd: Path, cfg: Any) -> dict:
-    if not _control_requested(cfg, cwd):
-        return local_context
-    try:
-        from aegis import AegisClient  # type: ignore
-    except Exception:
-        return local_context
-
-    try:
-        client = AegisClient(base_url=str(cfg.aegis.base_url))
-        payload = client.auto().context(
-            objective=task,
-            messages=[
-                {"role": "system", "content": "You are refining context for a code modification task."},
-                {"role": "user", "content": json.dumps(local_context, ensure_ascii=True)},
-            ],
-            constraints=[
-                "Preserve relevant files",
-                "Remove noise",
-                "Prioritize entrypoints and integration points",
-            ],
-            symptoms=["context_noise"],
-            severity="medium",
-            metadata={"task_type": "patch_generation"},
-        )
-        if isinstance(payload, dict):
-            scope_data = payload.get("scope_data", {})
-            if isinstance(scope_data, dict):
-                cleaned = scope_data.get("cleaned_messages")
-                if isinstance(cleaned, list):
-                    for msg in cleaned:
-                        if isinstance(msg, dict):
-                            content = msg.get("content")
-                            if isinstance(content, str):
-                                try:
-                                    parsed = json.loads(content)
-                                except Exception:
-                                    continue
-                                if isinstance(parsed, dict) and isinstance(parsed.get("files"), list) and parsed.get("files"):
-                                    return parsed
-            cleaned_messages = payload.get("cleaned_messages")
-            if isinstance(cleaned_messages, list):
-                for msg in cleaned_messages:
-                    if isinstance(msg, dict):
-                        content = msg.get("content")
-                        if isinstance(content, str):
-                            try:
-                                parsed = json.loads(content)
-                            except Exception:
-                                continue
-                            if isinstance(parsed, dict) and isinstance(parsed.get("files"), list) and parsed.get("files"):
-                                return parsed
-    except Exception:
-        return local_context
+    service = RuntimeControlService(options=None, config=cfg, cwd=cwd)
+    refined = service.get_context_refinement(task=task, context_text=local_context)
+    if isinstance(refined, dict):
+        return refined
     return local_context
 
 
@@ -1317,8 +1231,16 @@ def build_run_payload(
         else getattr(config.providers, "timeout_seconds", 60)
     )
     _progress(options, "resolving keys")
-    apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=config.aegis.base_url)
-    guidance = options.aegis_guidance or {}
+    resolved_cwd = (cwd or Path.cwd()).resolve()
+    apply_resolved_aegis_env(resolved_cwd, default_base_url=config.aegis.base_url)
+    control_service = RuntimeControlService(
+        options=options,
+        config=config,
+        cwd=resolved_cwd,
+        advisory_fn=get_aegis_guidance,
+    )
+    control_guidance = _normalize_control_guidance(options.aegis_guidance)
+    guidance = control_guidance or {}
     guidance_tier = str(guidance.get("model_tier", "") or "").strip().lower()
     guidance_max_retries_raw = guidance.get("max_retries")
     guidance_allow_escalation = guidance.get("allow_escalation")
@@ -1370,7 +1292,7 @@ def build_run_payload(
     feature_plan: dict[str, Any] | None = None
     patch_quality: dict[str, Any] | None = None
     patch_safety: dict[str, Any] | None = None
-    aegis_guidance: dict[str, Any] = {"available": False, "actions": [], "explanation": "", "used_fallback": False}
+    advisory_guidance: dict[str, Any] | None = None
     provider_skipped = False
     skip_reason = ""
     next_action: str | None = None
@@ -2555,17 +2477,19 @@ def build_run_payload(
         and should_patch_flow
         and (has_context_files or has_proposed_changes)
     ):
-        aegis_guidance = get_aegis_guidance(
+        advisory_guidance = control_service.get_advisory_guidance(
             task=options.task,
-            context={
-                "aegis": {"enabled": bool(getattr(config.aegis, "enabled", False))},
-                "failure_context": failure_context,
-                "patch_plan": patch_plan,
+            payload={
+                "context": {
+                    "aegis": {"enabled": bool(getattr(config.aegis, "enabled", False))},
+                    "failure_context": failure_context,
+                    "patch_plan": patch_plan,
+                },
+                "failures": final_failures,
+                "runtime_policy": {"selected_mode": mode},
+                "timeout_ms": int(getattr(config.aegis, "timeout_ms", 2000) or 2000),
+                "max_retries": int(getattr(config.aegis, "max_retries", 1) or 1),
             },
-            failures=final_failures,
-            runtime_policy={"selected_mode": mode},
-            timeout_ms=int(getattr(config.aegis, "timeout_ms", 2000) or 2000),
-            max_retries=int(getattr(config.aegis, "max_retries", 1) or 1),
         )
         sll_pre_call = run_sll_analysis(str(options.task or ""))
         sll_risk = classify_sll_risk(sll_pre_call)
@@ -2688,7 +2612,7 @@ def build_run_payload(
                                 failures=final_failures,
                                 context=failure_context,
                                 patch_plan=step_plan,
-                                aegis_execution=aegis_guidance,
+                                aegis_execution=advisory_guidance if isinstance(advisory_guidance, dict) else {},
                                 api_key_env=config.providers.api_key_env,
                                 base_url=str(config.providers.base_url or ""),
                                 max_context_chars=int(config.patches.max_context_chars),
@@ -2810,7 +2734,7 @@ def build_run_payload(
                             failures=final_failures,
                             context=failure_context,
                             patch_plan=patch_plan,
-                            aegis_execution=aegis_guidance,
+                            aegis_execution=advisory_guidance if isinstance(advisory_guidance, dict) else {},
                             api_key_env=config.providers.api_key_env,
                             base_url=str(config.providers.base_url or ""),
                             max_context_chars=int(config.patches.max_context_chars),
@@ -2939,7 +2863,7 @@ def build_run_payload(
                 },
                 failures=final_failures if isinstance(final_failures, dict) else {},
                 patch_plan=patch_plan if isinstance(patch_plan, dict) else {},
-                aegis_execution=aegis_guidance if isinstance(aegis_guidance, dict) else {},
+                aegis_execution=advisory_guidance if isinstance(advisory_guidance, dict) else {},
                 model=selected_model,
                 provider_timeout=provider_timeout_seconds,
             )
@@ -2966,7 +2890,7 @@ def build_run_payload(
                     failures=final_failures,
                     context=failure_context,
                     patch_plan=patch_plan,
-                    aegis_execution=aegis_guidance,
+                    aegis_execution=advisory_guidance if isinstance(advisory_guidance, dict) else {},
                     api_key_env=config.providers.api_key_env,
                     base_url=str(config.providers.base_url or ""),
                     sll_guidance=None,
@@ -3208,7 +3132,7 @@ def build_run_payload(
                     failures=final_failures,
                     context=failure_context,
                     patch_plan=enhanced_patch_plan,
-                    aegis_execution=aegis_guidance,
+                    aegis_execution=advisory_guidance if isinstance(advisory_guidance, dict) else {},
                     api_key_env=config.providers.api_key_env,
                     base_url=str(config.providers.base_url or ""),
                     sll_guidance=sll_fix_guidance,
@@ -3592,7 +3516,7 @@ def build_run_payload(
                     failures=final_failures,
                     context=failure_context,
                     patch_plan=regen_plan,
-                    aegis_execution=aegis_guidance,
+                    aegis_execution=advisory_guidance if isinstance(advisory_guidance, dict) else {},
                     api_key_env=config.providers.api_key_env,
                     base_url=str(config.providers.base_url or ""),
                     sll_guidance=sll_fix_guidance,
@@ -3921,36 +3845,51 @@ def build_run_payload(
             "exit_code": last_cmd.get("exit_code"),
             "output": full_output,
         }
-    payload = {
-        "schema_version": 1,
-        "task": options.task,
-        "mode": mode,
-        "dry_run": options.dry_run,
-        "budget": budget.to_dict(),
-        "aegis_execution": decision.execution,
-        "aegis_decision": asdict(decision),
-        "selected_model_tier": selected_tier,
-        "selected_model": selected_model,
-        "repo_scan": repo_summary.to_dict(),
-        "repo_map": repo_map,
-        "commands_run": commands_run,
-        "test_attempts": test_attempts,
-        "initial_failures": initial_failures,
-        "final_failures": final_failures,
-        "symptoms": symptoms,
-        "retry_policy": retry_policy,
-        "failures": failures,
-        "failure_context": failure_context,
-        "sll_analysis": sll_analysis,
-        "sll_pre_call": sll_pre_call,
-        "sll_post_call": sll_post_call,
-        "sll_risk": sll_risk,
-        "sll_fix_guidance": sll_fix_guidance,
-        "patch_plan": patch_plan,
-        "patch_diff": patch_diff,
-        "structured_patch": structured_patch,
-        "patch_quality": patch_quality,
-        "patch_operation": (
+    legacy_aegis_guidance = _resolve_legacy_aegis_guidance(
+        control_guidance=control_guidance,
+        advisory_guidance=advisory_guidance,
+    )
+    payload = build_run_payload_base(
+        task=options.task,
+        schema_version=1,
+        model_selection={
+            "provider": str(getattr(config.providers, "provider", "openai") or "openai"),
+            "model": str(selected_model).split(":", 1)[1] if ":" in str(selected_model) else str(selected_model),
+            "tier": selected_tier,
+            "mode": str((options.runtime_policy or {}).get("selected_mode") or mode or "balanced"),
+            "reason": str((options.runtime_policy or {}).get("reason") or "default"),
+            "provider_timeout_seconds": provider_timeout_seconds,
+        },
+        control_guidance=control_guidance,
+        advisory_guidance=advisory_guidance,
+        aegis_guidance=legacy_aegis_guidance,
+        mode=mode,
+        dry_run=options.dry_run,
+        budget=budget.to_dict(),
+        aegis_execution=decision.execution,
+        aegis_decision=asdict(decision),
+        selected_model_tier=selected_tier,
+        selected_model=selected_model,
+        repo_scan=repo_summary.to_dict(),
+        repo_map=repo_map,
+        commands_run=commands_run,
+        test_attempts=test_attempts,
+        initial_failures=initial_failures,
+        final_failures=final_failures,
+        symptoms=symptoms,
+        retry_policy=retry_policy,
+        failures=failures,
+        failure_context=failure_context,
+        sll_analysis=sll_analysis,
+        sll_pre_call=sll_pre_call,
+        sll_post_call=sll_post_call,
+        sll_risk=sll_risk,
+        sll_fix_guidance=sll_fix_guidance,
+        patch_plan=patch_plan,
+        patch_diff=patch_diff,
+        structured_patch=structured_patch,
+        patch_quality=patch_quality,
+        patch_operation=(
             {
                 "operation": requested_operation,
                 "source": operation_source,
@@ -3958,18 +3897,17 @@ def build_run_payload(
             if requested_operation
             else None
         ),
-        "feature_plan": feature_plan,
-        "apply_safety": apply_safety,
-        "verification": verification,
-        "verification_diagnostics": verification_diagnostics,
-        "aegis_guidance": aegis_guidance,
-        "provider_skipped": provider_skipped,
-        "skip_reason": skip_reason or None,
-        "next_action": next_action,
-        "status": status,
-        "notes": notes,
-        "execution_budget_pressure": execution_budget,
-        "project_context": {
+        feature_plan=feature_plan,
+        apply_safety=apply_safety,
+        verification=verification,
+        verification_diagnostics=verification_diagnostics,
+        provider_skipped=provider_skipped,
+        skip_reason=skip_reason or None,
+        next_action=next_action,
+        status=status,
+        notes=notes,
+        execution_budget_pressure=execution_budget,
+        project_context={
             "available": bool((options.project_context or {}).get("available", False)),
             "included_paths": list((options.project_context or {}).get("included_paths", [])),
             "total_chars": int((options.project_context or {}).get("total_chars", 0) or 0),
@@ -3977,28 +3915,29 @@ def build_run_payload(
             "available_global_keys": sorted(list(list_scoped_keys((cwd or Path.cwd()).resolve()).get("global", {}).keys())),
             "secret_values_exposed": False,
         },
-        "budget_state": {
+        budget_state={
             "available": bool((options.budget_state or {}).get("available", False)),
             "limit": (options.budget_state or {}).get("limit"),
             "spent_estimate": (options.budget_state or {}).get("spent_estimate"),
             "remaining_estimate": (options.budget_state or {}).get("remaining_estimate"),
         },
-        "runtime_policy": {
+        runtime_policy={
             "requested_mode": (options.runtime_policy or {}).get("requested_mode"),
             "selected_mode": (options.runtime_policy or {}).get("selected_mode"),
             "reason": (options.runtime_policy or {}).get("reason"),
             "budget_present": bool((options.runtime_policy or {}).get("budget_present", False)),
             "context_available": bool((options.runtime_policy or {}).get("context_available", False)),
         },
-        "applied_aegis_guidance": {
+        provider_timeout_seconds=provider_timeout_seconds,
+        applied_aegis_guidance={
             "model_tier_override": guidance_tier if guidance_tier in {"cheap", "mid", "premium"} else None,
             "max_retries_applied": int(decision.max_retries),
             "escalation_allowed": bool(decision.allow_escalation),
             "context_mode": guidance_context_mode or "balanced",
         },
-        "task_driven_patch_proposal": task_driven_patch_proposal,
-        "key_usage": _key_usage_metadata((cwd or Path.cwd()).resolve(), config),
-    }
+        task_driven_patch_proposal=task_driven_patch_proposal,
+        key_usage=_key_usage_metadata((cwd or Path.cwd()).resolve(), config),
+    )
     patch_diff_payload = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
     diff_path = str(patch_diff_payload.get("path", "") or "").strip()
     if diff_path:

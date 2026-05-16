@@ -230,6 +230,14 @@ def test_execute_task_uses_aegis_step_when_enabled_and_available(monkeypatch, tm
     assert result["adapter"]["control_requested"] is True
     assert result["adapter"]["fallback_reason"] is None
     assert "aegis_result" in result
+    assert result["control_guidance"] == {
+        "model_tier": None,
+        "max_retries": None,
+        "allow_escalation": None,
+        "context_mode": None,
+    }
+    assert result["advisory_guidance"] is None
+    assert result["aegis_guidance"] == result["control_guidance"]
     assert result["actions"] == ["aegis-action"]
     assert result["trace"] == ["aegis-trace"]
     assert result["explanation"] == "guided"
@@ -348,10 +356,56 @@ def test_execute_task_success_persists_adapter_metadata_to_reports(monkeypatch, 
     assert latest_json["adapter"]["aegis_client_available"] is True
     assert latest_json["adapter"]["fallback_reason"] is None
     assert latest_json["adapter"]["fallback_reason"] != "import_missing"
+    assert latest_json["control_guidance"] == {
+        "model_tier": None,
+        "max_retries": None,
+        "allow_escalation": None,
+        "context_mode": None,
+    }
+    assert latest_json["advisory_guidance"] is None
+    assert latest_json["aegis_guidance"] == latest_json["control_guidance"]
     assert "## Aegis Control" in latest_md
     assert "Status: `enabled`" in latest_md
     assert "Client available: `True`" in latest_md
     assert "Reason: `guidance_applied`" in latest_md
+
+
+def test_execute_task_prefers_advisory_guidance_for_legacy_field(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".aegis").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".aegis" / "aegis-code.yml").write_text("aegis:\n  control_enabled: true\n", encoding="utf-8")
+
+    def _fake_local(*, options, cwd=None, client=None, write_report=True):
+        _ = cwd, client, write_report
+        payload = _fake_local_payload(options)
+        payload["advisory_guidance"] = {"available": True, "explanation": "advisory"}
+        payload["aegis_guidance"] = {"available": True, "explanation": "advisory"}
+        return payload
+
+    class _FakeFlow:
+        def step(self, **_: object) -> dict[str, object]:
+            return {"model_tier": "mid"}
+
+    class _FakeClient:
+        def __init__(self, base_url: str) -> None:
+            _ = base_url
+
+        def auto(self) -> _FakeFlow:
+            return _FakeFlow()
+
+    fake_aegis = types.ModuleType("aegis")
+    setattr(fake_aegis, "AegisClient", _FakeClient)
+    monkeypatch.setitem(sys.modules, "aegis", fake_aegis)
+    monkeypatch.setattr("aegis_code.runtime._run_task_local", _fake_local)
+
+    result = execute_task(TaskOptions(task="x"), cwd=tmp_path)
+    assert result["control_guidance"] == {
+        "model_tier": "mid",
+        "max_retries": None,
+        "allow_escalation": None,
+        "context_mode": None,
+    }
+    assert result["advisory_guidance"] == {"available": True, "explanation": "advisory"}
+    assert result["aegis_guidance"] == {"available": True, "explanation": "advisory"}
 
 
 def test_execute_task_context_mode_minimal_reduces_context(monkeypatch, tmp_path: Path) -> None:

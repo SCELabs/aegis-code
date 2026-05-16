@@ -15,6 +15,14 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
         "aegis_execution": {"budget": {"pressure": "low"}},
         "selected_model_tier": "mid",
         "selected_model": "openai:gpt-4.1-mini",
+        "model_selection": {
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "tier": "mid",
+            "mode": "balanced",
+            "reason": "default",
+            "provider_timeout_seconds": 60,
+        },
         "repo_scan": {"file_count": 3, "top_level_directories": ["src", "tests"]},
         "commands_run": [],
         "test_attempts": [],
@@ -68,6 +76,18 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
             "escalation_allowed": False,
             "context_mode": "minimal",
         },
+        "control_guidance": {
+            "model_tier": "cheap",
+            "max_retries": 1,
+            "allow_escalation": False,
+            "context_mode": "minimal",
+        },
+        "advisory_guidance": {
+            "available": True,
+            "actions": ["narrow scope"],
+            "explanation": "Try a smaller patch.",
+            "used_fallback": False,
+        },
         "status": "dry_run_planned",
         "notes": ["planning only"],
     }
@@ -76,6 +96,9 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert paths["md"].exists()
     data = json.loads(paths["json"].read_text(encoding="utf-8"))
     assert data["schema_version"] == 1
+    assert data["control_guidance"]["model_tier"] == "cheap"
+    assert data["advisory_guidance"]["available"] is True
+    assert data["aegis_guidance"]["available"] is True
     content = paths["md"].read_text(encoding="utf-8")
     assert "Aegis Code Run Report" in content
     assert "## Test Attempts" in content
@@ -104,8 +127,53 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     assert "## Proposed Fix Plan" in content
     assert "## Patch Diff Proposal" in content
     assert "## Patch Quality" not in content
+    assert "Provider: `openai`" in content
+    assert "Model: `gpt-4.1-mini`" in content
+    assert "Tier: `mid`" in content
+    assert "Mode: `balanced`" in content
+    assert "Reason: `default`" in content
+    assert "Provider timeout (s): `60`" in content
+    assert "## Guidance Provenance" in content
+    assert "### Control Guidance" in content
+    assert "### Advisory Guidance" in content
+    assert "### Legacy Guidance (aegis_guidance)" in content
     assert "Aegis Code runs a controlled execution loop with optional proposal-only patch diffs and deterministic patch-quality scoring." in content
     assert "Run `aegis-code --check-sll` to verify local setup" in content
+
+
+def test_report_normalizes_model_selection_from_legacy_fields(tmp_path: Path) -> None:
+    payload = {
+        "task": "legacy model fields",
+        "mode": "balanced",
+        "dry_run": True,
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+    }
+    paths = write_reports(payload, cwd=tmp_path)
+    data = json.loads(paths["json"].read_text(encoding="utf-8"))
+    assert data["model_selection"]["provider"] == "openai"
+    assert data["model_selection"]["model"] == "gpt-4.1-mini"
+    assert data["model_selection"]["tier"] == "mid"
+    assert data["model_selection"]["mode"] == "balanced"
+    assert data["model_selection"]["reason"] == "default"
+
+
+def test_report_preserves_legacy_aegis_guidance_when_new_fields_missing(tmp_path: Path) -> None:
+    payload = {
+        "task": "legacy guidance only",
+        "mode": "balanced",
+        "dry_run": True,
+        "selected_model_tier": "mid",
+        "selected_model": "openai:gpt-4.1-mini",
+        "runtime_policy": {"selected_mode": "balanced", "reason": "default"},
+        "aegis_guidance": {"available": True, "explanation": "legacy"},
+    }
+    paths = write_reports(payload, cwd=tmp_path)
+    data = json.loads(paths["json"].read_text(encoding="utf-8"))
+    assert data["control_guidance"] is None
+    assert data["advisory_guidance"] is None
+    assert data["aegis_guidance"] == {"available": True, "explanation": "legacy"}
 
 
 def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
@@ -117,6 +185,14 @@ def test_report_excludes_full_output_and_file_contents(tmp_path: Path) -> None:
         "aegis_execution": {"budget": {"pressure": "low"}},
         "selected_model_tier": "mid",
         "selected_model": "openai:gpt-4.1-mini",
+        "model_selection": {
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "tier": "mid",
+            "mode": "balanced",
+            "reason": "default",
+            "provider_timeout_seconds": 60,
+        },
         "repo_scan": {"file_count": 3, "top_level_directories": ["src", "tests"]},
         "commands_run": [
             {
@@ -179,6 +255,14 @@ def test_report_shows_available_sll_block_and_mapped_symptoms(tmp_path: Path) ->
         "aegis_execution": {"budget": {"pressure": "low"}},
         "selected_model_tier": "mid",
         "selected_model": "openai:gpt-4.1-mini",
+        "model_selection": {
+            "provider": "openai",
+            "model": "gpt-4.1-mini",
+            "tier": "mid",
+            "mode": "balanced",
+            "reason": "default",
+            "provider_timeout_seconds": 60,
+        },
         "repo_scan": {"file_count": 3, "top_level_directories": ["src", "tests"]},
         "commands_run": [],
         "test_attempts": [],

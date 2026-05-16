@@ -1695,6 +1695,9 @@ def test_patch_batch_valid_file_executes_and_writes_combined_diff(tmp_path: Path
     latest_json = tmp_path / ".aegis" / "runs" / "latest.json"
     payload = json.loads(latest_json.read_text(encoding="utf-8"))
     assert payload.get("patch_operation", {}).get("operation") == "batch"
+    assert payload.get("control_guidance") is None
+    assert payload.get("advisory_guidance") is None
+    assert payload.get("aegis_guidance") is None
     batch_report = payload.get("batch_report", {})
     assert batch_report.get("success") is True
     assert batch_report.get("total_steps") == 2
@@ -1780,6 +1783,9 @@ def test_patch_batch_failure_outputs_step_summary_and_writes_batch_report(tmp_pa
     latest_json = tmp_path / ".aegis" / "runs" / "latest.json"
     payload = json.loads(latest_json.read_text(encoding="utf-8"))
     assert payload.get("status") == "batch_blocked"
+    assert payload.get("control_guidance") is None
+    assert payload.get("advisory_guidance") is None
+    assert payload.get("aegis_guidance") is None
     batch_report = payload.get("batch_report", {})
     assert batch_report.get("success") is False
     assert batch_report.get("total_steps") == 2

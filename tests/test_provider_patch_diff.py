@@ -75,6 +75,8 @@ def test_runtime_passes_advisory_aegis_guidance_to_provider_prompt(monkeypatch, 
     payload = build_run_payload(options=TaskOptions(task="x", propose_patch=True), cwd=tmp_path, client=_Client())
     assert isinstance(captured.get("aegis_execution"), dict)
     assert captured["aegis_execution"]["available"] is True
+    assert payload["advisory_guidance"]["available"] is True
+    assert payload["control_guidance"] is None
     assert payload["aegis_guidance"]["available"] is True
 
 

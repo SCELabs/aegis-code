@@ -359,9 +359,16 @@ If latest patch is invalid/blocked, inspect raw provider diff:
 aegis-code diff --full
 ```
 
+## CLI Architecture
+
+The canonical target CLI taxonomy (public vs advanced commands, planned consolidations, and migration phases) is documented in:
+
+- `docs/cli_architecture.md`
+
 ## Documentation
 
 - Command reference: `docs/commands.md`
+- CLI architecture: `docs/cli_architecture.md`
 - Apply check: `docs/apply_check.md`
 - Apply confirm: `docs/apply_confirm.md`
 - Workspace: `docs/workspace.md`

@@ -54,6 +54,7 @@ from aegis_code.policy import (
 )
 from aegis_code.config import ensure_project_files, project_paths, update_model_tier
 from aegis_code.report import read_latest_markdown, render_markdown_report, write_reports
+from aegis_code.run_payload import build_run_payload_base, normalize_run_payload
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scope import build_scope_contract_from_cli
 from aegis_code.operations.registry import get_operation, list_operation_names
@@ -1079,30 +1080,44 @@ def _write_budget_skipped_report(
     runtime_policy: dict[str, object],
     budget_state: dict[str, object],
 ) -> None:
-    payload = {
-        "schema_version": 1,
-        "task": task,
-        "mode": mode,
-        "dry_run": dry_run,
-        "status": "budget_skipped",
-        "notes": ["Runtime execution skipped by local budget control."],
-        "commands_run": [],
-        "test_attempts": [],
-        "failures": {"failure_count": 0, "failed_tests": []},
-        "initial_failures": {"failure_count": 0, "failed_tests": []},
-        "final_failures": {"failure_count": 0, "failed_tests": []},
-        "symptoms": [],
-        "retry_policy": {
+    cfg = load_config(cwd)
+    selected_mode = str(runtime_policy.get("selected_mode") or mode or "balanced")
+    selected_reason = str(runtime_policy.get("reason") or "budget_skipped")
+    provider_name = str(cfg.providers.provider or "openai")
+    model_with_provider = str(cfg.models.mid or "openai:gpt-4.1-mini")
+    model_name = model_with_provider.split(":", 1)[1] if ":" in model_with_provider else model_with_provider
+    payload = build_run_payload_base(
+        task=task,
+        schema_version=1,
+        model_selection={
+            "provider": provider_name,
+            "model": model_name,
+            "tier": "mid",
+            "mode": selected_mode,
+            "reason": selected_reason,
+            "provider_timeout_seconds": int(cfg.providers.timeout_seconds),
+        },
+        mode=mode,
+        dry_run=dry_run,
+        status="budget_skipped",
+        notes=["Runtime execution skipped by local budget control."],
+        commands_run=[],
+        test_attempts=[],
+        failures={"failure_count": 0, "failed_tests": []},
+        initial_failures={"failure_count": 0, "failed_tests": []},
+        final_failures={"failure_count": 0, "failed_tests": []},
+        symptoms=[],
+        retry_policy={
             "max_retries": 0,
             "allow_escalation": False,
             "retry_attempted": False,
             "retry_count": 0,
             "stopped_reason": "budget_skipped",
         },
-        "patch_plan": {"strategy": "Skipped due to budget control.", "confidence": 0.0, "proposed_changes": []},
-        "patch_diff": {"attempted": False, "available": False, "path": None, "error": None, "preview": ""},
-        "patch_quality": None,
-        "verification": {
+        patch_plan={"strategy": "Skipped due to budget control.", "confidence": 0.0, "proposed_changes": []},
+        patch_diff={"attempted": False, "available": False, "path": None, "error": None, "preview": ""},
+        patch_quality=None,
+        verification={
             "command": None,
             "test_command": None,
             "available": False,
@@ -1111,17 +1126,18 @@ def _write_budget_skipped_report(
             "detected_stack": None,
             "reason": "budget_skipped",
         },
-        "provider_skipped": True,
-        "skip_reason": "budget_skipped",
-        "next_action": "Check budget: aegis-code budget status",
-        "sll_pre_call": {"available": False},
-        "sll_post_call": {"available": False},
-        "sll_risk": "low",
-        "sll_fix_guidance": {"strategy": "unknown", "constraints": [], "notes": "No structural guidance available."},
-        "runtime_policy": runtime_policy,
-        "budget_state": budget_state,
-        "project_context": {"available": False, "included_paths": [], "total_chars": 0},
-        "adapter": {
+        provider_skipped=True,
+        skip_reason="budget_skipped",
+        next_action="Check budget: aegis-code budget status",
+        sll_pre_call={"available": False},
+        sll_post_call={"available": False},
+        sll_risk="low",
+        sll_fix_guidance={"strategy": "unknown", "constraints": [], "notes": "No structural guidance available."},
+        runtime_policy=runtime_policy,
+        provider_timeout_seconds=int(cfg.providers.timeout_seconds),
+        budget_state=budget_state,
+        project_context={"available": False, "included_paths": [], "total_chars": 0},
+        adapter={
             "mode": "local",
             "aegis_client_available": False,
             "control_requested": False,
@@ -1133,10 +1149,10 @@ def _write_budget_skipped_report(
             "error_type": None,
             "error_message": None,
         },
-        "aegis_impact": {"used": False, "action_count": 0, "override_applied": False, "fallback_used": True},
-        "selected_model_tier": "mid",
-        "selected_model": "unknown",
-    }
+        aegis_impact={"used": False, "action_count": 0, "override_applied": False, "fallback_used": True},
+        selected_model_tier="mid",
+        selected_model="unknown",
+    )
     write_reports(payload, cwd=cwd)
 
 
@@ -1147,7 +1163,7 @@ def handle_budget(argv: Sequence[str]) -> int:
     if args.budget_command == "set":
         data = set_budget(float(args.amount), cwd=cwd)
         print(f"Budget set: ${float(data['limit']):.2f}")
-        print("This budget controls runtime behavior, not actual API cost.")
+        print("This budget provides estimated runtime guidance for mode/model selection, not exact provider billing.")
         return 0
     if args.budget_command == "status":
         data = load_budget(cwd=cwd)
@@ -1160,7 +1176,7 @@ def handle_budget(argv: Sequence[str]) -> int:
         print("Budget (control):")
         print(f"- Total: ${limit:.2f}")
         print(f"- Remaining: ${remaining:.2f}")
-        print("Note: This budget influences runtime mode, not real spending.")
+        print("Note: These are estimates used for runtime mode/model selection, not exact provider billing.")
         return 0
     if args.budget_command == "clear":
         clear_budget(cwd=cwd)
@@ -1197,12 +1213,32 @@ def handle_provider(argv: Sequence[str]) -> int:
             display_base_url = "missing"
         else:
             display_base_url = base_url or "n/a"
+        runtime_supported = ["openai", "openai-compatible"]
+        print("Runtime-supported providers:")
+        for item in runtime_supported:
+            print(f"- {item}")
+        print("Configured provider:")
         print(f"- enabled: {bool(cfg.providers.enabled)}")
         print(f"- provider: {provider_name}")
         print(f"- base_url: {display_base_url}")
         print(f"- timeout_seconds: {int(cfg.providers.timeout_seconds)}")
         print(f"- api_key_env: {cfg.providers.api_key_env}")
-        print("- runtime_supported_providers: openai, openai-compatible")
+        print("Preset catalog:")
+        for name, models in PRESETS.items():
+            families = sorted(
+                {
+                    str(value).split(":", 1)[0]
+                    for value in models.values()
+                    if isinstance(value, str) and ":" in str(value)
+                }
+            )
+            support_label = (
+                "runtime-supported"
+                if any(family in {"openai", "openai-compatible"} for family in families)
+                else "preset-only (not runtime-supported by current runtime execution)"
+            )
+            print(f"- {name}: providers={', '.join(families) if families else 'unknown'} ({support_label})")
+        print("- Note: Presets can include providers that are not yet runtime-supported for execution.")
         print(f"- cheap: {cfg.models.cheap}")
         print(f"- mid: {cfg.models.mid}")
         print(f"- premium: {cfg.models.premium}")
@@ -2405,16 +2441,28 @@ def handle_patch(argv: Sequence[str]) -> int:
                 if failed_index is not None
                 else failed_error
             )
-            payload = {
-                "schema_version": 1,
-                "task": f"batch ({len(batch_definition.operations)} steps)",
-                "mode": final_mode,
-                "dry_run": bool(args.dry_run),
-                "status": "batch_blocked",
-                "failures": {"failure_count": 1},
-                "symptoms": [],
-                "retry_policy": {"retry_attempted": False, "retry_count": 0},
-                "patch_plan": {
+            payload = build_run_payload_base(
+                task=f"batch ({len(batch_definition.operations)} steps)",
+                schema_version=1,
+                patch_operation={"operation": "batch", "source": "cli"},
+                model_selection={
+                    "provider": str(cfg.providers.provider or "openai"),
+                    "model": "batch-phase3",
+                    "tier": "mid",
+                    "mode": str(final_mode or "balanced"),
+                    "reason": str(get_mode_reason(base_mode, final_mode, cwd) or "default"),
+                    "provider_timeout_seconds": int(args.provider_timeout or cfg.providers.timeout_seconds or 60),
+                },
+                control_guidance=None,
+                advisory_guidance=None,
+                aegis_guidance=None,
+                mode=final_mode,
+                dry_run=bool(args.dry_run),
+                status="batch_blocked",
+                failures={"failure_count": 1},
+                symptoms=[],
+                retry_policy={"retry_attempted": False, "retry_count": 0},
+                patch_plan={
                     "strategy": "batch_operation",
                     "confidence": 0.9,
                     "proposed_changes": [
@@ -2431,7 +2479,7 @@ def handle_patch(argv: Sequence[str]) -> int:
                     "max_files": len(batch_definition.operations),
                     "allow_new_files": True,
                 },
-                "patch_diff": {
+                patch_diff={
                     "attempted": True,
                     "available": False,
                     "status": "blocked",
@@ -2445,27 +2493,27 @@ def handle_patch(argv: Sequence[str]) -> int:
                     "model": "batch-phase3",
                     "touched_files": [],
                 },
-                "patch_operation": {"operation": "batch", "source": "cli"},
-                "patch_quality": None,
-                "patch_safety": {"highest_severity": "pass", "issues": []},
-                "apply_safety": "BLOCKED",
-                "verification": {"available": True, "test_command": str(cfg.commands.test or "").strip() or "n/a"},
-                "runtime_policy": build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
-                "budget_state": get_budget_state(cwd=cwd),
-                "project_context": load_runtime_context(cwd=cwd),
-                "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
-                "selected_model_tier": "mid",
-                "selected_model": "batch-phase3",
-                "structured_patch": {"status": "blocked", "failure_reason": failed_error},
-                "batch_report": batch_report,
-                "batch": {
+                patch_quality=None,
+                patch_safety={"highest_severity": "pass", "issues": []},
+                apply_safety="BLOCKED",
+                verification={"available": True, "test_command": str(cfg.commands.test or "").strip() or "n/a"},
+                runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+                provider_timeout_seconds=int(args.provider_timeout or cfg.providers.timeout_seconds or 60),
+                budget_state=get_budget_state(cwd=cwd),
+                project_context=load_runtime_context(cwd=cwd),
+                adapter={"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
+                selected_model_tier="mid",
+                selected_model="batch-phase3",
+                structured_patch={"status": "blocked", "failure_reason": failed_error},
+                batch_report=batch_report,
+                batch={
                     "success": False,
                     "completed_steps": int(batch_result.completed_steps or 0),
                     "total_steps": total_steps,
                     "failed_step_index": failed_index,
                     "stop_on_first_failure": bool(batch_definition.stop_on_first_failure),
                 },
-            }
+            )
             if not bool(args.no_report):
                 write_reports(payload, cwd=cwd)
             print("Patch status: blocked")
@@ -2489,16 +2537,28 @@ def handle_patch(argv: Sequence[str]) -> int:
         patch_safety = safety_report_to_dict(scan_diff(batch_result.diff_text))
         safety_level = str(patch_safety.get("highest_severity", "pass") or "pass").lower()
         apply_safety = "BLOCKED" if bool(validation_result.get("apply_blocked", False)) else ("MEDIUM" if safety_level == "warn" else "HIGH")
-        payload = {
-            "schema_version": 1,
-            "task": f"batch ({len(batch_definition.operations)} steps)",
-            "mode": final_mode,
-            "dry_run": bool(args.dry_run),
-            "status": "batch_generated",
-            "failures": {"failure_count": 0},
-            "symptoms": [],
-            "retry_policy": {"retry_attempted": False, "retry_count": 0},
-            "patch_plan": {
+        payload = build_run_payload_base(
+            task=f"batch ({len(batch_definition.operations)} steps)",
+            schema_version=1,
+            patch_operation={"operation": "batch", "source": "cli"},
+            model_selection={
+                "provider": str(cfg.providers.provider or "openai"),
+                "model": "batch-phase3",
+                "tier": "mid",
+                "mode": str(final_mode or "balanced"),
+                "reason": str(get_mode_reason(base_mode, final_mode, cwd) or "default"),
+                "provider_timeout_seconds": int(args.provider_timeout or cfg.providers.timeout_seconds or 60),
+            },
+            control_guidance=None,
+            advisory_guidance=None,
+            aegis_guidance=None,
+            mode=final_mode,
+            dry_run=bool(args.dry_run),
+            status="batch_generated",
+            failures={"failure_count": 0},
+            symptoms=[],
+            retry_policy={"retry_attempted": False, "retry_count": 0},
+            patch_plan={
                 "strategy": "batch_operation",
                 "confidence": 0.9,
                 "proposed_changes": [
@@ -2510,7 +2570,7 @@ def handle_patch(argv: Sequence[str]) -> int:
                 "max_files": len(batch_definition.operations),
                 "allow_new_files": True,
             },
-            "patch_diff": {
+            patch_diff={
                 "attempted": True,
                 "available": True,
                 "status": "generated",
@@ -2528,32 +2588,32 @@ def handle_patch(argv: Sequence[str]) -> int:
                     if isinstance(item, dict)
                 ],
             },
-            "patch_operation": {"operation": "batch", "source": "cli"},
-            "patch_quality": {
+            patch_quality={
                 "grounded": bool(validation_result.get("valid", False)),
                 "relevant_files": True,
                 "confidence": 0.9,
                 "issues": [],
             },
-            "patch_safety": patch_safety,
-            "apply_safety": apply_safety,
-            "verification": {"available": True, "test_command": str(cfg.commands.test or "").strip() or "n/a"},
-            "runtime_policy": build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
-            "budget_state": get_budget_state(cwd=cwd),
-            "project_context": load_runtime_context(cwd=cwd),
-            "adapter": {"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
-            "selected_model_tier": "mid",
-            "selected_model": "batch-phase3",
-            "structured_patch": {"status": "succeeded"},
-            "batch_report": batch_report,
-            "batch": {
+            patch_safety=patch_safety,
+            apply_safety=apply_safety,
+            verification={"available": True, "test_command": str(cfg.commands.test or "").strip() or "n/a"},
+            runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=cwd),
+            provider_timeout_seconds=int(args.provider_timeout or cfg.providers.timeout_seconds or 60),
+            budget_state=get_budget_state(cwd=cwd),
+            project_context=load_runtime_context(cwd=cwd),
+            adapter={"mode": "local", "aegis_client_available": False, "fallback_reason": "batch_local_executor"},
+            selected_model_tier="mid",
+            selected_model="batch-phase3",
+            structured_patch={"status": "succeeded"},
+            batch_report=batch_report,
+            batch={
                 "success": True,
                 "completed_steps": batch_result.completed_steps,
                 "total_steps": total_steps,
                 "failed_step_index": None,
                 "stop_on_first_failure": bool(batch_definition.stop_on_first_failure),
             },
-        }
+        )
         if not bool(args.no_report):
             write_reports(payload, cwd=cwd)
         print("Patch status: generated")
@@ -2909,21 +2969,29 @@ def handle_fix(argv: Sequence[str]) -> int:
             }
         )
         payload.update(
-            {
-                "schema_version": 1,
-                "task": "fix failing tests",
-                "status": "fix_proposal_generated",
-                "patch_diff": patch_diff_payload,
-                "patch_quality": {
+            build_run_payload_base(
+                task="fix failing tests",
+                schema_version=1,
+                model_selection={
+                    "provider": "local",
+                    "model": "deterministic-assertion-fix",
+                    "tier": "mid",
+                    "mode": "bounded_fix",
+                    "reason": "deterministic_assertion_fix",
+                },
+                status="fix_proposal_generated",
+                patch_diff=patch_diff_payload,
+                patch_quality={
                     "grounded": True,
                     "relevant_files": True,
                     "confidence": 0.95,
                     "issues": [],
                     "reason": "deterministic_assertion_fix",
                 },
-                "apply_safety": "HIGH",
-            }
+                apply_safety="HIGH",
+            )
         )
+        payload = normalize_run_payload(payload)
         write_reports(payload, cwd=cwd)
 
     def _build_deterministic_assertion_fix_diff(
@@ -3096,10 +3164,10 @@ def handle_fix(argv: Sequence[str]) -> int:
             used_deterministic_fix = True
             remove_latest_invalid_diff(cwd=cwd)
             diff_path = write_latest_diff(deterministic_diff, cwd=cwd)
-            payload = {
-                "task": "fix failing tests",
-                "status": "fix_proposal_generated",
-                "patch_diff": {
+            payload = build_run_payload_base(
+                task="fix failing tests",
+                status="fix_proposal_generated",
+                patch_diff={
                     "attempted": True,
                     "available": True,
                     "status": "generated",
@@ -3108,15 +3176,15 @@ def handle_fix(argv: Sequence[str]) -> int:
                     "validation_result": deterministic_check or {},
                     "syntactic_valid": True,
                 },
-                "patch_quality": {
+                patch_quality={
                     "grounded": True,
                     "relevant_files": True,
                     "confidence": 0.95,
                     "issues": [],
                     "reason": "deterministic_assertion_fix",
                 },
-                "apply_safety": "HIGH",
-            }
+                apply_safety="HIGH",
+            )
             write_reports(payload, cwd=cwd)
             patch_diff = payload["patch_diff"]
             diff_available = True

@@ -4,10 +4,10 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env, resolve_base_url
+from aegis_code.aegis_client import AegisBackendClient, apply_resolved_aegis_env
 from aegis_code.config import load_config
 from aegis_code.report import write_reports
-from aegis_code.secrets import resolve_key
+from aegis_code.runtime_control_service import RuntimeControlService
 from aegis_code.usage import update_usage
 
 if TYPE_CHECKING:
@@ -99,6 +99,21 @@ def _apply_context_mode(project_context: dict[str, Any] | None, mode: str | None
     return context
 
 
+def _resolve_legacy_aegis_guidance(
+    *,
+    control_guidance: dict[str, Any] | None,
+    advisory_guidance: dict[str, Any] | None,
+    legacy_guidance: Any = None,
+) -> dict[str, Any] | None:
+    if isinstance(advisory_guidance, dict) and advisory_guidance:
+        return advisory_guidance
+    if isinstance(control_guidance, dict) and control_guidance:
+        return control_guidance
+    if isinstance(legacy_guidance, dict):
+        return legacy_guidance
+    return None
+
+
 def execute_task(
     task_options: "TaskOptions",
     *,
@@ -108,83 +123,70 @@ def execute_task(
     from aegis_code.runtime import _run_task_local
 
     cfg = load_config(cwd)
-    apply_resolved_aegis_env((cwd or Path.cwd()).resolve(), default_base_url=cfg.aegis.base_url)
-    control_setting = cfg.aegis.control_enabled
-    key_available = bool(resolve_key("AEGIS_API_KEY", (cwd or Path.cwd()).resolve()))
-    if isinstance(control_setting, bool):
-        control_requested = control_setting
-    else:
-        value = str(control_setting).strip().lower()
-        if value == "auto":
-            control_requested = key_available
-        elif value in {"true", "1", "yes", "on"}:
-            control_requested = True
-        elif value in {"false", "0", "no", "off"}:
-            control_requested = False
-        else:
-            control_requested = key_available
+    resolved_cwd = (cwd or Path.cwd()).resolve()
+    apply_resolved_aegis_env(resolved_cwd, default_base_url=cfg.aegis.base_url)
+    control_service = RuntimeControlService(
+        options=task_options,
+        config=cfg,
+        cwd=resolved_cwd,
+    )
+    control_state = control_service.control_state
+    control_requested = bool(control_state.get("requested", False))
 
-    aegis_available = False
     adapter_mode = "local"
     fallback_reason = "disabled_by_config"
     response: Any = None
     error_type: str | None = None
     error_message: str | None = None
     guidance: dict[str, Any] = {}
-
-    try:
-        from aegis import AegisClient  # type: ignore
-
-        _ = AegisClient
-        aegis_available = True
-    except Exception:
-        aegis_available = False
-        fallback_reason = "import_missing"
+    aegis_available = control_service.is_client_available()
 
     if not control_requested:
-        if isinstance(control_setting, str) and str(control_setting).strip().lower() == "auto" and not key_available:
+        reason = str(control_state.get("reason", "disabled_by_config") or "disabled_by_config")
+        if reason == "no_api_key":
             fallback_reason = "no_api_key"
         else:
             fallback_reason = "disabled_by_config"
+    step_result = control_service.get_step_guidance(
+        task=task_options.task,
+        payload={
+            "mode": task_options.mode,
+            "dry_run": task_options.dry_run,
+            "project_context": task_options.project_context or {},
+            "budget_state": task_options.budget_state or {},
+            "runtime_policy": task_options.runtime_policy or {},
+            "verification": None,
+            "failures": None,
+            "status": None,
+        },
+    )
+    step_status = str(step_result.get("status", "disabled") or "disabled")
+    step_reason = str(step_result.get("reason", "disabled_by_config") or "disabled_by_config")
+    response = step_result.get("response")
+    guidance = step_result.get("guidance", {}) if isinstance(step_result.get("guidance", {}), dict) else {}
+    step_error = step_result.get("error")
+    step_error_type = step_result.get("error_type")
 
-    if control_requested and aegis_available:
-        try:
-            aegis_client = AegisClient(base_url=resolve_base_url((cwd or Path.cwd()).resolve()))
-            response = aegis_client.auto().step(
-                step_name="aegis-code-runtime",
-                step_input={
-                    "task": task_options.task,
-                    "mode": task_options.mode,
-                    "dry_run": task_options.dry_run,
-                },
-                symptoms=["unstable_workflow"],
-                severity="medium",
-                metadata={
-                    "project_context": task_options.project_context or {},
-                    "budget_state": task_options.budget_state or {},
-                    "runtime_policy": task_options.runtime_policy or {},
-                    "verification": None,
-                    "failures": None,
-                    "status": None,
-                },
-            )
-            response_map = _to_mapping(response)
-            guidance = {
-                "model_tier": response_map.get("model_tier"),
-                "max_retries": response_map.get("max_retries"),
-                "allow_escalation": response_map.get("allow_escalation"),
-                "context_mode": response_map.get("context_mode"),
-            }
-            adapter_mode = "aegis"
-            fallback_reason = None
-        except Exception as exc:
-            response = None
-            adapter_mode = "local"
-            fallback_reason = "client_error"
-            error_type = exc.__class__.__name__
-            error_message = _short_error_message(exc)
-    elif control_requested and not aegis_available:
+    if step_status == "applied":
+        aegis_available = True
+        adapter_mode = "aegis"
+        fallback_reason = None
+    elif step_status == "not_available":
+        aegis_available = False
         fallback_reason = "import_missing"
+    elif step_status == "client_error":
+        aegis_available = True
+        adapter_mode = "local"
+        fallback_reason = "client_error"
+        if isinstance(step_error_type, str) and step_error_type.strip():
+            error_type = step_error_type.strip()
+        if isinstance(step_error, str):
+            error_message = _short_error_message(RuntimeError(step_error))
+    elif step_status == "disabled":
+        if step_reason == "no_api_key":
+            fallback_reason = "no_api_key"
+        else:
+            fallback_reason = "disabled_by_config"
 
     local_options = task_options
     if guidance:
@@ -217,14 +219,28 @@ def execute_task(
     )
 
     result = dict(local_result)
+    advisory_guidance = result.get("advisory_guidance")
+    if not isinstance(advisory_guidance, dict):
+        advisory_guidance = None
+    existing_legacy_guidance = result.get("aegis_guidance")
+    existing_control_guidance = result.get("control_guidance")
+    if not isinstance(existing_control_guidance, dict):
+        existing_control_guidance = None
+    control_guidance = guidance if guidance else existing_control_guidance
     if adapter_mode == "aegis" and response is not None:
         aegis_result = _normalize_aegis_result(response)
         result["aegis_result"] = aegis_result
-        result["aegis_guidance"] = guidance
         for key in ("actions", "trace", "explanation", "metrics"):
             value = aegis_result.get(key)
             if value is not None:
                 result[key] = value
+    result["control_guidance"] = control_guidance
+    result["advisory_guidance"] = advisory_guidance
+    result["aegis_guidance"] = _resolve_legacy_aegis_guidance(
+        control_guidance=control_guidance,
+        advisory_guidance=advisory_guidance,
+        legacy_guidance=existing_legacy_guidance,
+    )
     control_status = "enabled" if adapter_mode == "aegis" else ("fallback" if control_requested else "disabled")
     control_reason = "guidance_applied" if adapter_mode == "aegis" else fallback_reason
     result["adapter"] = {

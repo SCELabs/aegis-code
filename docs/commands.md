@@ -124,7 +124,7 @@ aegis-code budget status
 aegis-code budget clear
 ```
 
-Budget is an estimate-based runtime control signal, not exact API billing/cost tracking.
+Budget is estimate-based runtime guidance that influences mode/model selection, not exact API billing/cost tracking.
 
 ## Context
 
@@ -149,7 +149,7 @@ aegis-code provider preset <name>
 aegis-code provider model <tier> <provider:model>
 ```
 
-Runtime provider support is currently `openai` and `openai-compatible`. Presets may include additional providers for future/optional routing setups.
+Runtime provider support is currently `openai` and `openai-compatible`. `provider status` also shows configured provider details and a preset catalog, and explicitly marks preset-only providers that are not yet runtime-supported for execution.
 
 ## Keys
 

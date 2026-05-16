@@ -13,7 +13,7 @@ def test_budget_set_creates_file(tmp_path: Path, monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Budget set: $1.50" in out
-    assert "This budget controls runtime behavior, not actual API cost." in out
+    assert "This budget provides estimated runtime guidance for mode/model selection, not exact provider billing." in out
     assert (tmp_path / ".aegis" / "budget.json").exists()
 
 
@@ -26,7 +26,7 @@ def test_budget_status_prints_values(tmp_path: Path, monkeypatch, capsys) -> Non
     assert "Budget (control):" in out
     assert "- Total: $2.00" in out
     assert "- Remaining: $2.00" in out
-    assert "Note: This budget influences runtime mode, not real spending." in out
+    assert "Note: These are estimates used for runtime mode/model selection, not exact provider billing." in out
 
 
 def test_budget_clear_removes_file(tmp_path: Path, monkeypatch, capsys) -> None:
@@ -68,6 +68,10 @@ def test_budget_skip_writes_latest_report(tmp_path: Path, monkeypatch) -> None:
     assert latest_md.exists()
     payload = json.loads(latest_json.read_text(encoding="utf-8"))
     assert payload["schema_version"] == 1
+    assert isinstance(payload.get("model_selection"), dict)
+    assert payload["model_selection"]["tier"] == "mid"
+    assert "mode" in payload["model_selection"]
+    assert "reason" in payload["model_selection"]
     assert payload["task"] == "fix failing tests"
     assert payload["status"] == "budget_skipped"
 
