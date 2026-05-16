@@ -303,7 +303,10 @@ def _build_context_parser() -> argparse.ArgumentParser:
 
 
 def _build_budget_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code budget")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code budget",
+        description="Compatibility alias for `aegis-code config budget`.",
+    )
     subparsers = parser.add_subparsers(dest="budget_command")
     set_parser = subparsers.add_parser("set", prog="aegis-code budget set")
     set_parser.add_argument("amount", type=float, help="Budget limit estimate in USD.")
@@ -320,7 +323,10 @@ def _build_policy_parser() -> argparse.ArgumentParser:
 
 
 def _build_provider_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code provider")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code provider",
+        description="Compatibility alias for `aegis-code config provider`.",
+    )
     subparsers = parser.add_subparsers(dest="provider_command")
     subparsers.add_parser("status", prog="aegis-code provider status")
     model_parser = subparsers.add_parser("model", prog="aegis-code provider model")
@@ -334,7 +340,10 @@ def _build_provider_parser() -> argparse.ArgumentParser:
 
 
 def _build_keys_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code keys")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code keys",
+        description="Compatibility alias for `aegis-code config keys`.",
+    )
     subparsers = parser.add_subparsers(dest="keys_command")
 
     set_parser = subparsers.add_parser("set")
@@ -373,6 +382,18 @@ def _build_workspace_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--safe", action="store_true")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--confirm", action="store_true")
+    return parser
+
+
+def _build_config_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="aegis-code config",
+        description="Preferred configuration namespace for provider, budget, and keys commands.",
+    )
+    subparsers = parser.add_subparsers(dest="config_command")
+    subparsers.add_parser("provider", prog="aegis-code config provider")
+    subparsers.add_parser("budget", prog="aegis-code config budget")
+    subparsers.add_parser("keys", prog="aegis-code config keys")
     return parser
 
 
@@ -1357,6 +1378,22 @@ def handle_keys(argv: Sequence[str]) -> int:
             present = "yes" if bool(item.get("present", False)) else "no"
             print(f"{name:<18} {source:<10} {present}")
         return 0
+    parser.print_help()
+    return 1
+
+
+def handle_config(argv: Sequence[str]) -> int:
+    parser = _build_config_parser()
+    if not argv:
+        parser.print_help()
+        return 1
+    args, remainder = parser.parse_known_args(list(argv))
+    if args.config_command == "provider":
+        return handle_provider(remainder)
+    if args.config_command == "budget":
+        return handle_budget(remainder)
+    if args.config_command == "keys":
+        return handle_keys(remainder)
     parser.print_help()
     return 1
 
@@ -3509,6 +3546,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return handle_onboard(args[1:])
     if command == "context":
         return handle_context(args[1:])
+    if command == "config":
+        return handle_config(args[1:])
     if command == "budget":
         return handle_budget(args[1:])
     if command == "policy":

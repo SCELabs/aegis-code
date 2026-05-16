@@ -25,7 +25,7 @@ setx AEGIS_API_KEY ...
 setx OPENAI_API_KEY ...
 ```
 
-## Key Management (`aegis-code keys`)
+## Key Management (`aegis-code config keys`)
 
 Aegis Code supports scoped key management:
 
@@ -35,27 +35,30 @@ Aegis Code supports scoped key management:
 Commands:
 
 ```bash
-aegis-code keys status
-aegis-code keys list
-aegis-code keys set <NAME> [VALUE] --project
-aegis-code keys set <NAME> [VALUE] --global
-aegis-code keys clear <NAME> --project
-aegis-code keys clear <NAME> --global
+aegis-code config keys status
+aegis-code config keys list
+aegis-code config keys set <NAME> [VALUE] --project
+aegis-code config keys set <NAME> [VALUE] --global
+aegis-code config keys clear <NAME> --project
+aegis-code config keys clear <NAME> --global
 ```
 
 Key values are never printed in plain text.
+Top-level `aegis-code keys ...` remains available as a compatibility alias.
 
 ## Provider Control
 
 Use provider commands to inspect or update provider routing:
 
 ```bash
-aegis-code provider status
-aegis-code provider detect
-aegis-code provider list
-aegis-code provider preset <name>
-aegis-code provider model <tier> <provider:model>
+aegis-code config provider status
+aegis-code config provider detect
+aegis-code config provider list
+aegis-code config provider preset <name>
+aegis-code config provider model <tier> <provider:model>
 ```
+
+Top-level `aegis-code provider ...` remains available as a compatibility alias.
 
 Runtime support matrix:
 

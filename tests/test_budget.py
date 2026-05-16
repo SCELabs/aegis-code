@@ -29,6 +29,17 @@ def test_budget_status_prints_values(tmp_path: Path, monkeypatch, capsys) -> Non
     assert "Note: These are estimates used for runtime mode/model selection, not exact provider billing." in out
 
 
+def test_config_budget_status_alias(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    set_budget(2.0, cwd=tmp_path)
+    exit_code = cli.main(["config", "budget", "status"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Budget (control):" in out
+    assert "- Total: $2.00" in out
+    assert "- Remaining: $2.00" in out
+
+
 def test_budget_clear_removes_file(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     set_budget(2.0, cwd=tmp_path)

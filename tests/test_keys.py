@@ -100,9 +100,17 @@ def test_keys_status_shows_source_not_values(tmp_path: Path, monkeypatch, capsys
     assert "global-secret" not in out
 
 
+def test_config_keys_status_alias(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    exit_code = cli.main(["config", "keys", "status"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "KEY                SOURCE      PRESENT" in out
+    assert "OPENAI_API_KEY" in out
+
+
 def test_project_secret_is_gitignored(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     assert cli.main(["keys", "set", "OPENAI_API_KEY", "abc"]) == 0
     content = (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert ".aegis/secrets.json" in content
-

@@ -33,6 +33,17 @@ def test_provider_status(tmp_path: Path, monkeypatch, capsys) -> None:
     assert "- premium: openai:gpt-4.1" in out
 
 
+def test_config_provider_status_alias(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init"]) == 0
+    exit_code = cli.main(["config", "provider", "status"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Provider configuration:" in out
+    assert "Runtime-supported providers:" in out
+    assert "Configured provider:" in out
+
+
 def test_provider_model_update(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     assert cli.main(["init"]) == 0

@@ -259,16 +259,24 @@ aegis-code fix
 aegis-code fix --confirm --max-cycles 2
 ```
 
-Context/budget/policy:
+Config/context/policy:
 
 ```bash
+aegis-code config provider status
+aegis-code config budget set 1.00
+aegis-code config budget status
+aegis-code config budget clear
+aegis-code config keys status
 aegis-code context refresh
 aegis-code context show
-aegis-code budget set 1.00
-aegis-code budget status
-aegis-code budget clear
 aegis-code policy status
 ```
+
+Compatibility aliases remain available for now:
+
+- `aegis-code provider ...`
+- `aegis-code budget ...`
+- `aegis-code keys ...`
 
 Runtime awareness:
 
@@ -294,7 +302,7 @@ aegis-code workspace run "<task>" --confirm
 
 ## Keys, Project Scope, and Workspace
 
-Aegis Code supports project and global key management via `aegis-code keys`.
+Aegis Code supports project and global key management via `aegis-code config keys` (preferred) and `aegis-code keys` (compatibility alias).
 
 - project scope: stored for current project
 - global scope: reusable across projects/workspaces
@@ -302,11 +310,11 @@ Aegis Code supports project and global key management via `aegis-code keys`.
 Examples:
 
 ```bash
-aegis-code keys status
-aegis-code keys list
-aegis-code keys set OPENAI_API_KEY --project
-aegis-code keys set OPENAI_API_KEY --global
-aegis-code keys clear OPENAI_API_KEY --project
+aegis-code config keys status
+aegis-code config keys list
+aegis-code config keys set OPENAI_API_KEY --project
+aegis-code config keys set OPENAI_API_KEY --global
+aegis-code config keys clear OPENAI_API_KEY --project
 ```
 
 Recommended defaults:

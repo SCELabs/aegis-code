@@ -116,7 +116,32 @@ Behavior:
 - Bounded loop stops on repeated failure signatures and max cycles.
 - Deterministic assertion micro-fix is available for simple single-test assertion mismatch cases.
 
-## Budget
+## Config (Preferred Namespace)
+
+```bash
+aegis-code config provider status
+aegis-code config provider list
+aegis-code config provider detect
+aegis-code config provider preset <name>
+aegis-code config provider model <tier> <provider:model>
+aegis-code config budget set <amount>
+aegis-code config budget status
+aegis-code config budget clear
+aegis-code config keys status
+aegis-code config keys list
+aegis-code config keys set <NAME> [VALUE] --project
+aegis-code config keys set <NAME> [VALUE] --global
+aegis-code config keys clear <NAME> --project
+aegis-code config keys clear <NAME> --global
+```
+
+Compatibility aliases remain available:
+
+- `aegis-code provider ...`
+- `aegis-code budget ...`
+- `aegis-code keys ...`
+
+## Budget (Compatibility Alias)
 
 ```bash
 aegis-code budget set <amount>
@@ -139,7 +164,7 @@ aegis-code context show
 aegis-code policy status
 ```
 
-## Provider
+## Provider (Compatibility Alias)
 
 ```bash
 aegis-code provider status
@@ -151,7 +176,7 @@ aegis-code provider model <tier> <provider:model>
 
 Runtime provider support is currently `openai` and `openai-compatible`. `provider status` also shows configured provider details and a preset catalog, and explicitly marks preset-only providers that are not yet runtime-supported for execution.
 
-## Keys
+## Keys (Compatibility Alias)
 
 ```bash
 aegis-code keys status

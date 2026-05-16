@@ -14,6 +14,11 @@ Goals:
 
 This is a product architecture target. It does not imply immediate command behavior changes.
 
+Current implementation status (Phase 3B):
+
+- `aegis-code config ...` is now available as the preferred namespace for provider/budget/keys.
+- Top-level `provider`, `budget`, and `keys` remain supported as compatibility aliases.
+
 ## 2. Product Mental Model
 
 Primary workflow:
@@ -138,6 +143,7 @@ Phase B: Config consolidation
 
 - introduce `config` namespace
 - alias `provider`, `budget`, `keys` to `config` subcommands
+- status: implemented (aliases retained)
 
 Phase C: Setup/status consolidation
 
@@ -201,4 +207,3 @@ aegis-code admin probe
 aegis-code admin context show
 aegis-code admin backups
 ```
-
