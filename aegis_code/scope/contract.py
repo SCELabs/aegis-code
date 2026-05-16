@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from aegis_code.operations.registry import get_operation
+
 
 @dataclass(slots=True)
 class ScopeContract:
@@ -51,65 +53,26 @@ def build_scope_contract_from_cli(
     missing_targets = [path for path in normalized if not (cwd / path).exists()]
     resolved_max = int(max_files) if isinstance(max_files, int) and max_files > 0 else len(normalized)
     normalized_operation = str(operation or "").strip().lower()
+    operation_definition = get_operation(normalized_operation) if normalized_operation else None
     normalized_destination = _normalize_rel(str(destination_path or ""), cwd) if str(destination_path or "").strip() else None
     normalized_anchor = str(anchor or "").strip() or None
     normalized_symbol = str(symbol or "").strip() or None
-    if normalized_operation == "append":
-        allow_new_files = False
-        allowed_operations = ["append"]
-    elif normalized_operation == "create-file":
-        _ = allow_create
-        allow_new_files = True
-        allowed_operations = ["create-file"]
-    elif normalized_operation == "insert-after":
-        allow_new_files = False
-        allowed_operations = ["insert-after"]
-    elif normalized_operation == "insert-before":
-        allow_new_files = False
-        allowed_operations = ["insert-before"]
-    elif normalized_operation == "replace-block":
-        allow_new_files = False
-        allowed_operations = ["replace-block"]
-    elif normalized_operation == "delete-block":
-        allow_new_files = False
-        allowed_operations = ["delete-block"]
-    elif normalized_operation == "replace-file":
-        allow_new_files = False
-        allowed_operations = ["replace-file"]
-    elif normalized_operation == "delete-file":
-        allow_new_files = False
-        allowed_operations = ["delete-file"]
-    elif normalized_operation == "replace-symbol":
-        allow_new_files = False
-        allowed_operations = ["replace-symbol"]
-    elif normalized_operation == "delete-symbol":
-        allow_new_files = False
-        allowed_operations = ["delete-symbol"]
-    elif normalized_operation == "rename-file":
-        allow_new_files = True
-        allowed_operations = ["rename-file"]
-    elif normalized_operation == "move-file":
-        allow_new_files = True
-        allowed_operations = ["move-file"]
+    if operation_definition is not None:
+        allow_new_files = bool(operation_definition.allows_new_files)
+        allowed_operations = [operation_definition.name]
     else:
         allow_new_files = bool(allow_create)
         allowed_operations = ["create", "replace"] if allow_new_files else ["replace"]
-    requires_existing_source = normalized_operation in {
-        "append",
-        "insert-after",
-        "insert-before",
-        "replace-block",
-        "delete-block",
-        "replace-file",
-        "delete-file",
-        "replace-symbol",
-        "delete-symbol",
-        "rename-file",
-        "move-file",
-    }
     block_reason: str | None = None
+    if normalized_operation and operation_definition is None:
+        block_reason = "operation_contract_invalid"
+    requires_existing_source = bool(
+        operation_definition is not None
+        and operation_definition.requires_target_file
+        and operation_definition.name != "create-file"
+    )
     if missing_targets:
-        if normalized_operation:
+        if normalized_operation and block_reason is None:
             if requires_existing_source:
                 block_reason = "requested_target_missing"
         elif not allow_new_files:

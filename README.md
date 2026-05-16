@@ -48,6 +48,10 @@ Current validated operations:
 - `rename-file`
 - `move-file`
 
+Canonical source of truth:
+
+- `aegis_code/operations/registry.py` defines supported operation names and operation metadata used by CLI, scope, and runtime gates.
+
 Architecture overview:
 
 `CLI -> Runtime -> Operation Stage -> Operation Runner -> Operation Module -> Local Diff Validation -> Report -> Apply`
@@ -55,6 +59,7 @@ Architecture overview:
 Extension path:
 
 - Add a new operation module with local validation semantics.
+- Register the operation metadata in `aegis_code/operations/registry.py`.
 - Add prompt builder(s) under `aegis_code/providers/prompts/` when needed.
 - Register dispatch in the operation runner.
 - Add runtime/operation tests and update docs.

@@ -33,6 +33,9 @@ Validated:
 - `rename-file`
 - `move-file`
 
+Source of truth:
+- `aegis_code/operations/registry.py` defines operation names and metadata (requirements, provider-required/provider-free, deletion/new-file capabilities).
+
 `replace-block` notes:
 - anchor semantics are exact block text matching (line-ending normalized, no fuzzy/symbol-aware matching yet)
 - deletions are allowed only inside the uniquely matched block span being replaced
@@ -225,16 +228,17 @@ This metadata remains stable for diagnostics, auditing, and downstream automatio
 - Context-based dependency lookup remains supported alongside typed dependencies.
 
 ## Adding a New Operation (Checklist)
-1. Extend `OperationContract` only if new contract fields are truly required.
-2. Add prompt builder(s) under `aegis_code/providers/prompts/` if operation needs custom prompting.
-3. Implement `run_<operation>_operation()` in `aegis_code/operations/`.
-4. Register dispatch in `run_operation()` (`aegis_code/operations/runner.py`).
-5. Add/update tests:
+1. Register operation metadata in `aegis_code/operations/registry.py`.
+2. Extend `OperationContract` only if new contract fields are truly required.
+3. Add prompt builder(s) under `aegis_code/providers/prompts/` if operation needs custom prompting.
+4. Implement `run_<operation>_operation()` in `aegis_code/operations/`.
+5. Register dispatch in `run_operation()` (`aegis_code/operations/runner.py`).
+6. Add/update tests:
    - operation unit tests
    - runner dispatch tests
    - runtime operation-stage flow tests
    - error-path and metadata preservation tests
-6. Update docs:
+7. Update docs:
    - `README.md`
    - `docs/commands.md`
    - `docs/operations.md`

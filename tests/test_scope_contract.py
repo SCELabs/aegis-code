@@ -264,3 +264,16 @@ def test_scope_contract_move_file_blocks_when_source_missing(tmp_path: Path) -> 
     )
     assert contract.block_reason == "requested_target_missing"
     assert contract.missing_targets == ["src/missing.js"]
+
+
+def test_scope_contract_unsupported_operation_blocks(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    contract = build_scope_contract_from_cli(
+        ["src/helpers.js"],
+        allow_create=False,
+        max_files=None,
+        cwd=tmp_path,
+        operation="unsupported-op",
+    )
+    assert contract.block_reason == "operation_contract_invalid"

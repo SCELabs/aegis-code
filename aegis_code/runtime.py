@@ -59,6 +59,12 @@ from aegis_code.runtime_components import plan_consistency as _plan_consistency
 from aegis_code.runtime_components import semantic_guards as _semantic_guards
 from aegis_code.runtime_components.operation_stage import run_operation_stage
 from aegis_code.operations import normalize_operation_contract, resolve_replace_block_span, resolve_symbol_span
+from aegis_code.operations.registry import (
+    get_operation,
+    is_supported_operation,
+    list_provider_free_operations,
+    list_provider_required_operations,
+)
 from aegis_code.providers.prompts import (
     build_create_file_prompt,
     build_insert_after_prompt,
@@ -85,6 +91,8 @@ from aegis_code.runtime_components import feature_plan as _feature_plan
 
 _HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
 _PROVIDER_HEARTBEAT_SECONDS = 2.0
+_PROVIDER_REQUIRED_PATCH_OPERATIONS = set(list_provider_required_operations())
+_PROVIDER_FREE_PATCH_OPERATIONS = set(list_provider_free_operations())
 
 
 @dataclass(slots=True)
@@ -1830,6 +1838,7 @@ def build_run_payload(
         if len(scope_ops_probe) == 1:
             requested_operation_value = scope_ops_probe[0]
     requested_operation = requested_operation_value
+    supported_requested_operation = is_supported_operation(requested_operation)
     insert_anchor_index: int | None = None
     insert_original_text: str | None = None
     insert_anchor_text: str | None = None
@@ -2621,7 +2630,7 @@ def build_run_payload(
         use_unified_fallback = True
         structured_blocked = False
         structured_primary_accepted = False
-        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and requested_operation not in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
+        if bool(options.propose_patch) and (task_type != "docs_task" or feature_plan_active) and not supported_requested_operation:
             contract = build_proposal_contract(
                 task=options.task,
                 patch_plan=patch_plan,
@@ -2876,7 +2885,8 @@ def build_run_payload(
                             "diff": "",
                             "error": "structured_output_invalid",
                         }
-        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
+        operation_definition = get_operation(requested_operation)
+        if supported_requested_operation:
             operation_targets = (
                 [str(item) for item in patch_plan.get("allowed_targets", []) if str(item).strip()]
                 if isinstance(patch_plan.get("allowed_targets", []), list)
@@ -2893,8 +2903,8 @@ def build_run_payload(
                 ),
                 symbol=replace_symbol_name if requested_operation in {"replace-symbol", "delete-symbol"} else None,
                 destination_path=rename_destination_path if requested_operation in {"rename-file", "move-file"} else None,
-                allow_deletions=requested_operation in {"replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"},
-                allow_new_file=requested_operation in {"create-file", "rename-file", "move-file"},
+                allow_deletions=bool(operation_definition.allows_deletions) if operation_definition is not None else False,
+                allow_new_file=bool(operation_definition.allows_new_files) if operation_definition is not None else False,
                 source="cli",
             )
             operation_result = run_operation_stage(
@@ -3101,7 +3111,7 @@ def build_run_payload(
         initial_issues = [str(item) for item in initial_quality.get("issues", [])]
         regenerate = should_regenerate(validation_result, initial_quality, initial_issues, task_type)
         reasons = _collect_regeneration_reasons(validation_result, initial_quality, initial_issues, task_type)
-        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
+        if supported_requested_operation:
             regenerate = False
             reasons = []
         if docs_wrapped_applied:
@@ -3321,7 +3331,7 @@ def build_run_payload(
                 missing_step_targets = sorted(path for path in planned_step_targets if path not in diff_targets)
                 plan_consistent = not missing_step_targets
                 plan_missing_targets = missing_step_targets
-        if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"} and bool(validation_used.get("valid", False)):
+        if supported_requested_operation and bool(validation_used.get("valid", False)):
             allowed = {
                 _normalize_rel_path(str(item))
                 for item in patch_plan.get("allowed_targets", [])
@@ -3502,7 +3512,7 @@ def build_run_payload(
         if (
             patch_diff.get("status") == "invalid"
             and hard_regen_allowed
-            and requested_operation not in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}
+            and not supported_requested_operation
             and not bool(regeneration.get("attempted", False))
             and not structured_blocked
             and not structured_primary_accepted
@@ -3763,8 +3773,10 @@ def build_run_payload(
                 blocked_error = failure_reason_value or REPLACE_FILE_OUTPUT_INVALID
             elif requested_operation == "replace-symbol":
                 blocked_error = failure_reason_value or REPLACE_SYMBOL_OUTPUT_INVALID
-            elif requested_operation in {"delete-block", "delete-file", "delete-symbol", "rename-file", "move-file"}:
+            elif requested_operation in _PROVIDER_FREE_PATCH_OPERATIONS:
                 blocked_error = failure_reason_value or OPERATION_VALIDATION_FAILED
+            elif requested_operation in _PROVIDER_REQUIRED_PATCH_OPERATIONS:
+                blocked_error = failure_reason_value or "structured_output_invalid"
             elif feature_plan_active:
                 blocked_error = failure_reason_value or "structured_output_invalid"
             else:
@@ -3784,7 +3796,7 @@ def build_run_payload(
                 diagnostics = structured_patch.get("target_diagnostics")
                 if isinstance(diagnostics, dict):
                     patch_diff["target_diagnostics"] = diagnostics
-            if requested_operation in {"append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"}:
+            if supported_requested_operation:
                 patch_diff["plan_consistent"] = None
                 patch_diff["plan_missing_targets"] = []
         if patch_diff.get("regeneration_trigger_reason") is None and bool(regeneration.get("attempted", False)):

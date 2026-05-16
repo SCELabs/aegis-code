@@ -1556,6 +1556,44 @@ def test_patch_move_file_requires_single_source_file(tmp_path: Path, monkeypatch
     assert "--operation move-file requires exactly one --file source path" in out
 
 
+def test_patch_insert_after_requires_anchor(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "helpers.js").write_text("const a = 1;\n", encoding="utf-8")
+    exit_code = cli.main(
+        [
+            "patch",
+            "--file",
+            "src/helpers.js",
+            "--operation",
+            "insert-after",
+            "Insert helper.",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert "--operation insert-after requires --anchor" in out
+
+
+def test_patch_delete_symbol_requires_symbol(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text("export function removeMe() { return 1; }\n", encoding="utf-8")
+    exit_code = cli.main(
+        [
+            "patch",
+            "--file",
+            "src/notes.js",
+            "--operation",
+            "delete-symbol",
+            "Delete symbol.",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert exit_code == 2
+    assert "--operation delete-symbol requires --symbol" in out
+
+
 def test_patch_parser_accepts_replace_symbol_and_threads_symbol(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src").mkdir(parents=True, exist_ok=True)

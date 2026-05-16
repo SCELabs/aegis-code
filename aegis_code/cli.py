@@ -54,6 +54,7 @@ from aegis_code.config import ensure_project_files, project_paths, update_model_
 from aegis_code.report import read_latest_markdown, render_markdown_report, write_reports
 from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scope import build_scope_contract_from_cli
+from aegis_code.operations.registry import get_operation, list_operation_names
 from aegis_code.scaffold_export import export_scaffold_profile
 from aegis_code.scaffolds import list_stacks
 from aegis_code.secrets import (
@@ -482,10 +483,10 @@ def _build_task_parser() -> argparse.ArgumentParser:
 def _build_patch_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="aegis-code patch")
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
-    parser.add_argument("--operation", choices=["append", "create-file", "insert-after", "insert-before", "replace-block", "delete-block", "replace-file", "delete-file", "replace-symbol", "delete-symbol", "rename-file", "move-file"], default=None, help="Explicit patch operation mode.")
+    parser.add_argument("--operation", choices=list_operation_names(), default=None, help="Explicit patch operation mode.")
     parser.add_argument("--target", default=None, help="Secondary target path for operations that require destination path (for example rename-file and move-file).")
     parser.add_argument("--anchor", default=None, help="Required exact line text for --operation insert-after/insert-before or exact block text for --operation replace-block/delete-block.")
-    parser.add_argument("--symbol", default=None, help="Required symbol name for --operation replace-symbol.")
+    parser.add_argument("--symbol", default=None, help="Required symbol name for --operation replace-symbol/delete-symbol.")
     parser.add_argument("--max-files", type=int, default=None, help="Maximum number of files provider may touch.")
     parser.add_argument("--allow-create", action="store_true", help="Allow creating missing target files.")
     parser.add_argument("task", help="Task prompt for patch proposal generation.")
@@ -2333,10 +2334,14 @@ def handle_patch(argv: Sequence[str]) -> int:
         print("Patch blocked: explicit scope required. Use --file at least once.")
         return 2
     effective_operation = args.operation
-    if effective_operation in {"replace-symbol", "delete-symbol"} and not str(args.symbol or "").strip():
+    operation_definition = get_operation(effective_operation)
+    if operation_definition is not None and bool(operation_definition.requires_anchor) and not str(args.anchor or "").strip():
+        print(f"Patch blocked: --operation {effective_operation} requires --anchor.")
+        return 2
+    if operation_definition is not None and bool(operation_definition.requires_symbol) and not str(args.symbol or "").strip():
         print(f"Patch blocked: --operation {effective_operation} requires --symbol.")
         return 2
-    if effective_operation in {"rename-file", "move-file"}:
+    if operation_definition is not None and bool(operation_definition.requires_destination_path):
         if len(args.files) != 1:
             print(f"Patch blocked: --operation {effective_operation} requires exactly one --file source path.")
             return 2

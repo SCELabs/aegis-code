@@ -46,6 +46,15 @@ from aegis_code.operations.rename_file import (
     run_rename_file_operation,
 )
 from aegis_code.operations.move_file import run_move_file_operation
+from aegis_code.operations.registry import (
+    OperationDefinition,
+    OPERATIONS,
+    get_operation,
+    is_supported_operation,
+    list_operation_names,
+    list_provider_free_operations,
+    list_provider_required_operations,
+)
 from aegis_code.operations.delete_symbol import (
     _build_delete_symbol_diff,
     _validate_delete_symbol_diff,
@@ -106,6 +115,13 @@ __all__ = [
     "run_delete_file_operation",
     "run_rename_file_operation",
     "run_move_file_operation",
+    "OperationDefinition",
+    "OPERATIONS",
+    "get_operation",
+    "is_supported_operation",
+    "list_operation_names",
+    "list_provider_required_operations",
+    "list_provider_free_operations",
     "run_replace_file_operation",
     "run_replace_symbol_operation",
     "run_delete_symbol_operation",
