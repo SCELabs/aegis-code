@@ -658,6 +658,203 @@ def test_apply_check_create_file_missing_target_warning_is_informational(tmp_pat
     assert "low_safety" not in out
 
 
+def test_apply_check_allows_controlled_replace_file_low_safety_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text("export function addNote(text) {\n  return text;\n}\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,3 +1,7 @@\n"
+        " export function addNote(text) {\n"
+        "-  return text;\n"
+        "+  const value = text.trim();\n"
+        "+  if (!value) {\n"
+        "+    throw new Error('note text required');\n"
+        "+  }\n"
+        "+  return value;\n"
+        " }\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "replace file content for addNote hardening",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "replace-file", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": None},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 5, "deletions": 1},
+                        "files": [{"old_path": "src/notes.js", "new_path": "src/notes.js", "exists": True}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_allows_controlled_delete_file_low_safety_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "docs" / "obsolete.md").write_text("# Obsolete\n\nremove me\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/docs/obsolete.md b/docs/obsolete.md\n"
+        "deleted file mode 100644\n"
+        "--- a/docs/obsolete.md\n"
+        "+++ /dev/null\n"
+        "@@ -1,3 +0,0 @@\n"
+        "-# Obsolete\n"
+        "-\n"
+        "-remove me\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "delete obsolete docs file",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "delete-file", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": None},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 0, "deletions": 3},
+                        "files": [{"old_path": "docs/obsolete.md", "new_path": None, "exists": True}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_allows_controlled_replace_symbol_low_safety_override(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text("export function addNote(text) {\n  return text;\n}\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,3 +1,7 @@\n"
+        " export function addNote(text) {\n"
+        "-  return text;\n"
+        "+  const value = text.trim();\n"
+        "+  if (!value) {\n"
+        "+    throw new Error('note text required');\n"
+        "+  }\n"
+        "+  return value;\n"
+        " }\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "rewrite addNote symbol",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "replace-symbol", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": None},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 5, "deletions": 1},
+                        "files": [{"old_path": "src/notes.js", "new_path": "src/notes.js", "exists": True}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: no" in out
+    assert "low_safety" not in out
+
+
+def test_apply_check_keeps_low_safety_block_for_unsafe_replace_symbol(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "notes.js").write_text("export function addNote(text) {\n  return text;\n}\n", encoding="utf-8")
+    runs = tmp_path / ".aegis" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    latest = runs / "latest.diff"
+    latest.write_text(
+        "diff --git a/src/notes.js b/src/notes.js\n"
+        "--- a/src/notes.js\n"
+        "+++ b/src/notes.js\n"
+        "@@ -1,3 +1,4 @@\n"
+        " export function addNote(text) {\n"
+        "-  return text;\n"
+        "+  const subprocess = require('child_process');\n"
+        "+  return text;\n"
+        " }\n",
+        encoding="utf-8",
+    )
+    (runs / "latest.json").write_text(
+        json.dumps(
+            {
+                "task": "rewrite addNote symbol",
+                "apply_safety": "LOW",
+                "patch_safety": {"highest_severity": "pass", "issues": []},
+                "patch_operation": {"operation": "replace-symbol", "source": "cli"},
+                "patch_plan": {"allow_new_files": False, "max_files": 1},
+                "patch_diff": {
+                    "path": str(latest),
+                    "plan_consistent": True,
+                    "policy_diagnostics": {"final_policy_reason": None},
+                    "validation_result": {
+                        "valid": True,
+                        "summary": {"additions": 2, "deletions": 1},
+                        "files": [{"old_path": "src/notes.js", "new_path": "src/notes.js", "exists": True}],
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    exit_code = cli.main(["apply", "--check"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Apply blocked: yes" in out
+    assert "low_safety" in out
+
+
 def test_apply_check_keeps_low_safety_block_for_create_file_when_target_exists(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "docs").mkdir(parents=True, exist_ok=True)

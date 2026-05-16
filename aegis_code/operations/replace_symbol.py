@@ -238,9 +238,10 @@ def _parse_replace_symbol_provider_response(text: str) -> tuple[bool, str | None
     raw = str(text or "").strip()
     if not raw:
         return False, None, REPLACE_SYMBOL_OUTPUT_INVALID
-    if raw.startswith("```"):
+    if "```" in raw:
         return False, None, REPLACE_SYMBOL_OUTPUT_INVALID
-    if any(marker in raw for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
+    raw_lower = raw.lower()
+    if any(marker in raw_lower for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
         return False, None, REPLACE_SYMBOL_OUTPUT_INVALID
     try:
         payload = json.loads(raw)
@@ -251,7 +252,8 @@ def _parse_replace_symbol_provider_response(text: str) -> tuple[bool, str | None
     content = payload.get("content")
     if not isinstance(content, str) or not content.strip():
         return False, None, REPLACE_SYMBOL_OUTPUT_INVALID
-    if any(marker in content for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
+    content_lower = content.lower()
+    if "```" in content or any(marker in content_lower for marker in ("diff --git", "@@", "--- a/", "+++ b/")):
         return False, None, REPLACE_SYMBOL_OUTPUT_INVALID
     return True, content, None
 
@@ -433,6 +435,16 @@ def run_replace_symbol_operation(request: OperationRequest) -> OperationResult:
         span=resolved_span,
         replacement_content=replacement_content,
     )
+    if replaced_text == original_text:
+        return OperationResult(
+            attempted=True,
+            status="blocked",
+            error="no_symbol_change",
+            provider=provider or None,
+            model=model or None,
+            operation=request.contract.operation,
+            source=request.contract.source,
+        )
     replace_diff = _build_replace_symbol_diff(
         target_path=target_path,
         original_text=original_text,

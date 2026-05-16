@@ -1930,7 +1930,7 @@ def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
         return False
     patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
     operation_name = str(patch_operation.get("operation", "") or "").strip().lower()
-    allowed_ops = {"append", "create-file", "insert-before", "replace-block"}
+    allowed_ops = {"append", "create-file", "insert-before", "replace-block", "replace-file", "delete-file", "replace-symbol"}
     validation = patch_diff.get("validation_result", {}) if isinstance(patch_diff.get("validation_result"), dict) else {}
     if "valid" in validation and not bool(validation.get("valid", False)):
         return False
@@ -1969,6 +1969,52 @@ def _bounded_low_safety_override_allowed(path: Path, cwd: Path) -> bool:
                 # when the operation is explicit create-file and file is missing.
                 if old_path_norm != str(create_file_target_path).lower():
                     return False
+        elif operation_name == "replace-symbol":
+            if bool(validation.get("valid")) is not True:
+                return False
+            if old_path is None or new_path is None:
+                return False
+            old_path_norm = str(old_path or "").strip().replace("\\", "/").lower()
+            new_path_norm = str(new_path or "").strip().replace("\\", "/").lower()
+            if not old_path_norm or not new_path_norm:
+                return False
+            if old_path_norm in {"/dev/null", "dev/null", "a/dev/null", "b/dev/null"}:
+                return False
+            if new_path_norm in {"/dev/null", "dev/null", "a/dev/null", "b/dev/null"}:
+                return False
+            if old_path_norm != new_path_norm:
+                return False
+            if additions <= 0 or deletions <= 0:
+                return False
+            target_path = str(new_path or old_path or "").strip().replace("\\", "/")
+            target_exists = bool(item.get("exists") is True)
+            if not target_exists:
+                try:
+                    target_exists = (cwd / target_path).exists()
+                except Exception:
+                    target_exists = False
+            if not target_exists:
+                return False
+        elif operation_name == "delete-file":
+            if old_path is None:
+                return False
+            target_path = str(old_path or new_path or "").strip().replace("\\", "/")
+            if not target_path:
+                return False
+            if new_path is not None:
+                new_path_norm = str(new_path or "").strip().replace("\\", "/").lower()
+                if new_path_norm not in {"/dev/null", "dev/null", "a/dev/null", "b/dev/null"}:
+                    return False
+            if additions != 0 or deletions <= 0:
+                return False
+            target_exists = bool(item.get("exists") is True)
+            if not target_exists:
+                try:
+                    target_exists = (cwd / target_path).exists()
+                except Exception:
+                    target_exists = False
+            if not target_exists:
+                return False
         else:
             if old_path is None or new_path is None:
                 return False
