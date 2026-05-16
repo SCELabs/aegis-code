@@ -60,7 +60,7 @@ Behavior:
 - Supported operation modes are explicit (`append`, `create-file`, `insert-after`, `insert-before`, `replace-block`, `delete-block`, `replace-file`, `delete-file`, `replace-symbol`, `delete-symbol`, `rename-file`, `move-file`, `batch`).
 - `rename-file` is provider-free, requires one `--file` source and one `--target` destination, and preserves file contents exactly.
 - `move-file` is provider-free, requires one `--file` source and one `--target` destination, and preserves file contents exactly.
-- `batch` Phase 1 is schema-validation only. Valid batch files parse successfully, then CLI reports execution is not implemented yet.
+- `batch` executes steps sequentially in a temporary workspace and emits one combined diff.
 - No operation inference: additive docs/test tasks without `--operation append` stay in normal flow, but CLI prints stronger rerun guidance.
 - Append mode supports no-op signal (`{"content": ""}`) and can block with `no_append_needed`.
 - Docs/test destructive rewrite protections can block proposals (`destructive_docs_rewrite`, `destructive_test_rewrite`).
@@ -95,6 +95,7 @@ Behavior:
 - Applying defaults to `.aegis/runs/latest.diff` when no path is provided.
 - `latest.invalid.diff` is never applyable.
 - For latest accepted diff, `LOW`/`BLOCKED` apply safety is blocked by `apply --check` and `apply --confirm`.
+- Verification runs through `apply --confirm --run-tests`; there is no standalone `verify` command.
 
 ## Fix Loop
 
@@ -123,7 +124,7 @@ aegis-code budget status
 aegis-code budget clear
 ```
 
-Budget is a runtime control signal, not real API billing/cost tracking.
+Budget is an estimate-based runtime control signal, not exact API billing/cost tracking.
 
 ## Context
 
@@ -147,6 +148,8 @@ aegis-code provider detect
 aegis-code provider preset <name>
 aegis-code provider model <tier> <provider:model>
 ```
+
+Runtime provider support is currently `openai` and `openai-compatible`. Presets may include additional providers for future/optional routing setups.
 
 ## Keys
 

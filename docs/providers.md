@@ -57,12 +57,18 @@ aegis-code provider preset <name>
 aegis-code provider model <tier> <provider:model>
 ```
 
+Runtime support matrix:
+
+- Supported runtime providers today: `openai`, `openai-compatible`
+- Provider presets may include additional providers for future/optional routing setups
+
 ## Behavior Notes
 
 - Provider-backed patch generation is proposal-only.
 - All generated patches still go through validation, safety scoring, and apply gating.
 - Aegis Code remains a controlled pipeline even when provider output is available.
 - Provider integration is pluggable; control policy and validation remain local runtime responsibilities.
+- `aegis-code provider status` shows configured provider, base URL, timeout, enabled state, and model tier routing.
 
 ## Prompt Ownership (Current)
 

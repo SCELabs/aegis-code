@@ -32,7 +32,7 @@ Validated:
 - `delete-symbol`
 - `rename-file`
 - `move-file`
-- `batch` (Phase 1 schema validation only; execution not implemented)
+- `batch`
 
 Source of truth:
 - `aegis_code/operations/registry.py` defines operation names and metadata (requirements, provider-required/provider-free, deletion/new-file capabilities).
@@ -76,10 +76,11 @@ Source of truth:
 - source and destination must be different
 - destination must not already exist
 
-`batch` notes (Phase 1):
+`batch` notes:
 - composite operation definition is validated from JSON (`version`, `operations`, step requirements)
 - nested `batch` steps are rejected
-- execution is intentionally not implemented in Phase 1
+- execution runs sequentially in a temporary workspace
+- one combined diff is emitted for the full batch result
 
 ## Runtime and Operation Ownership
 - `aegis_code/runtime.py`: orchestration, policy checks, verification, report payload shaping.

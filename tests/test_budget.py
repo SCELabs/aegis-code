@@ -67,6 +67,7 @@ def test_budget_skip_writes_latest_report(tmp_path: Path, monkeypatch) -> None:
     assert latest_json.exists()
     assert latest_md.exists()
     payload = json.loads(latest_json.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
     assert payload["task"] == "fix failing tests"
     assert payload["status"] == "budget_skipped"
 

@@ -47,9 +47,6 @@ Current validated operations:
 - `delete-symbol`
 - `rename-file`
 - `move-file`
-
-Planned (Phase 1 schema validation only):
-
 - `batch`
 
 Canonical source of truth:
@@ -193,7 +190,7 @@ Behavior:
 - `delete-symbol` is provider-free and removes one uniquely resolved symbol in one explicit existing target, with local diff validation and normal safety/apply gates.
 - `rename-file` is provider-free and renames one explicit existing source path to a new destination path while preserving file contents exactly.
 - `move-file` is provider-free and moves one explicit existing source path to a new destination path while preserving file contents exactly.
-- `batch` currently supports JSON schema parsing and validation only (Phase 1); batch execution is not implemented yet.
+- `batch` executes each step sequentially in a temporary workspace and emits one combined diff for review/apply.
 - For additive docs tasks without explicit append mode, CLI prints guidance to rerun with `--operation append` (no automatic operation inference).
 - Runtime reports preserve operation metadata (`patch_operation.operation`, `patch_operation.source`) for diagnostics and auditing.
 
@@ -276,8 +273,10 @@ aegis-code policy status
 Runtime awareness:
 
 - Workspace-aware: scoped runs honor per-project config, context, and verification settings.
-- Budget-aware: mode/control signals can adapt based on configured local budget state.
+- Budget-aware: mode/control signals can adapt based on configured local budget state (budget is an estimate-based control signal, not exact provider billing).
 - Provider-agnostic: provider integration is pluggable; control and safety gates stay local and deterministic.
+- Runtime provider support today: `openai` and `openai-compatible` providers.
+- Provider presets may include additional providers for future/optional routing setups.
 
 Workspace:
 
@@ -321,6 +320,8 @@ Workspace operations reuse each project's local config, context, and runtime con
 ## Budget Control Note
 
 Budget in Aegis Code is a runtime control signal for behavior (for example mode selection and control policy), not a real billing/cost tracker.
+
+Verification is available through `aegis-code apply --confirm --run-tests`. There is no standalone `aegis-code verify` command.
 
 ## Current Limitations
 

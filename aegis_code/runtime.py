@@ -3922,6 +3922,7 @@ def build_run_payload(
             "output": full_output,
         }
     payload = {
+        "schema_version": 1,
         "task": options.task,
         "mode": mode,
         "dry_run": options.dry_run,

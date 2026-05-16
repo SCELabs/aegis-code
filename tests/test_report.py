@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from aegis_code.report import write_reports
@@ -73,6 +74,8 @@ def test_report_generation_writes_json_and_md(tmp_path: Path) -> None:
     paths = write_reports(payload, cwd=tmp_path)
     assert paths["json"].exists()
     assert paths["md"].exists()
+    data = json.loads(paths["json"].read_text(encoding="utf-8"))
+    assert data["schema_version"] == 1
     content = paths["md"].read_text(encoding="utf-8")
     assert "Aegis Code Run Report" in content
     assert "## Test Attempts" in content

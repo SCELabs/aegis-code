@@ -1080,6 +1080,7 @@ def _write_budget_skipped_report(
     budget_state: dict[str, object],
 ) -> None:
     payload = {
+        "schema_version": 1,
         "task": task,
         "mode": mode,
         "dry_run": dry_run,
@@ -1187,6 +1188,21 @@ def handle_provider(argv: Sequence[str]) -> int:
     if args.provider_command == "status":
         cfg = load_config(cwd)
         print("Provider configuration:")
+        provider_name = str(cfg.providers.provider or "openai")
+        base_url = str(cfg.providers.base_url or "").strip()
+        provider_normalized = provider_name.strip().lower()
+        if provider_normalized == "openai" and not base_url:
+            display_base_url = "default OpenAI API"
+        elif provider_normalized == "openai-compatible" and not base_url:
+            display_base_url = "missing"
+        else:
+            display_base_url = base_url or "n/a"
+        print(f"- enabled: {bool(cfg.providers.enabled)}")
+        print(f"- provider: {provider_name}")
+        print(f"- base_url: {display_base_url}")
+        print(f"- timeout_seconds: {int(cfg.providers.timeout_seconds)}")
+        print(f"- api_key_env: {cfg.providers.api_key_env}")
+        print("- runtime_supported_providers: openai, openai-compatible")
         print(f"- cheap: {cfg.models.cheap}")
         print(f"- mid: {cfg.models.mid}")
         print(f"- premium: {cfg.models.premium}")
@@ -2390,6 +2406,7 @@ def handle_patch(argv: Sequence[str]) -> int:
                 else failed_error
             )
             payload = {
+                "schema_version": 1,
                 "task": f"batch ({len(batch_definition.operations)} steps)",
                 "mode": final_mode,
                 "dry_run": bool(args.dry_run),
@@ -2473,6 +2490,7 @@ def handle_patch(argv: Sequence[str]) -> int:
         safety_level = str(patch_safety.get("highest_severity", "pass") or "pass").lower()
         apply_safety = "BLOCKED" if bool(validation_result.get("apply_blocked", False)) else ("MEDIUM" if safety_level == "warn" else "HIGH")
         payload = {
+            "schema_version": 1,
             "task": f"batch ({len(batch_definition.operations)} steps)",
             "mode": final_mode,
             "dry_run": bool(args.dry_run),
@@ -2892,6 +2910,7 @@ def handle_fix(argv: Sequence[str]) -> int:
         )
         payload.update(
             {
+                "schema_version": 1,
                 "task": "fix failing tests",
                 "status": "fix_proposal_generated",
                 "patch_diff": patch_diff_payload,

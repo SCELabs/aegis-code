@@ -1829,6 +1829,7 @@ def test_runtime_payload_includes_budget_state_and_runtime_policy(monkeypatch, t
         cwd=tmp_path,
         client=client,
     )
+    assert payload["schema_version"] == 1
     assert payload["budget_state"]["available"] is True
     assert payload["budget_state"]["remaining_estimate"] == 0.8
     assert payload["runtime_policy"]["requested_mode"] == "balanced"

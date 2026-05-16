@@ -15,6 +15,12 @@ def test_provider_status(tmp_path: Path, monkeypatch, capsys) -> None:
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Provider configuration:" in out
+    assert "- enabled: False" in out
+    assert "- provider: openai" in out
+    assert "- base_url: default OpenAI API" in out
+    assert "- timeout_seconds: 60" in out
+    assert "- api_key_env: OPENAI_API_KEY" in out
+    assert "- runtime_supported_providers: openai, openai-compatible" in out
     assert "- cheap: openai:gpt-4.1-nano" in out
     assert "- mid: openai:gpt-4.1-mini" in out
     assert "- premium: openai:gpt-4.1" in out
