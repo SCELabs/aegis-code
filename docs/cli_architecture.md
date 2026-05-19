@@ -14,13 +14,14 @@ Goals:
 
 This is a product architecture target. It does not imply immediate command behavior changes.
 
-Current implementation status (Phase 3D):
+Current implementation status (Phase 3E):
 
 - `aegis-code config ...` is now available as the preferred namespace for provider/budget/keys.
 - Top-level `provider`, `budget`, and `keys` remain supported as compatibility aliases.
 - `aegis-code setup` is the canonical onboarding/initialization command.
 - `aegis-code init` and `aegis-code onboard` remain available as compatibility/direct commands.
 - Inspection/diagnostics commands are retained with explicit roles: `status`, `report`, `doctor`, `overview`, `probe`, `next`, `usage`.
+- Top-level help and command docs now classify commands into: daily workflow, project/workspace, advanced/admin specialized tools, and compatibility aliases.
 
 ## 2. Product Mental Model
 
@@ -158,10 +159,11 @@ Phase D: Report/analysis consolidation
 - fold `compare` into `report compare`
 - clarify and consolidate inspection/diagnostics command roles in help/docs without removing commands
 
-Phase E: Advanced namespace split
+Phase E: Taxonomy-first advanced/admin classification
 
-- move internal utilities under `admin`
-- hide advanced commands from default help
+- keep existing commands while classifying advanced/admin tools explicitly in help/docs
+- emphasize daily workflow commands as the recommended path
+- mark compatibility aliases as backward-compatible entry points
 
 Phase F: Naming cleanup
 

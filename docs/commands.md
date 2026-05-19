@@ -2,34 +2,60 @@
 
 Aegis Code is a controlled patch pipeline. Commands are proposal-first and mutation requires explicit confirmation.
 
-## Project
+## CLI Taxonomy
 
-```bash
-aegis-code setup
-aegis-code setup --check
-aegis-code init
-aegis-code onboard --email <you@example.com>
-aegis-code next
-aegis-code overview
-aegis-code status
-aegis-code report
-aegis-code doctor
-aegis-code probe
-aegis-code usage
-aegis-code compare
-aegis-code maintain
-```
+### 1. Daily Workflow Commands (Recommended)
 
-Preferred public onboarding flow:
+These commands are the canonical day-to-day workflow:
+
+- `aegis-code setup`
+- `aegis-code config ...`
+- `aegis-code patch ...`
+- `aegis-code fix`
+- `aegis-code diff`
+- `aegis-code apply`
+- `aegis-code status`
+- `aegis-code report`
+- `aegis-code doctor`
+- `aegis-code next`
+
+Recommended daily path:
 
 1. `aegis-code setup`
 2. `aegis-code config provider ...`
 3. `aegis-code patch ...`
+4. `aegis-code diff`
+5. `aegis-code apply --check`
+6. `aegis-code apply --confirm --run-tests`
+7. `aegis-code status` and `aegis-code report`
 
-Compatibility commands remain available:
+### 2. Project & Workspace Commands
+
+Project creation/scaffolding and multi-project orchestration:
+
+- `aegis-code create`
+- `aegis-code scaffold`
+- `aegis-code workspace ...`
+
+### 3. Advanced / Admin Commands (Specialized Tools)
+
+Specialized tools for diagnostics, maintenance, and recovery:
+
+- `aegis-code policy ...`
+- `aegis-code maintain`
+- `aegis-code compare`
+- `aegis-code backups`
+- `aegis-code restore <backup_id>`
+- `aegis-code probe`
+- `aegis-code usage`
+
+### 4. Compatibility Aliases (Retained For Backward Compatibility)
 
 - `aegis-code init` (direct project initialization command)
 - `aegis-code onboard` (direct Aegis API key onboarding command)
+- `aegis-code provider ...` (alias for `aegis-code config provider`)
+- `aegis-code budget ...` (alias for `aegis-code config budget`)
+- `aegis-code keys ...` (alias for `aegis-code config keys`)
 
 ## Inspection & Diagnostics Commands
 

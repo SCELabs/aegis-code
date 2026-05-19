@@ -143,6 +143,25 @@ aegis-code apply --check
 aegis-code apply --confirm --run-tests
 ```
 
+## Python API (Phase 4A)
+
+A minimal public Python API scaffold is available at `aegis_code.api` for script/agent integrations.
+
+```python
+from aegis_code.api import AegisCode
+
+client = AegisCode(project_path=".")
+setup = client.setup_check()
+proposal = client.patch(
+    task="add tests for save_note_to_file only",
+    files=["tests/test_notes.py"],
+    operation="append",
+)
+check_result = proposal.apply(check=True)
+```
+
+Design details and stability notes: `docs/python_api_surface_phase4a.md`.
+
 ## Safety Model
 
 - Proposal-first: generation is proposal-only.
@@ -223,22 +242,60 @@ Behavior:
 
 ## Command Reference
 
-Project and status:
+### Daily Workflow Commands (Recommended)
 
-```bash
-aegis-code setup
-aegis-code setup --check
-aegis-code init
-aegis-code onboard --email <you@example.com>
-aegis-code status
-aegis-code report
-aegis-code compare
-aegis-code overview
-aegis-code next
-aegis-code doctor
-aegis-code probe
-aegis-code usage
-```
+Most developers should start here for everyday use:
+
+- `aegis-code setup`
+- `aegis-code config ...`
+- `aegis-code patch ...`
+- `aegis-code fix`
+- `aegis-code diff`
+- `aegis-code apply`
+- `aegis-code status`
+- `aegis-code report`
+- `aegis-code doctor`
+- `aegis-code next`
+
+Recommended daily path:
+
+1. `aegis-code setup`
+2. `aegis-code config provider ...`
+3. `aegis-code patch ...`
+4. `aegis-code diff`
+5. `aegis-code apply --check`
+6. `aegis-code apply --confirm --run-tests`
+7. `aegis-code status` and `aegis-code report`
+
+### Project & Workspace Commands
+
+Project creation/scaffolding and multi-project orchestration:
+
+- `aegis-code create`
+- `aegis-code scaffold`
+- `aegis-code workspace ...`
+
+### Advanced / Admin Commands (Specialized Tools)
+
+Power-user tools for diagnostics, maintenance, and recovery:
+
+- `aegis-code policy ...`
+- `aegis-code maintain`
+- `aegis-code compare`
+- `aegis-code backups`
+- `aegis-code restore <backup_id>`
+- `aegis-code probe`
+- `aegis-code usage`
+
+### Compatibility Aliases (Retained For Backward Compatibility)
+
+Legacy/direct entry points retained for existing workflows:
+
+- `aegis-code init`
+- `aegis-code onboard`
+- `aegis-code provider ...`
+- `aegis-code budget ...`
+- `aegis-code keys ...`
 
 ## Inspection & Diagnostics Commands
 

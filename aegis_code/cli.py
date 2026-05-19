@@ -91,6 +91,8 @@ from aegis_code.workspace import (
     run_workspace_task,
 )
 
+_TAXONOMY_HELP_HINT = "Tip: run `aegis-code --help` for the full command taxonomy."
+
 
 def _display_path(path: Path | str, cwd: Path | None = None) -> str:
     base = cwd or Path.cwd()
@@ -261,6 +263,7 @@ def _build_report_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog="aegis-code report",
         description="Detailed view of the latest run report.",
+        epilog=_TAXONOMY_HELP_HINT,
     )
 
 
@@ -268,11 +271,15 @@ def _build_status_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog="aegis-code status",
         description="Current project state and latest run summary.",
+        epilog=_TAXONOMY_HELP_HINT,
     )
 
 
 def _build_compare_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code compare")
+    return argparse.ArgumentParser(
+        prog="aegis-code compare",
+        description="Specialized tool: compare previous and latest run reports.",
+    )
 
 
 def _build_overview_parser() -> argparse.ArgumentParser:
@@ -283,7 +290,10 @@ def _build_overview_parser() -> argparse.ArgumentParser:
 
 
 def _build_maintain_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code maintain")
+    return argparse.ArgumentParser(
+        prog="aegis-code maintain",
+        description="Specialized tool: read-only repository health summary.",
+    )
 
 
 def _build_create_parser() -> argparse.ArgumentParser:
@@ -306,6 +316,7 @@ def _build_doctor_parser() -> argparse.ArgumentParser:
             "Environment and setup diagnostics. "
             "For setup readiness summary, run `aegis-code setup --check`."
         ),
+        epilog=_TAXONOMY_HELP_HINT,
     )
 
 
@@ -343,7 +354,10 @@ def _build_budget_parser() -> argparse.ArgumentParser:
 
 
 def _build_policy_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code policy")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code policy",
+        description="Specialized tool: local runtime policy diagnostics.",
+    )
     subparsers = parser.add_subparsers(dest="policy_command")
     subparsers.add_parser("status", prog="aegis-code policy status")
     return parser
@@ -416,6 +430,7 @@ def _build_config_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-code config",
         description="Preferred configuration namespace for provider, budget, and keys commands.",
+        epilog=_TAXONOMY_HELP_HINT,
     )
     subparsers = parser.add_subparsers(dest="config_command")
     subparsers.add_parser("provider", prog="aegis-code config provider")
@@ -435,17 +450,26 @@ def _build_scaffold_parser() -> argparse.ArgumentParser:
 
 
 def _build_backups_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code backups")
+    return argparse.ArgumentParser(
+        prog="aegis-code backups",
+        description="Specialized tool: list local backup snapshots.",
+    )
 
 
 def _build_restore_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code restore")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code restore",
+        description="Specialized tool: restore files from a backup snapshot.",
+    )
     parser.add_argument("backup_id", help="Backup snapshot id under .aegis/backups.")
     return parser
 
 
 def _build_apply_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code apply")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code apply",
+        epilog=_TAXONOMY_HELP_HINT,
+    )
     parser.add_argument("path", nargs="?", default=None, help="Patch diff path.")
     parser.add_argument(
         "--check",
@@ -461,7 +485,10 @@ def _build_apply_parser() -> argparse.ArgumentParser:
 
 
 def _build_diff_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code diff")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code diff",
+        epilog=_TAXONOMY_HELP_HINT,
+    )
     parser.add_argument("--stat", action="store_true")
     parser.add_argument("--full", action="store_true")
     return parser
@@ -472,7 +499,10 @@ def _build_check_sll_parser() -> argparse.ArgumentParser:
 
 
 def _build_fix_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code fix")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code fix",
+        epilog=_TAXONOMY_HELP_HINT,
+    )
     parser.add_argument("--confirm", action="store_true", help="Confirm apply for proposed patch.")
     parser.add_argument("--max-cycles", type=int, default=2, help="Maximum fix cycles (1-5).")
     return parser
@@ -482,13 +512,14 @@ def _build_next_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog="aegis-code next",
         description="Recommended next actions.",
+        epilog=_TAXONOMY_HELP_HINT,
     )
 
 
 def _build_usage_parser() -> argparse.ArgumentParser:
     return argparse.ArgumentParser(
         prog="aegis-code usage",
-        description="Aegis API usage summary.",
+        description="Specialized tool: Aegis API usage summary.",
     )
 
 
@@ -501,7 +532,8 @@ def _build_setup_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Compatibility commands remain available: `aegis-code init`, `aegis-code onboard`. "
-            "For environment diagnostics, run `aegis-code doctor`."
+            "For environment diagnostics, run `aegis-code doctor`. "
+            f"{_TAXONOMY_HELP_HINT}"
         ),
     )
     parser.add_argument("--email", default=None)
@@ -516,7 +548,7 @@ def _build_setup_parser() -> argparse.ArgumentParser:
 def _build_probe_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis-code probe",
-        description="Stack detection and verification capability discovery.",
+        description="Specialized tool: stack detection and verification capability discovery.",
     )
     parser.add_argument("--run", action="store_true", help="Run safe test command candidates.")
     return parser
@@ -551,8 +583,50 @@ def _build_task_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_top_level_help() -> None:
+    print("Aegis Code CLI")
+    print("Usage: aegis-code <command> [options]")
+    print('Task mode: aegis-code "<task>" [--dry-run] [--propose-patch]')
+    print("")
+    print("Daily Workflow Commands (recommended path)")
+    print("- setup: onboarding and initialization.")
+    print("- config: provider, budget, and key configuration.")
+    print("- patch: generate scoped patch proposals.")
+    print("- fix: bounded fix loop for failing tests.")
+    print("- diff: inspect latest proposed/invalid diffs.")
+    print("- apply: validate or apply approved diffs.")
+    print("- status: current project state and latest run summary.")
+    print("- report: detailed view of the latest run report.")
+    print("- doctor: environment and setup diagnostics.")
+    print("- next: recommended next actions.")
+    print("")
+    print("Project & Workspace Commands")
+    print("- create: scaffold planning and project creation workflow.")
+    print("- scaffold: scaffold export and profile tooling.")
+    print("- workspace: multi-project workspace orchestration.")
+    print("")
+    print("Advanced / Admin Commands (specialized tools)")
+    print("- policy: local runtime policy diagnostics.")
+    print("- maintain: read-only repository health summary.")
+    print("- compare: compare previous and latest run reports.")
+    print("- backups: list local backup snapshots.")
+    print("- restore: restore files from a backup snapshot.")
+    print("- probe: stack detection and verification capability discovery.")
+    print("- usage: Aegis API usage summary.")
+    print("")
+    print("Compatibility Aliases (retained for backward compatibility)")
+    print("- init: compatibility/direct project initialization command.")
+    print("- onboard: compatibility/direct Aegis API key onboarding command.")
+    print("- provider: compatibility alias for `aegis-code config provider`.")
+    print("- budget: compatibility alias for `aegis-code config budget`.")
+    print("- keys: compatibility alias for `aegis-code config keys`.")
+
+
 def _build_patch_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code patch")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code patch",
+        epilog=_TAXONOMY_HELP_HINT,
+    )
     parser.add_argument("--file", dest="files", action="append", default=[], help="Explicit file target. Repeat for multiple files.")
     parser.add_argument("--operation", choices=list_operation_names(), default=None, help="Explicit patch operation mode.")
     parser.add_argument("--batch-file", default=None, help="Path to batch operation definition JSON (only valid with --operation batch).")
@@ -3568,8 +3642,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         args = sys.argv[1:]
 
     if not args:
-        _build_task_parser().print_help()
+        _print_top_level_help()
         return 1
+
+    if args[0] in {"-h", "--help"}:
+        _print_top_level_help()
+        return 0
 
     if args[0] == "--check-sll":
         return handle_check_sll(args[1:])

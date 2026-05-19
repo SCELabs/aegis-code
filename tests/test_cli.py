@@ -104,11 +104,11 @@ def test_docs_mark_setup_preferred_and_init_onboard_compatible() -> None:
     command_docs = (root / "docs" / "commands.md").read_text(encoding="utf-8")
     readme = (root / "README.md").read_text(encoding="utf-8")
 
-    assert "Preferred public onboarding flow:" in command_docs
+    assert "Daily Workflow Commands (Recommended)" in command_docs
     assert "`aegis-code setup`" in command_docs
-    assert "`aegis-code config provider ...`" in command_docs
+    assert "`aegis-code config ...`" in command_docs
     assert "`aegis-code patch ...`" in command_docs
-    assert "Compatibility commands remain available:" in command_docs
+    assert "Compatibility Aliases (Retained For Backward Compatibility)" in command_docs
     assert "`aegis-code init`" in command_docs
     assert "`aegis-code onboard`" in command_docs
 
@@ -130,9 +130,28 @@ def test_inspection_command_help_roles_are_concise_and_non_overlapping() -> None
     assert "Environment and setup diagnostics." in doctor_help
     assert "setup --check" in doctor_help
     assert "High-level project summary." in overview_help
-    assert "Stack detection and verification capability discovery." in probe_help
+    assert "stack detection and verification capability discovery." in probe_help
     assert "Recommended next actions." in next_help
     assert "Aegis API usage summary." in usage_help
+
+
+def test_daily_workflow_help_points_to_top_level_taxonomy() -> None:
+    parsers = (
+        cli._build_setup_parser(),
+        cli._build_config_parser(),
+        cli._build_patch_parser(),
+        cli._build_fix_parser(),
+        cli._build_diff_parser(),
+        cli._build_apply_parser(),
+        cli._build_status_parser(),
+        cli._build_report_parser(),
+        cli._build_doctor_parser(),
+        cli._build_next_parser(),
+    )
+    for parser in parsers:
+        help_text = parser.format_help()
+        assert "aegis-code --help" in help_text
+        assert "command taxonomy" in help_text
 
 
 def test_docs_define_inspection_and_diagnostics_toolkit() -> None:
@@ -150,6 +169,44 @@ def test_docs_define_inspection_and_diagnostics_toolkit() -> None:
         assert "aegis-code next" in content
         assert "aegis-code usage" in content
         assert "Run `aegis-code status` first" in content
+
+
+def test_top_level_help_groups_commands_by_taxonomy(capsys) -> None:
+    exit_code = cli.main([])
+    out = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Daily Workflow Commands (recommended path)" in out
+    assert "Project & Workspace Commands" in out
+    assert "Advanced / Admin Commands (specialized tools)" in out
+    assert "Compatibility Aliases (retained for backward compatibility)" in out
+    assert "- setup: onboarding and initialization." in out
+    assert "- usage: Aegis API usage summary." in out
+    assert "- provider: compatibility alias for `aegis-code config provider`." in out
+
+
+def test_top_level_help_for_help_flag_uses_taxonomy(capsys) -> None:
+    exit_code = cli.main(["--help"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Aegis Code CLI" in out
+    assert "Daily Workflow Commands (recommended path)" in out
+    assert "Task mode: aegis-code" in out
+
+
+def test_docs_reflect_phase_3e_taxonomy() -> None:
+    root = Path(__file__).resolve().parents[1]
+    command_docs = (root / "docs" / "commands.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    for content in (command_docs, readme):
+        assert "Daily Workflow Commands (Recommended)" in content
+        assert "Project & Workspace Commands" in content
+        assert "Advanced / Admin Commands (Specialized Tools)" in content
+        assert "Compatibility Aliases (Retained For Backward Compatibility)" in content
+        assert "aegis-code setup" in content
+        assert "aegis-code workspace" in content
+        assert "aegis-code policy" in content
+        assert "aegis-code provider" in content
 
 
 def test_cli_dry_run_writes_report(tmp_path: Path, monkeypatch) -> None:
