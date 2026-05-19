@@ -143,7 +143,7 @@ aegis-code apply --check
 aegis-code apply --confirm --run-tests
 ```
 
-## Python API (Phase 4D)
+## Python API
 
 A stable public Python API is available at `aegis_code.api` for script, tool, and agent integrations.
 
@@ -183,7 +183,7 @@ for action in report.next_actions:
 ```
 
 Full reference, public vs private import guidance, and stability guarantees:
-`docs/python_api_surface_phase4a.md`.
+`docs/python_api_reference.md`.
 
 ## Safety Model
 
@@ -488,9 +488,12 @@ The canonical target CLI taxonomy (public vs advanced commands, planned consolid
 
 - Command reference: `docs/commands.md`
 - CLI architecture: `docs/cli_architecture.md`
-- Python API reference: `docs/python_api_surface_phase4a.md`
-- HTTP/MCP server design (Phase 5A): `docs/http_mcp_server_design_phase5a.md`
-- Transport contracts and DTO layer (Phase 5B): `docs/transport_contracts_phase5b.md`
+- Python API reference: `docs/python_api_reference.md`
+- HTTP/MCP server design: `docs/http_mcp_server_design.md`
+- Transport contracts and DTO layer: `docs/transport_contracts.md`
+- HTTP adapter scaffold: `docs/http_adapter.md`
+- MCP adapter scaffold: `docs/mcp_adapter.md`
+- MCP runtime binding: `docs/mcp_runtime_binding.md`
 - Apply check: `docs/apply_check.md`
 - Apply confirm: `docs/apply_confirm.md`
 - Workspace: `docs/workspace.md`

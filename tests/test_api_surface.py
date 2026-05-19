@@ -391,12 +391,12 @@ def test_public_api_exports_match_documented_surface() -> None:
     assert set(public_api.__all__) == expected_exports
 
 
-def test_python_api_docs_cover_phase4d_reference_sections() -> None:
+def test_python_api_docs_cover_reference_sections() -> None:
     root = Path(__file__).resolve().parents[1]
-    api_doc = (root / "docs" / "python_api_surface_phase4a.md").read_text(encoding="utf-8")
+    api_doc = (root / "docs" / "python_api_reference.md").read_text(encoding="utf-8")
     readme = (root / "README.md").read_text(encoding="utf-8")
 
-    assert "# Python API Reference (Phase 4D)" in api_doc
+    assert "# Python API Reference" in api_doc
     assert "## Quickstart" in api_doc
     assert "## End-to-End Example" in api_doc
     assert "## Public API Reference" in api_doc
@@ -405,4 +405,4 @@ def test_python_api_docs_cover_phase4d_reference_sections() -> None:
     assert "## Typed Report Views" in api_doc
     assert "## Public vs Private Modules" in api_doc
     assert "## Stability Guarantees" in api_doc
-    assert "docs/python_api_surface_phase4a.md" in readme
+    assert "docs/python_api_reference.md" in readme

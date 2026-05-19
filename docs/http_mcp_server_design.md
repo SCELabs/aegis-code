@@ -1,4 +1,4 @@
-# HTTP/MCP Server Design Audit (Phase 5A)
+# HTTP/MCP Server Design Audit
 
 ## Purpose
 
@@ -17,7 +17,7 @@ This design must preserve the core product model:
 
 ## Scope
 
-Phase 5A is design-only:
+This document is design-only:
 
 - no broad server implementation
 - no CLI behavior changes
@@ -35,8 +35,8 @@ Minimal scaffolding may be added in a later phase when design decisions are acce
 
 ## Non-Goals
 
-- Implementing a production HTTP framework in Phase 5A.
-- Implementing a full MCP runtime in Phase 5A.
+- Implementing a production HTTP framework in this document.
+- Implementing a full MCP runtime in this document.
 - Replacing the CLI as the canonical local interface.
 - Relaxing mutation controls or introducing auto-apply behavior.
 
@@ -321,7 +321,7 @@ No server transport should bypass:
 
 ## Authentication and Authorization Considerations
 
-Phase 5A recommendation:
+Current recommendation:
 
 - HTTP: bearer token or mTLS for service access
 - MCP: host-provided trust plus optional per-tool authorization policy
@@ -383,7 +383,7 @@ Fallback unknown exceptions:
 
 ## Minimal Scaffold Recommendation (Deferred)
 
-No implementation is required in Phase 5A.
+No implementation is required in this document.
 
 If a minimal scaffold is introduced in a follow-up phase, keep it thin:
 
@@ -393,7 +393,7 @@ If a minimal scaffold is introduced in a follow-up phase, keep it thin:
 
 No runtime-core refactors should be required.
 
-## Phase 5A Summary
+## Summary
 
 The current `aegis_code.api` surface is suitable for HTTP and MCP exposure with a thin adapter layer.
 

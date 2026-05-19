@@ -21,6 +21,18 @@ from aegis_code.server.contracts import (
     to_error,
     to_response,
 )
+from aegis_code.server.handlers import (
+    apply_check_handler,
+    apply_confirm_handler,
+    health_handler,
+    latest_diff_handler,
+    patch_handler,
+    report_handler,
+    setup_check_handler,
+    status_handler,
+)
+from aegis_code.server.mcp import ToolDefinition, get_tool, invoke_tool, list_tools
+from aegis_code.server.mcp_runtime import call_tool, list_tools as runtime_list_tools
 
 __all__ = [
     "API_VERSION",
@@ -42,5 +54,18 @@ __all__ = [
     "run_report_to_dict",
     "to_response",
     "to_error",
+    "health_handler",
+    "setup_check_handler",
+    "status_handler",
+    "report_handler",
+    "latest_diff_handler",
+    "patch_handler",
+    "apply_check_handler",
+    "apply_confirm_handler",
+    "ToolDefinition",
+    "list_tools",
+    "get_tool",
+    "invoke_tool",
+    "runtime_list_tools",
+    "call_tool",
 ]
-

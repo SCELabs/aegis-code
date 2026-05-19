@@ -1,4 +1,4 @@
-# Python API Reference (Phase 4D)
+# Python API Reference
 
 This document defines the stable public Python API for Aegis Code and how to use it safely from scripts, tools, and agents.
 

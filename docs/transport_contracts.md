@@ -1,4 +1,4 @@
-# Transport Contracts and DTO Layer (Phase 5B)
+# Transport Contracts and DTO Layer
 
 ## Purpose
 
