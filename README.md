@@ -107,16 +107,24 @@ Install (dev):
 pip install -e .
 ```
 
-Initialize project files:
+Preferred onboarding and initialization:
 
 ```bash
-aegis-code init
+aegis-code setup
+aegis-code config provider status
 ```
 
 Setup readiness check:
 
 ```bash
 aegis-code setup --check
+```
+
+Compatibility/direct commands remain available:
+
+```bash
+aegis-code init
+aegis-code onboard --email <you@example.com>
 ```
 
 Refresh and inspect local runtime context:
@@ -218,15 +226,38 @@ Behavior:
 Project and status:
 
 ```bash
-aegis-code init
 aegis-code setup
 aegis-code setup --check
+aegis-code init
+aegis-code onboard --email <you@example.com>
 aegis-code status
 aegis-code report
 aegis-code compare
 aegis-code overview
 aegis-code next
+aegis-code doctor
+aegis-code probe
+aegis-code usage
 ```
+
+## Inspection & Diagnostics Commands
+
+Run `aegis-code status` first when you want a quick read on current project/run state.
+
+- `aegis-code status`: current project state and latest run summary.
+- `aegis-code report`: detailed view of the latest run report.
+- `aegis-code doctor`: environment and setup diagnostics.
+- `aegis-code overview`: high-level project summary.
+- `aegis-code probe`: stack detection and verification capability discovery.
+- `aegis-code next`: recommended next actions.
+- `aegis-code usage`: Aegis API usage summary.
+
+Recommended inspection workflow:
+
+1. `aegis-code status`
+2. `aegis-code report`
+3. `aegis-code next`
+4. `aegis-code doctor` and `aegis-code probe` when setup/environment needs investigation
 
 Runtime/task:
 
@@ -342,7 +373,7 @@ Verification is available through `aegis-code apply --confirm --run-tests`. Ther
 
 ```bash
 pip install -e .
-aegis-code init
+aegis-code setup
 aegis-code setup --check
 aegis-code context refresh
 

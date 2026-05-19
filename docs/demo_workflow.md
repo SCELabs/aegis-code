@@ -6,7 +6,8 @@ This demo shows the controlled proposal -> inspect -> check -> confirm flow.
 
 ```bash
 pip install -e .
-aegis-code init
+aegis-code setup
+aegis-code config provider status
 aegis-code setup --check
 aegis-code context refresh
 ```

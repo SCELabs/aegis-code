@@ -14,10 +14,13 @@ Goals:
 
 This is a product architecture target. It does not imply immediate command behavior changes.
 
-Current implementation status (Phase 3B):
+Current implementation status (Phase 3D):
 
 - `aegis-code config ...` is now available as the preferred namespace for provider/budget/keys.
 - Top-level `provider`, `budget`, and `keys` remain supported as compatibility aliases.
+- `aegis-code setup` is the canonical onboarding/initialization command.
+- `aegis-code init` and `aegis-code onboard` remain available as compatibility/direct commands.
+- Inspection/diagnostics commands are retained with explicit roles: `status`, `report`, `doctor`, `overview`, `probe`, `next`, `usage`.
 
 ## 2. Product Mental Model
 
@@ -100,16 +103,16 @@ Planned target mappings:
 - `provider` -> `config provider`
 - `budget` -> `config budget`
 - `keys` -> `config keys`
-- `onboard` -> `setup`
-- `init` -> `setup`
-- `doctor` -> `status --doctor` (or `status doctor`)
+- `onboard` -> `setup` (compatibility/direct command retained)
+- `init` -> `setup` (compatibility/direct command retained)
+- `doctor` -> retained as dedicated diagnostics command (role clarified in help/docs)
 - `compare` -> `report compare`
-- `overview` -> `status`
-- `next` -> `status`
-- `usage` -> `status` summary or `admin usage`
+- `overview` -> retained as high-level project summary command
+- `next` -> retained as recommended next-actions command
+- `usage` -> retained as dedicated Aegis API usage summary command
 - `create` -> `scaffold`
 - `policy` -> `admin policy` (or status diagnostics)
-- `probe` -> `admin probe` (or status diagnostics)
+- `probe` -> retained as stack/capability discovery command
 - `context` -> `admin context`
 - `backups` / `restore` -> `admin backups` / `admin restore`
 - `--check-sll` -> `admin sll check`
@@ -147,13 +150,13 @@ Phase B: Config consolidation
 
 Phase C: Setup/status consolidation
 
-- fold `init` and `onboard` into `setup`
-- fold `doctor`, `overview`, and `next` into `status`
+- make `setup` canonical; keep `init` and `onboard` as compatibility/direct commands
+- keep `doctor`, `overview`, and `next` as distinct read-only inspection commands with clear roles
 
 Phase D: Report/analysis consolidation
 
 - fold `compare` into `report compare`
-- place `usage` in `status` summary and/or `admin usage`
+- clarify and consolidate inspection/diagnostics command roles in help/docs without removing commands
 
 Phase E: Advanced namespace split
 

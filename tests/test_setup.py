@@ -196,3 +196,4 @@ def test_setup_check_reports_key_source(tmp_path: Path, monkeypatch, capsys) -> 
     assert "- Aegis base_url: https://base.example (source: global)" in out
     assert "- Provider key: present (source:" in out
     assert "- Provider key name: OPENAI_API_KEY" in out
+    assert "Environment diagnostics: run `aegis-code doctor` for deeper checks." in out

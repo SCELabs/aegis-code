@@ -31,6 +31,7 @@ def test_doctor_does_not_run_runtime(monkeypatch, tmp_path: Path, capsys) -> Non
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "Aegis Code Doctor" in out
+    assert "Setup readiness: run `aegis-code setup --check`." in out
 
 
 def test_doctor_shows_provider_name_and_base_url(tmp_path: Path, monkeypatch, capsys) -> None:

@@ -246,17 +246,29 @@ def _print_aegis_usage_if_available(payload: dict[str, object], cwd: Path) -> No
 
 
 def _build_init_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code init")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code init",
+        description=(
+            "Compatibility/direct project initialization command. "
+            "Preferred onboarding path: `aegis-code setup`."
+        ),
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite default project files.")
     return parser
 
 
 def _build_report_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code report")
+    return argparse.ArgumentParser(
+        prog="aegis-code report",
+        description="Detailed view of the latest run report.",
+    )
 
 
 def _build_status_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code status")
+    return argparse.ArgumentParser(
+        prog="aegis-code status",
+        description="Current project state and latest run summary.",
+    )
 
 
 def _build_compare_parser() -> argparse.ArgumentParser:
@@ -264,7 +276,10 @@ def _build_compare_parser() -> argparse.ArgumentParser:
 
 
 def _build_overview_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code overview")
+    return argparse.ArgumentParser(
+        prog="aegis-code overview",
+        description="High-level project summary.",
+    )
 
 
 def _build_maintain_parser() -> argparse.ArgumentParser:
@@ -285,11 +300,23 @@ def _build_create_parser() -> argparse.ArgumentParser:
 
 
 def _build_doctor_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code doctor")
+    return argparse.ArgumentParser(
+        prog="aegis-code doctor",
+        description=(
+            "Environment and setup diagnostics. "
+            "For setup readiness summary, run `aegis-code setup --check`."
+        ),
+    )
 
 
 def _build_onboard_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code onboard")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code onboard",
+        description=(
+            "Compatibility/direct Aegis API key onboarding command. "
+            "Preferred onboarding path: `aegis-code setup`."
+        ),
+    )
     parser.add_argument("--email", required=False)
     return parser
 
@@ -452,15 +479,31 @@ def _build_fix_parser() -> argparse.ArgumentParser:
 
 
 def _build_next_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code next")
+    return argparse.ArgumentParser(
+        prog="aegis-code next",
+        description="Recommended next actions.",
+    )
 
 
 def _build_usage_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(prog="aegis-code usage")
+    return argparse.ArgumentParser(
+        prog="aegis-code usage",
+        description="Aegis API usage summary.",
+    )
 
 
 def _build_setup_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code setup")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code setup",
+        description=(
+            "Preferred onboarding and initialization command. "
+            "Recommended flow: `aegis-code setup` -> `aegis-code config provider ...` -> `aegis-code patch ...`."
+        ),
+        epilog=(
+            "Compatibility commands remain available: `aegis-code init`, `aegis-code onboard`. "
+            "For environment diagnostics, run `aegis-code doctor`."
+        ),
+    )
     parser.add_argument("--email", default=None)
     parser.add_argument("--skip-aegis", action="store_true")
     parser.add_argument("--skip-provider", action="store_true")
@@ -471,7 +514,10 @@ def _build_setup_parser() -> argparse.ArgumentParser:
 
 
 def _build_probe_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="aegis-code probe")
+    parser = argparse.ArgumentParser(
+        prog="aegis-code probe",
+        description="Stack detection and verification capability discovery.",
+    )
     parser.add_argument("--run", action="store_true", help="Run safe test command candidates.")
     return parser
 
@@ -1036,6 +1082,8 @@ def handle_doctor(argv: Sequence[str]) -> int:
             )
         )
     )
+    print("")
+    print("Setup readiness: run `aegis-code setup --check`.")
     return 0
 
 
@@ -3418,6 +3466,7 @@ def handle_setup(argv: Sequence[str]) -> int:
         print(f"- Verification reason: {status.get('verification_reason') or 'n/a'}")
         print(f"- Observed capabilities: {'present' if bool(status.get('observed_capabilities_present', False)) else 'missing'}")
         print(f"- Observed selected test command: {status.get('observed_selected_test_command') or 'n/a'}")
+        print("- Environment diagnostics: run `aegis-code doctor` for deeper checks.")
 
         fully_ready = all(
             bool(status.get(key, False))

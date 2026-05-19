@@ -5,16 +5,50 @@ Aegis Code is a controlled patch pipeline. Commands are proposal-first and mutat
 ## Project
 
 ```bash
-aegis-code init
 aegis-code setup
 aegis-code setup --check
+aegis-code init
+aegis-code onboard --email <you@example.com>
 aegis-code next
 aegis-code overview
 aegis-code status
 aegis-code report
+aegis-code doctor
+aegis-code probe
+aegis-code usage
 aegis-code compare
 aegis-code maintain
 ```
+
+Preferred public onboarding flow:
+
+1. `aegis-code setup`
+2. `aegis-code config provider ...`
+3. `aegis-code patch ...`
+
+Compatibility commands remain available:
+
+- `aegis-code init` (direct project initialization command)
+- `aegis-code onboard` (direct Aegis API key onboarding command)
+
+## Inspection & Diagnostics Commands
+
+Run `aegis-code status` first for the fastest project/run snapshot.
+
+- `aegis-code status`: current project state and latest run summary.
+- `aegis-code report`: detailed view of the latest run report.
+- `aegis-code doctor`: environment and setup diagnostics.
+- `aegis-code overview`: high-level project summary.
+- `aegis-code probe`: stack detection and verification capability discovery.
+- `aegis-code next`: recommended next actions.
+- `aegis-code usage`: Aegis API usage summary.
+
+Recommended workflow:
+
+1. `aegis-code status`
+2. `aegis-code report`
+3. `aegis-code next`
+4. `aegis-code doctor` / `aegis-code probe` when setup or environment looks off
 
 ## Runtime Task
 

@@ -45,6 +45,113 @@ def test_cli_init_does_not_overwrite_existing_config_without_force(tmp_path: Pat
     assert "custom test" in cfg.read_text(encoding="utf-8")
 
 
+def test_setup_help_marks_preferred_onboarding_flow() -> None:
+    out = cli._build_setup_parser().format_help()
+    assert "Preferred onboarding and initialization command." in out
+    assert "aegis-code setup" in out
+    assert "aegis-code config provider" in out
+    assert "aegis-code patch" in out
+    assert "Compatibility commands remain available" in out
+    assert "aegis-code init" in out
+    assert "onboard" in out
+    assert "aegis-code doctor" in out
+
+
+def test_init_help_marks_compatibility_direct_command() -> None:
+    out = cli._build_init_parser().format_help()
+    assert "Compatibility/direct project initialization command." in out
+    assert "Preferred onboarding" in out
+    assert "`aegis-code setup`" in out
+
+
+def test_onboard_help_marks_compatibility_direct_command() -> None:
+    out = cli._build_onboard_parser().format_help()
+    assert "Compatibility/direct Aegis API key onboarding command." in out
+    assert "Preferred onboarding" in out
+    assert "`aegis-code setup`" in out
+
+
+def test_init_command_still_routes_to_existing_handler(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_handle_init(argv: list[str]) -> int:
+        captured["argv"] = list(argv)
+        return 0
+
+    monkeypatch.setattr("aegis_code.cli.handle_init", _fake_handle_init)
+    assert cli.main(["init", "--force"]) == 0
+    assert captured["argv"] == ["--force"]
+
+
+def test_onboard_command_still_routes_to_existing_onboarding(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_run_onboard(email: str, cwd: Path) -> dict[str, object]:
+        captured["email"] = email
+        captured["cwd"] = cwd
+        return {"success": True}
+
+    monkeypatch.setattr("aegis_code.cli.run_onboard", _fake_run_onboard)
+    exit_code = cli.main(["onboard", "--email", "user@example.com"])
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert captured["email"] == "user@example.com"
+    assert "Aegis onboarding complete." in out
+
+
+def test_docs_mark_setup_preferred_and_init_onboard_compatible() -> None:
+    root = Path(__file__).resolve().parents[1]
+    command_docs = (root / "docs" / "commands.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    assert "Preferred public onboarding flow:" in command_docs
+    assert "`aegis-code setup`" in command_docs
+    assert "`aegis-code config provider ...`" in command_docs
+    assert "`aegis-code patch ...`" in command_docs
+    assert "Compatibility commands remain available:" in command_docs
+    assert "`aegis-code init`" in command_docs
+    assert "`aegis-code onboard`" in command_docs
+
+    assert "Preferred onboarding and initialization:" in readme
+    assert "aegis-code setup" in readme
+
+
+def test_inspection_command_help_roles_are_concise_and_non_overlapping() -> None:
+    status_help = cli._build_status_parser().format_help()
+    report_help = cli._build_report_parser().format_help()
+    doctor_help = cli._build_doctor_parser().format_help()
+    overview_help = cli._build_overview_parser().format_help()
+    probe_help = cli._build_probe_parser().format_help()
+    next_help = cli._build_next_parser().format_help()
+    usage_help = cli._build_usage_parser().format_help()
+
+    assert "Current project state and latest run summary." in status_help
+    assert "Detailed view of the latest run report." in report_help
+    assert "Environment and setup diagnostics." in doctor_help
+    assert "setup --check" in doctor_help
+    assert "High-level project summary." in overview_help
+    assert "Stack detection and verification capability discovery." in probe_help
+    assert "Recommended next actions." in next_help
+    assert "Aegis API usage summary." in usage_help
+
+
+def test_docs_define_inspection_and_diagnostics_toolkit() -> None:
+    root = Path(__file__).resolve().parents[1]
+    command_docs = (root / "docs" / "commands.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    for content in (command_docs, readme):
+        assert "Inspection & Diagnostics Commands" in content
+        assert "aegis-code status" in content
+        assert "aegis-code report" in content
+        assert "aegis-code doctor" in content
+        assert "aegis-code overview" in content
+        assert "aegis-code probe" in content
+        assert "aegis-code next" in content
+        assert "aegis-code usage" in content
+        assert "Run `aegis-code status` first" in content
+
+
 def test_cli_dry_run_writes_report(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("aegis_code.runtime.client_from_env", lambda _base_url: FakeAegisClient())
