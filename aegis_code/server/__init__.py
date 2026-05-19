@@ -1,0 +1,46 @@
+"""Transport-neutral server contracts for future HTTP/MCP integrations."""
+
+from aegis_code.server.contracts import (
+    API_VERSION,
+    ApplyCheckRequest,
+    ApplyConfirmRequest,
+    ApplyResponse,
+    PatchRequest,
+    PatchResponse,
+    ReportRequest,
+    ReportResponse,
+    SetupCheckRequest,
+    SetupCheckResponse,
+    StatusRequest,
+    StatusResponse,
+    apply_result_to_dict,
+    patch_proposal_to_dict,
+    run_report_to_dict,
+    run_status_to_dict,
+    setup_status_to_dict,
+    to_error,
+    to_response,
+)
+
+__all__ = [
+    "API_VERSION",
+    "SetupCheckRequest",
+    "PatchRequest",
+    "ApplyCheckRequest",
+    "ApplyConfirmRequest",
+    "StatusRequest",
+    "ReportRequest",
+    "SetupCheckResponse",
+    "PatchResponse",
+    "ApplyResponse",
+    "StatusResponse",
+    "ReportResponse",
+    "setup_status_to_dict",
+    "patch_proposal_to_dict",
+    "apply_result_to_dict",
+    "run_status_to_dict",
+    "run_report_to_dict",
+    "to_response",
+    "to_error",
+]
+

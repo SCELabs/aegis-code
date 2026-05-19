@@ -13,6 +13,8 @@ from aegis_code.runtime import TaskOptions, run_task
 from aegis_code.scope import build_scope_contract_from_cli
 from aegis_code.setup import check_setup
 
+from aegis_code.api.errors import AegisApplyError, AegisPatchError, AegisReportError, AegisSetupError
+from aegis_code.api.operations import PatchOperation, PatchOperationValue, normalize_operation
 from aegis_code.api.types import ApplyResult, PatchProposal, RunReport, RunStatus, SetupStatus
 
 
@@ -23,14 +25,17 @@ class AegisCode:
         self.project_path = Path(project_path).resolve()
 
     def setup_check(self) -> SetupStatus:
-        return SetupStatus.from_dict(check_setup(self.project_path))
+        try:
+            return SetupStatus.from_dict(check_setup(self.project_path))
+        except Exception as exc:
+            raise AegisSetupError("Failed to evaluate setup/readiness status.") from exc
 
     def patch(
         self,
         *,
         task: str,
         files: list[str],
-        operation: str | None = None,
+        operation: PatchOperation | PatchOperationValue | str | None = None,
         allow_create: bool = False,
         max_files: int | None = None,
         target: str | None = None,
@@ -45,47 +50,53 @@ class AegisCode:
         provider_timeout_seconds: int | None = None,
     ) -> PatchProposal:
         if not str(task or "").strip():
-            raise ValueError("task is required")
+            raise AegisPatchError("task is required")
         if not files:
-            raise ValueError("files is required; pass at least one path")
+            raise AegisPatchError("files is required; pass at least one path")
+        normalized_operation = normalize_operation(operation)
 
-        cfg = load_config(self.project_path)
-        base_mode = mode or cfg.mode
-        final_mode = select_runtime_mode(base_mode, cwd=self.project_path)
-        scope_contract = build_scope_contract_from_cli(
-            files=[str(item) for item in files],
-            allow_create=bool(allow_create),
-            max_files=max_files,
-            cwd=self.project_path,
-            operation=operation,
-            destination_path=target,
-            anchor=anchor,
-            symbol=symbol,
-        )
-
-        payload = run_task(
-            options=TaskOptions(
-                task=task,
-                budget=budget,
-                mode=final_mode,
-                dry_run=dry_run,
-                analyze_failures=analyze_failures,
-                propose_patch=True,
-                session=session,
-                no_report=no_report,
-                project_context=load_runtime_context(cwd=self.project_path),
-                budget_state=get_budget_state(cwd=self.project_path),
-                runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=self.project_path),
-                provider_timeout_seconds=provider_timeout_seconds,
-                command="patch",
-                scope_contract=asdict(scope_contract),
-                patch_operation=operation,
+        try:
+            cfg = load_config(self.project_path)
+            base_mode = mode or cfg.mode
+            final_mode = select_runtime_mode(base_mode, cwd=self.project_path)
+            scope_contract = build_scope_contract_from_cli(
+                files=[str(item) for item in files],
+                allow_create=bool(allow_create),
+                max_files=max_files,
+                cwd=self.project_path,
+                operation=normalized_operation,
                 destination_path=target,
                 anchor=anchor,
                 symbol=symbol,
-            ),
-            cwd=self.project_path,
-        )
+            )
+
+            payload = run_task(
+                options=TaskOptions(
+                    task=task,
+                    budget=budget,
+                    mode=final_mode,
+                    dry_run=dry_run,
+                    analyze_failures=analyze_failures,
+                    propose_patch=True,
+                    session=session,
+                    no_report=no_report,
+                    project_context=load_runtime_context(cwd=self.project_path),
+                    budget_state=get_budget_state(cwd=self.project_path),
+                    runtime_policy=build_runtime_policy_payload(base_mode, final_mode, cwd=self.project_path),
+                    provider_timeout_seconds=provider_timeout_seconds,
+                    command="patch",
+                    scope_contract=asdict(scope_contract),
+                    patch_operation=normalized_operation,
+                    destination_path=target,
+                    anchor=anchor,
+                    symbol=symbol,
+                ),
+                cwd=self.project_path,
+            )
+        except AegisPatchError:
+            raise
+        except Exception as exc:
+            raise AegisPatchError("Failed to generate patch proposal.") from exc
         patch_diff = payload.get("patch_diff", {}) if isinstance(payload.get("patch_diff"), dict) else {}
         patch_operation = payload.get("patch_operation", {}) if isinstance(payload.get("patch_operation"), dict) else {}
         diff_path_text = patch_diff.get("path")
@@ -109,6 +120,8 @@ class AegisCode:
         else:
             raw = Path(path)
             target = raw.resolve() if raw.is_absolute() else (self.project_path / raw)
+        if not target.exists():
+            raise AegisApplyError(f"Diff file not found: {target}")
         proposal = PatchProposal(
             status="generated",
             diff_path=target,
@@ -143,3 +156,30 @@ class AegisCode:
 
     def report(self) -> RunReport:
         return RunReport.load(self.project_path)
+
+    def latest_diff(self) -> Path | None:
+        path = project_paths(self.project_path)["latest_diff"]
+        return path if path.exists() else None
+
+    def latest_report_json(self) -> dict[str, Any] | None:
+        path = project_paths(self.project_path)["latest_json"]
+        if not path.exists():
+            return None
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise AegisReportError(f"Latest report JSON is invalid: {path}") from exc
+        except Exception as exc:
+            raise AegisReportError(f"Failed to read latest report JSON: {path}") from exc
+        if not isinstance(loaded, dict):
+            raise AegisReportError(f"Latest report JSON must be an object: {path}")
+        return loaded
+
+    def latest_report_markdown(self) -> str | None:
+        latest = project_paths(self.project_path)["latest_md"]
+        if not latest.exists():
+            return None
+        try:
+            return latest.read_text(encoding="utf-8")
+        except Exception as exc:
+            raise AegisReportError(f"Failed to read latest markdown report: {latest}") from exc

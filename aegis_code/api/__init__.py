@@ -5,13 +5,46 @@ from __future__ import annotations
 from pathlib import Path
 
 from aegis_code.api.client import AegisCode
-from aegis_code.api.types import ApplyResult, PatchProposal, RunReport, RunStatus, SetupStatus
+from aegis_code.api.errors import (
+    AegisApiError,
+    AegisApplyError,
+    AegisPatchError,
+    AegisReportError,
+    AegisSetupError,
+)
+from aegis_code.api.operations import PatchOperation, PatchOperationValue
+from aegis_code.api.types import (
+    ApplyResult,
+    ModelSelectionSummary,
+    NextAction,
+    PatchProposal,
+    PatchSummary,
+    ReportSummary,
+    RunReport,
+    RunStatus,
+    RuntimeControlSummary,
+    SetupStatus,
+    VerificationSummary,
+)
 
 __all__ = [
     "AegisCode",
+    "AegisApiError",
+    "AegisSetupError",
+    "AegisPatchError",
+    "AegisApplyError",
+    "AegisReportError",
+    "PatchOperation",
+    "PatchOperationValue",
     "SetupStatus",
     "PatchProposal",
     "ApplyResult",
+    "ReportSummary",
+    "PatchSummary",
+    "VerificationSummary",
+    "ModelSelectionSummary",
+    "RuntimeControlSummary",
+    "NextAction",
     "RunStatus",
     "RunReport",
     "setup_check",
@@ -30,7 +63,7 @@ def patch(
     *,
     task: str,
     files: list[str],
-    operation: str | None = None,
+    operation: PatchOperation | PatchOperationValue | str | None = None,
     allow_create: bool = False,
     max_files: int | None = None,
     target: str | None = None,

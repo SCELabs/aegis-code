@@ -1,141 +1,235 @@
-# Python API Surface (Phase 4A)
+# Python API Reference (Phase 4D)
 
-## Purpose
+This document defines the stable public Python API for Aegis Code and how to use it safely from scripts, tools, and agents.
 
-Define a small, stable, programmatic API for Aegis Code that mirrors the canonical CLI workflow while preserving controlled execution and safety guarantees.
+## Quickstart
 
-## Goals
+Canonical programmatic workflow:
 
-- Provide a minimal Python API for scripts, tools, agents, and integrations.
-- Mirror the canonical workflow:
-  1. setup/readiness
-  2. patch proposal
-  3. diff inspection
-  4. patch application
-  5. verification/check
-  6. report retrieval
-- Expose stable abstractions instead of internal module details.
-- Preserve explicit mutation controls (`check` vs `apply`).
-- Keep backward compatibility with the existing CLI/runtime behavior.
+1. setup check
+2. patch proposal
+3. diff inspection
+4. apply check
+5. apply confirm
+6. report access
 
-## Non-Goals
+```python
+from aegis_code.api import AegisApiError, AegisCode, PatchOperation
 
-- Refactoring runtime internals in Phase 4A.
-- Replacing CLI command handling.
-- Exposing all internal data models as public contracts.
-- Introducing broad async/event APIs yet.
+client = AegisCode(project_path=".")
+try:
+    setup = client.setup_check()
+    if not setup.initialized:
+        print("Run `aegis-code setup` first, then configure provider access.")
 
-## Architecture Assessment
+    proposal = client.patch(
+        task="add tests for save_note_to_file only",
+        files=["tests/test_notes.py"],
+        operation=PatchOperation.APPEND,
+    )
 
-Current stable building blocks suitable for wrapper exposure:
+    print("proposal:", proposal.status, proposal.diff_path)
+    print(proposal.diff_text()[:200])
+    print(proposal.inspect_diff().get("summary", {}))
 
-- setup/readiness:
-  - `aegis_code.setup.check_setup`
-- patch proposal core:
-  - `aegis_code.runtime.run_task`
-  - `aegis_code.runtime.TaskOptions`
-  - `aegis_code.scope.build_scope_contract_from_cli`
-- apply/check safety:
-  - `aegis_code.patches.apply_check.check_patch_file`
-  - `aegis_code.patches.patch_applier.apply_patch_file`
-- status/report reads:
-  - `aegis_code.config.project_paths`
-  - `aegis_code.report.read_latest_markdown`
+    apply_check = proposal.apply(check=True)
+    if apply_check.apply_blocked:
+        print("blocked:", apply_check.errors)
+    else:
+        apply_result = proposal.apply(check=False)
+        print("applied:", apply_result.applied)
 
-These are wrapped by `aegis_code.api` so consumers do not need to import internals directly.
+    run_status = client.status()
+    run_report = client.report()
+    print("status:", run_status.run_status)
+    print("report available:", run_report.available)
+except AegisApiError as exc:
+    print(f"Aegis API error: {exc}")
+```
 
-## Public API Decision
+## End-to-End Example
 
-Phase 4A provides both object-oriented and functional entry points:
+The same flow using a mix of object-oriented and functional entry points:
 
-- Object-oriented:
-  - `AegisCode(project_path=".")`
-    - `setup_check()`
-    - `patch(...)`
-    - `apply_patch(...)`
-    - `status()`
-    - `report()`
-- Functional:
-  - `setup_check(...)`
-  - `patch(...)`
-  - `apply_patch(...)`
-  - `status(...)`
-  - `report(...)`
+```python
+from pathlib import Path
 
-Rationale:
+from aegis_code.api import (
+    AegisApiError,
+    AegisCode,
+    PatchOperation,
+    report,
+)
 
-- OO form is ergonomic for agents/integrations managing one project context.
-- Functional form is lightweight for scripts and one-off automation.
-- Functional helpers are thin delegations to the OO client to keep one behavior path.
+project = Path(".")
+client = AegisCode(project_path=project)
 
-## Public Return Types
+try:
+    setup = client.setup_check()
+    if not setup.aegis_key:
+        raise RuntimeError("Missing AEGIS_API_KEY for authenticated workflows.")
 
-`aegis_code.api.types` introduces small wrapper dataclasses:
+    proposal = client.patch(
+        task="append one regression test for note save behavior",
+        files=["tests/test_notes.py"],
+        operation=PatchOperation.APPEND,
+    )
+
+    # Inspect proposal before mutation.
+    _raw_diff = proposal.diff_text()
+    inspection = proposal.inspect_diff()
+    print("files in diff:", inspection.get("summary", {}).get("file_count", 0))
+
+    # Safety check first.
+    checked = proposal.apply(check=True)
+    if checked.apply_blocked:
+        print("Blocked:", checked.errors)
+    else:
+        applied = proposal.apply(check=False)
+        print("Applied:", applied.applied, applied.files_changed)
+
+    # Retrieve latest report with typed views.
+    run_report = report(project_path=project)
+    print("run:", run_report.summary.status)
+    print("patch safety:", run_report.patch.safety)
+    print("verification available:", run_report.verification.available)
+    print("model:", run_report.model_selection.model)
+    print("runtime mode:", run_report.runtime_control.mode)
+    for action in run_report.next_actions:
+        print(action.index, action.description)
+
+except AegisApiError as exc:
+    print("Aegis API failed:", exc)
+```
+
+## Public API Reference
+
+### `AegisCode`
+
+Public client class for one project path:
+
+- `AegisCode(project_path=".")`
+- `setup_check() -> SetupStatus`
+- `patch(...) -> PatchProposal`
+- `apply_patch(path=None, check=True) -> ApplyResult`
+- `status() -> RunStatus`
+- `report() -> RunReport`
+- `latest_diff() -> Path | None`
+- `latest_report_json() -> dict[str, Any] | None`
+- `latest_report_markdown() -> str | None`
+
+### Functional wrappers
+
+All wrappers are exported from `aegis_code.api` and delegate to `AegisCode`:
+
+- `setup_check(project_path=".")`
+- `patch(..., project_path=".")`
+- `apply_patch(path=None, check=True, project_path=".")`
+- `status(project_path=".")`
+- `report(project_path=".")`
+
+### Return objects
+
+Exported and stable:
 
 - `SetupStatus`
 - `PatchProposal`
-  - includes `apply(check=True|False)` for safe check/apply flow
 - `ApplyResult`
 - `RunStatus`
 - `RunReport`
 
-Design notes:
+`PatchProposal` helpers:
 
-- Each type includes a small normalized surface plus a `raw`/`payload` field for forward-compatible access.
-- Types intentionally avoid exposing runtime-internal classes directly.
+- `diff_text(path=None) -> str`
+- `inspect_diff(path=None) -> dict[str, Any]`
+- `apply(check=True, path=None) -> ApplyResult`
 
-## Initial Public Surface (Phase 4A)
+## Exceptions Reference
 
-Module layout:
+Exported from `aegis_code.api`:
 
-- `aegis_code/api/__init__.py`
-- `aegis_code/api/client.py`
-- `aegis_code/api/types.py`
+- `AegisApiError`: base exception for the public API.
+- `AegisSetupError`: setup/readiness failures.
+- `AegisPatchError`: patch proposal input/processing failures.
+- `AegisApplyError`: apply/check failures.
+- `AegisReportError`: report loading/parsing failures.
 
-Example usage:
+Guidance:
 
-```python
-from aegis_code.api import AegisCode
+- Catch `AegisApiError` for broad integration-level error handling.
+- Catch subclasses when retry/recovery behavior differs by operation.
 
-client = AegisCode(project_path=".")
-setup = client.setup_check()
-proposal = client.patch(
-    task="add tests for save_note_to_file only",
-    files=["tests/test_notes.py"],
-    operation="append",
-)
-print(proposal.status)
-print(proposal.diff_path)
+## Operations Reference
 
-# Safe validation (default)
-check_result = proposal.apply(check=True)
+Operation typing is exported as:
 
-# Explicit apply
-apply_result = proposal.apply(check=False)
+- `PatchOperation` enum
+- `PatchOperationValue` literal type alias
 
-run_status = client.status()
-run_report = client.report()
-```
+Current supported values:
 
-## Stability and Compatibility Guarantees
+- `append`
+- `create-file`
+- `insert-after`
+- `insert-before`
+- `replace-block`
+- `delete-block`
+- `replace-file`
+- `delete-file`
+- `replace-symbol`
+- `delete-symbol`
+- `rename-file`
+- `move-file`
+- `batch`
 
-Phase 4A guarantee:
+## Typed Report Views
 
-- `aegis_code.api` module path is the public entrypoint.
-- Public function/class names in `aegis_code.api.__all__` are the intended stable surface.
-- Fields marked `raw`/`payload` may expand over time; existing fields are expected to remain compatible.
+`RunReport` includes lightweight typed views over common sections while preserving raw access:
 
-Internal modules that should remain private/non-contractual for now:
+- `summary -> ReportSummary`
+- `patch -> PatchSummary`
+- `verification -> VerificationSummary`
+- `model_selection -> ModelSelectionSummary`
+- `runtime_control -> RuntimeControlSummary`
+- `next_actions -> tuple[NextAction, ...]`
+- `raw -> dict[str, Any] | None` (alias of `payload`)
 
-- `aegis_code.runtime_components.*`
-- `aegis_code.providers.*`
-- `aegis_code.patches.*` (except via API wrappers)
-- `aegis_code.scope.*` (except wrapper usage)
+Typed view classes:
+
+- `ReportSummary`
+- `PatchSummary`
+- `VerificationSummary`
+- `ModelSelectionSummary`
+- `RuntimeControlSummary`
+- `NextAction`
+
+## Public vs Private Modules
+
+Import from public entrypoint:
+
+- `aegis_code.api`
+
+Avoid importing internal modules directly for long-term compatibility:
+
+- `aegis_code.runtime*`
+- `aegis_code.runtime_components*`
+- `aegis_code.providers*`
+- `aegis_code.patches*`
+- `aegis_code.scope*`
 - `aegis_code.cli`
 
-## Follow-up Plan (Phase 4B+)
+Internal modules may change without notice; wrappers in `aegis_code.api` are the compatibility layer.
 
-- Add explicit error taxonomy (`AegisApiError`, validation vs runtime vs safety errors).
-- Add optional typed patch operation enums.
-- Add richer diff/report helper methods (`proposal.load_diff_text()`, structured report views).
-- Add async support if integration demand requires it.
+## Stability Guarantees
+
+Public stability contract:
+
+- Names exported by `aegis_code.api.__all__` are the intended stable API surface.
+- Public dataclass fields on exported API types are versioned for compatibility.
+- Public exceptions and `PatchOperation` members are stable unless explicitly deprecated.
+
+Forward-compatibility guidance for payloads:
+
+- Use typed properties first (`RunReport.summary`, `RunReport.patch`, and others).
+- Keep `.raw`/`.payload` access for fields not yet promoted to typed properties.
+- Treat unknown keys in `.raw` as additive future metadata.
